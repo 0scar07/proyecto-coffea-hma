@@ -1311,7 +1311,7 @@ elif seccion == "Datos de prueba":
         st.text_input(
             "Cita de la fuente (aparece en Resumen y en el reporte PDF)",
             key="cita_datos_reales",
-            placeholder="Ej: Corazon-Guivin et al. (2023), Research Square, DOI 10.21203/rs.3.rs-2878642/v1",
+            placeholder="Ej: Aguirre-Medina et al. (2023), Revista Fitotecnia Mexicana, DOI 10.35196/rfm.2023.3.273",
         )
 
     st.write("")

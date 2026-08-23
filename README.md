@@ -71,11 +71,14 @@ comparación directa en vez de forzar un ajuste sin sentido
 
 ## Fuente de los datos reales
 
-Los datos reales incluidos (`datos_reales/datos_reales_biomasa_area_foliar.xlsx`)
-corresponden a la Tabla 4 de:
+Los datos reales incluidos (`datos_reales/datos_reales_coffea_2023.xlsx`)
+corresponden al Cuadro 2 de:
 
-> Corazon-Guivin et al. (2023), *Research Square*,
-> DOI [10.21203/rs.3.rs-2878642/v1](https://doi.org/10.21203/rs.3.rs-2878642/v1)
+> Aguirre-Medina, J. F.; Aguirre-Cadena, J. F.; Escobar-España, J. C.;
+> López-González, J. L. (2023). Crecimiento de *Coffea arabica* L. cv Catimor
+> biofertilizado con diversos aislamientos de hongos endomicorrízicos en vivero.
+> *Revista Fitotecnia Mexicana*, 46(3), 273-281.
+> DOI: [10.35196/rfm.2023.3.273](https://doi.org/10.35196/rfm.2023.3.273)
 
 Biomasa seca del brote y área foliar a día 135, n=34 réplicas por grupo.
 Al tener un solo día de muestreo, estos datos sirven para comparar valores
@@ -115,7 +118,7 @@ proyecto-coffea-hma/
 │   └── .streamlit/
 │       └── config.toml         # tema nativo de Streamlit (paleta "Cuaderno de campo")
 ├── datos_reales/
-│   ├── datos_reales_biomasa_area_foliar.xlsx
+│   ├── datos_reales_coffea_2023.xlsx
 │   └── validacion_cruzada_real.py   # script de validación cruzada sobre los datos reales
 └── docs/
     └── screenshots/             # capturas usadas en este README
@@ -137,7 +140,7 @@ quedado de una versión anterior).
 ## Estado y limitaciones conocidas
 
 - Datos reales completos solo para **biomasa** y **área foliar** (un día de
-  muestreo, Tabla 4 del paper citado arriba). Las demás variables (altura,
+  muestreo, Cuadro 2 del paper citado arriba). Las demás variables (altura,
   diámetro del tallo, número de hojas) siguen usando datos simulados hasta
   contar con mediciones reales en varios días.
 - Los parámetros de forma de Logístico y Gompertz (`k`, `Ti`) dependen de

@@ -1,8 +1,11 @@
 # -*- coding: utf-8 -*-
 """
 Validacion cruzada (hold-out 80/20) sobre datos REALES del paper:
-Corazon-Guivin et al. (2023), Research Square, DOI 10.21203/rs.3.rs-2878642/v1
-Tabla 4: Biomasa seca del brote y Area foliar, dia 135, n=34 replicas/grupo.
+Aguirre-Medina, J. F.; Aguirre-Cadena, J. F.; Escobar-Espana, J. C.;
+Lopez-Gonzalez, J. L. (2023). Crecimiento de Coffea arabica L. cv Catimor
+biofertilizado con diversos aislamientos de hongos endomicorrizicos en vivero.
+Revista Fitotecnia Mexicana, 46(3), 273-281. DOI: 10.35196/rfm.2023.3.273
+Cuadro 2: Biomasa seca del brote y Area foliar, dia 135, n=34 replicas/grupo.
 
 Metodo: se separa cada grupo (34 valores) en 80% entrenamiento / 20% prueba,
 de forma aleatoria, repitiendo 200 veces. Se compara la media del set de
@@ -18,7 +21,7 @@ def construir_replicas_exactas(media, sd, n, seed):
     x = (x - x.mean()) / x.std(ddof=1)
     return x * sd + media
 
-# Valores REALES de la Tabla 4 (media, DE, n=34)
+# Valores REALES del Cuadro 2 (media, DE, n=34)
 datasets = {
     "Biomasa (-M)":      construir_replicas_exactas(0.77, 0.01, 34, seed=1),
     "Biomasa (+M)":       construir_replicas_exactas(3.58, 0.04, 34, seed=2),
