@@ -1,5 +1,16 @@
 # Coffea IA · Modelado de crecimiento
 
+![Python](https://img.shields.io/badge/Python-3776AB?style=flat&logo=python&logoColor=white)
+![Streamlit](https://img.shields.io/badge/Streamlit-FF4B4B?style=flat&logo=streamlit&logoColor=white)
+![Pandas](https://img.shields.io/badge/Pandas-150458?style=flat&logo=pandas&logoColor=white)
+![NumPy](https://img.shields.io/badge/NumPy-013243?style=flat&logo=numpy&logoColor=white)
+![SciPy](https://img.shields.io/badge/SciPy-8CAAE6?style=flat&logo=scipy&logoColor=black)
+![Plotly](https://img.shields.io/badge/Plotly-3F4F75?style=flat&logo=plotly&logoColor=white)
+![Excel](https://img.shields.io/badge/Excel-217346?style=flat&logo=microsoftexcel&logoColor=white)
+![License MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat)
+
+**Desarrollado por:** Richard Montez, Diego Barrios, Santiago Uribe y Oscar Llanos
+
 Aplicación en Streamlit que ajusta y compara tres modelos matemáticos de
 crecimiento (**Exponencial**, **Logístico**, **Gompertz**) sobre datos de
 biomasa, área foliar, altura, diámetro del tallo y número de hojas de
@@ -132,3 +143,7 @@ quedado de una versión anterior).
 - Los parámetros de forma de Logístico y Gompertz (`k`, `Ti`) dependen de
   qué tan buena sea la cobertura temporal real de las mediciones — con
   pocos puntos, el ajuste pierde estabilidad.
+
+## Licencia
+
+Distribuido bajo licencia [MIT](LICENSE).
