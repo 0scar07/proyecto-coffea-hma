@@ -16,6 +16,7 @@ CÓMO CORRERLA:
 
 import io
 import tempfile
+from datetime import datetime
 import numpy as np
 import pandas as pd
 import streamlit as st
@@ -25,6 +26,7 @@ from plotly.subplots import make_subplots
 from scipy.optimize import curve_fit
 from scipy.stats import t as t_dist, ttest_ind
 from fpdf import FPDF
+from PIL import Image
 
 st.set_page_config(page_title="Coffea arabica · Modelos de crecimiento", page_icon="⸙", layout="wide")
 
@@ -444,6 +446,130 @@ def barra_comparacion_mitades(m1, m2, residuos):
         <div style="position:absolute; top:5px; left:calc({pos2_pct:.1f}% - 4px); width:8px; height:8px; border-radius:50%; background:{T['ACCENT']};"
              title="2a mitad"></div>
     </div>'''
+
+
+def generar_sugerencias(fuente_datos):
+    """Lista de sugerencias de mejora, adaptada segun si se esta usando
+    datos simulados o datos reales cargados por el usuario."""
+    universales = [
+        "Validación cruzada (ajustar con una parte de los datos, comprobar con el resto).",
+        "Documentar todos los supuestos explícitamente en la metodología.",
+    ]
+    if fuente_datos == "real":
+        especificas = [
+            "Validación externa con un segundo estudio publicado, idealmente con series de tiempo más largas.",
+            "Ampliar el número de días de muestreo si el estudio de campo continúa, para cubrir también la "
+            "fase de desaceleración del crecimiento (necesaria para que Logístico y Gompertz converjan de forma estable).",
+            "Las réplicas individuales cargadas son sintéticas (generadas para reproducir la media y desviación "
+            "estándar reportadas en el paper, no mediciones planta por planta) — tenerlo en cuenta al interpretar "
+            "los intervalos de confianza.",
+        ]
+    else:
+        especificas = [
+            "Reemplazar los datos simulados por mediciones reales (sección *Datos de prueba*).",
+        ]
+    return especificas + universales
+
+
+def generar_ilustracion_plantas(datos, fuente_datos="simulado"):
+    """Ilustracion esquematica (NO fotografica) que compara -M vs +M usando
+    los valores reales del ultimo dia de muestreo disponible. Devuelve bytes
+    PNG, o None si no hay ninguna variable relevante en `datos`."""
+    variables_relevantes = ["altura", "area_foliar", "biomasa", "hojas"]
+    if not any(v in datos for v in variables_relevantes):
+        return None
+
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    import matplotlib.patches as mpatches
+
+    valores = {}
+    for var in variables_relevantes:
+        if var not in datos:
+            continue
+        valores[var] = {}
+        for grupo in ("-M", "+M"):
+            if grupo in datos[var]:
+                _, medias, _, _ = media_sd_por_dia(datos[var][grupo])
+                valores[var][grupo] = float(medias[-1])
+
+    alturas = valores.get("altura", {"-M": 20.0, "+M": 20.0})
+    areas = valores.get("area_foliar", {"-M": 100.0, "+M": 100.0})
+    biomasas = valores.get("biomasa", {})
+    hojas_n = valores.get("hojas", {})
+    max_altura = max(alturas.values()) or 1.0
+    max_area = max(areas.values()) or 1.0
+
+    colores = {"-M": "#8C8578", "+M": "#A8432B"}
+    nombres_grupo = {"-M": "-M (control)", "+M": "+M (inoculado)"}
+
+    fig, axes = plt.subplots(1, 2, figsize=(9, 6.2))
+    for ax, grupo in zip(axes, ["-M", "+M"]):
+        color = colores[grupo]
+        rng = np.random.default_rng(1 if grupo == "-M" else 2)
+        alto_tallo = alturas.get(grupo, max_altura) / max_altura * 5.0 + 1.5
+        escala_hoja = (areas.get(grupo, max_area) / max_area) ** 0.5
+
+        ax.axhspan(-3.6, 0, color="#E4DFD6", zorder=0)
+        ax.axhline(0, color="#8C8578", linewidth=1.2, zorder=1)
+        ax.plot([0, 0], [0, alto_tallo], color="#5B4636", linewidth=3, zorder=2)
+
+        for i in range(6):
+            frac = (i + 1) / 7
+            y = frac * alto_tallo
+            lado = 1 if i % 2 == 0 else -1
+            ancho, alto = 0.55 * escala_hoja, 0.22 * escala_hoja
+            elip = mpatches.Ellipse((lado * ancho * 0.6, y), width=ancho, height=alto,
+                                     angle=25 * lado, facecolor=color, edgecolor="none",
+                                     alpha=0.85, zorder=3)
+            ax.add_patch(elip)
+
+        for _ in range(5):
+            dx = rng.uniform(-1.2, 1.2)
+            profundidad = rng.uniform(1.2, 2.2)
+            ax.plot([0, dx], [0, -profundidad], color="#7A5C3E", linewidth=1.3, alpha=0.8, zorder=2)
+            dx2 = dx + rng.uniform(-0.4, 0.4)
+            ax.plot([dx, dx2], [-profundidad, -profundidad - rng.uniform(0.3, 0.6)],
+                    color="#7A5C3E", linewidth=1.0, alpha=0.7, zorder=2)
+
+        if grupo == "+M":
+            for _ in range(16):
+                dx = rng.uniform(-2.3, 2.3)
+                profundidad = rng.uniform(1.6, 3.3)
+                ax.plot([0, dx], [-0.3, -profundidad], color="#C9922E", linewidth=0.5, alpha=0.6, zorder=1)
+            ax.text(0, -3.75, "red de hifas micorrízicas", ha="center", va="top",
+                    fontsize=7.5, style="italic", color="#8A6A1E")
+
+        ax.set_xlim(-2.7, 2.7)
+        ax.set_ylim(-4.6, 7.2)
+        ax.axis("off")
+        ax.set_title(nombres_grupo[grupo], fontsize=13, fontweight="bold", color=color, pad=10)
+
+        lineas_valor = []
+        if "altura" in valores:
+            lineas_valor.append(f"Altura: {alturas[grupo]:.1f} {UNIDADES['altura']}")
+        if "area_foliar" in valores:
+            lineas_valor.append(f"Área foliar: {areas[grupo]:.1f} {UNIDADES['area_foliar']}")
+        if grupo in biomasas:
+            lineas_valor.append(f"Biomasa: {biomasas[grupo]:.2f} {UNIDADES['biomasa']}")
+        if grupo in hojas_n:
+            lineas_valor.append(f"Hojas: {hojas_n[grupo]:.1f}")
+        ax.text(0, -4.1, "\n".join(lineas_valor) if lineas_valor else "Sin datos reales disponibles",
+                ha="center", va="top", fontsize=9, family="monospace", color="#201C18")
+
+    origen_txt = "datos reales cargados" if fuente_datos == "real" else "datos de prueba simulados"
+    fig.suptitle("ILUSTRACIÓN CONCEPTUAL A ESCALA — NO ES UNA FOTOGRAFÍA REAL",
+                 fontsize=11.5, fontweight="bold", color="#9A3324", y=0.995)
+    fig.text(0.5, 0.945, f"Comparación esquemática según el último día de muestreo disponible en los {origen_txt}",
+              ha="center", fontsize=9, color="#6B6459")
+
+    plt.tight_layout(rect=[0, 0.03, 1, 0.92])
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=170, facecolor="white")
+    plt.close(fig)
+    buf.seek(0)
+    return buf.getvalue()
 
 
 # ==============================================================================
@@ -991,14 +1117,14 @@ elif seccion == "Resultados":
                 res = RES[variable][grupo][nombre_modelo]
                 if res.get("insuficiente"):
                     estado = f"Sin suficientes días ({res['dias_disponibles']}/{res['dias_requeridos']})"
-                elif res["r2"] is None:
+                elif pd.isna(res["r2"]):
                     estado = "Sin ajuste"
                 else:
                     estado = "OK"
                 filas.append({"Grupo": grupo, "Modelo": nombre_modelo, "Estado": estado,
-                               "R²": round(res["r2"], 4) if res["r2"] is not None else None,
-                               "RMSE": round(res["rmse"], 4) if res["rmse"] is not None else None,
-                               "MAE": round(res["mae"], 4) if res.get("mae") is not None else None})
+                               "R²": round(res["r2"], 4) if not pd.isna(res["r2"]) else None,
+                               "RMSE": round(res["rmse"], 4) if not pd.isna(res["rmse"]) else None,
+                               "MAE": round(res["mae"], 4) if not pd.isna(res.get("mae")) else None})
         df_tabla = pd.DataFrame(filas)
         with st.container(border=True):
             st.markdown('<span class="ficha-marca"></span>', unsafe_allow_html=True)
@@ -1207,14 +1333,7 @@ elif seccion == "Discusión y conclusiones":
     with st.container(border=True):
         st.markdown('<span class="ficha-marca"></span>', unsafe_allow_html=True)
         st.markdown('<span class="eyebrow">Sugerencias</span>', unsafe_allow_html=True)
-        st.markdown(
-            """
-- Reemplazar los datos simulados por mediciones reales (sección *Datos de prueba*).
-- Validación externa con un segundo estudio publicado.
-- Validación cruzada (ajustar con una parte de los datos, comprobar con el resto).
-- Documentar todos los supuestos explícitamente en la metodología.
-            """
-        )
+        st.markdown("\n".join(f"- {s}" for s in generar_sugerencias(st.session_state.fuente_datos)))
 
 
 # ==============================================================================
@@ -1327,7 +1446,7 @@ elif seccion == "Datos de prueba":
                     for nombre_modelo in MODELOS:
                         res = RES[variable][grupo][nombre_modelo]
                         estado = (f"Sin suficientes dias ({res['dias_disponibles']}/{res['dias_requeridos']})"
-                                  if res.get("insuficiente") else ("OK" if res["r2"] is not None else "Sin ajuste"))
+                                  if res.get("insuficiente") else ("Sin ajuste" if pd.isna(res["r2"]) else "OK"))
                         fila = {"Grupo": grupo, "Modelo": nombre_modelo, "Estado": estado,
                                 "R2": res["r2"], "RMSE": res["rmse"]}
                         if res["params"] is not None:
@@ -1364,27 +1483,114 @@ elif seccion == "Exportar reporte":
         generar_pdf = st.button("Generar reporte PDF", type="primary")
 
     def limpiar_texto(s):
-        reemplazos = {"−": "-", "·": "-", "→": "->", "²": "2", "±": "+/-", "": "'", "": "'", "–": "-"}
+        reemplazos = {
+            "−": "-", "·": "-", "→": "->", "²": "2", "±": "+/-", "–": "-", "—": "-",
+            "‘": "'", "’": "'", "“": '"', "”": '"',
+        }
         for a, b in reemplazos.items():
             s = s.replace(a, b)
         return s.encode("latin-1", "replace").decode("latin-1")
 
-    if generar_pdf:
-        with st.spinner("Generando PDF..."):
-            pdf = FPDF()
-            pdf.set_auto_page_break(auto=True, margin=15)
+    # --- Paleta y helpers de formato del PDF (coherentes con el tema de la app) ---
+    PDF_INK = (32, 28, 24)
+    PDF_MUTED = (140, 133, 120)
+    PDF_ACCENT = (168, 67, 43)
+    PDF_HEADER_BG = (32, 28, 24)
+    PDF_ROW_ALT = (241, 236, 227)
+
+    class ReportePDF(FPDF):
+        def header(self):
+            if self.page_no() == 1:
+                return
+            self.set_font("Helvetica", "", 8)
+            self.set_text_color(*PDF_MUTED)
+            self.cell(0, 8, limpiar_texto(f"Coffea IA - {etiqueta_lote}"), align="L")
+            self.set_x(-40)
+            self.cell(30, 8, datetime.now().strftime("%d/%m/%Y"), align="R", ln=1)
+            self.set_draw_color(*PDF_MUTED)
+            self.set_line_width(0.2)
+            self.line(10, 16, 200, 16)
+            self.ln(4)
+            self.set_text_color(*PDF_INK)
+
+        def footer(self):
+            self.set_y(-15)
+            self.set_font("Helvetica", "", 8)
+            self.set_text_color(*PDF_MUTED)
+            self.cell(0, 10, limpiar_texto(f"Coffea IA - Modelado de crecimiento | Pagina {self.page_no()}/{{nb}}"),
+                      align="C")
+
+    def titulo_seccion(pdf, texto):
+        if pdf.get_y() > 250:
+            pdf.add_page()
+        pdf.set_font("Helvetica", "B", 14)
+        pdf.set_text_color(*PDF_INK)
+        pdf.cell(0, 9, limpiar_texto(texto), ln=1)
+        pdf.set_draw_color(*PDF_ACCENT)
+        pdf.set_line_width(0.8)
+        y = pdf.get_y()
+        pdf.line(10, y, 55, y)
+        pdf.set_line_width(0.2)
+        pdf.ln(5)
+
+    def subtitulo_variable(pdf, texto):
+        pdf.set_font("Helvetica", "B", 12)
+        pdf.set_text_color(*PDF_INK)
+        pdf.cell(0, 8, limpiar_texto(texto), ln=1)
+        pdf.ln(1)
+
+    def lista_con_vinetas(pdf, items, numerada=False):
+        pdf.set_font("Helvetica", "", 10)
+        pdf.set_text_color(*PDF_INK)
+        for i, item in enumerate(items, start=1):
+            marca = f"{i}." if numerada else "-"
+            pdf.set_x(14)
+            pdf.multi_cell(0, 5.8, limpiar_texto(f"{marca} {item}"))
+            pdf.ln(0.5)
+        pdf.ln(2)
+
+    def asegurar_espacio(pdf, alto_mm_necesario):
+        if pdf.get_y() + alto_mm_necesario > pdf.page_break_trigger:
             pdf.add_page()
 
-            pdf.set_font("Helvetica", "B", 18)
-            pdf.cell(0, 10, limpiar_texto("Coffea arabica - Modelos de crecimiento"), ln=1)
-            pdf.set_font("Helvetica", "", 10)
-            pdf.set_text_color(100, 100, 100)
-            pdf.cell(0, 6, limpiar_texto(f"Reporte generado - {etiqueta_lote}"), ln=1)
-            pdf.set_text_color(0, 0, 0)
-            pdf.ln(4)
+    def insertar_imagen_png(pdf, png_bytes, ancho_mm=190):
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp_img:
+            tmp_img.write(png_bytes)
+            ruta_img = tmp_img.name
+        with Image.open(ruta_img) as im:
+            proporcion = im.height / im.width
+        alto_mm = ancho_mm * proporcion
+        asegurar_espacio(pdf, alto_mm + 6)
+        pdf.image(ruta_img, w=ancho_mm)
+        pdf.ln(5)
 
-            pdf.set_font("Helvetica", "B", 13)
-            pdf.cell(0, 8, "Metodologia", ln=1)
+    if generar_pdf:
+        with st.spinner("Generando PDF..."):
+            pdf = ReportePDF()
+            pdf.alias_nb_pages()
+            pdf.set_auto_page_break(auto=True, margin=18)
+            pdf.add_page()
+
+            # --- Portada / encabezado ---
+            pdf.set_font("Helvetica", "B", 20)
+            pdf.set_text_color(*PDF_INK)
+            pdf.cell(0, 12, limpiar_texto("Coffea arabica - Modelos de crecimiento"), ln=1)
+            pdf.set_font("Helvetica", "", 10)
+            pdf.set_text_color(*PDF_MUTED)
+            fuente_txt = "Datos reales" if st.session_state.fuente_datos == "real" else etiqueta_lote
+            pdf.cell(0, 6, limpiar_texto(f"{fuente_txt} | Generado el {datetime.now().strftime('%d/%m/%Y %H:%M')}"), ln=1)
+            if st.session_state.fuente_datos == "real" and st.session_state.cita_datos_reales:
+                pdf.set_font("Helvetica", "I", 9)
+                pdf.multi_cell(0, 5, limpiar_texto(f"Fuente: {st.session_state.cita_datos_reales}"))
+            pdf.set_text_color(*PDF_INK)
+            pdf.set_draw_color(*PDF_ACCENT)
+            pdf.set_line_width(1.0)
+            pdf.line(10, pdf.get_y() + 2, 200, pdf.get_y() + 2)
+            pdf.set_line_width(0.2)
+            pdf.ln(10)
+
+            # --- Metodologia ---
+            titulo_seccion(pdf, "Metodologia")
             pdf.set_font("Helvetica", "", 10)
             texto_metodo = (
                 "Se compararon tres modelos de crecimiento (Exponencial, Logistico, Gompertz) "
@@ -1392,80 +1598,128 @@ elif seccion == "Exportar reporte":
                 f"{N_REPLICAS} replicas por dia, para dos grupos: -M (sin inocular, control) y "
                 "+M (inoculado con hongos micorrizicos arbusculares)."
             )
-            pdf.multi_cell(0, 5.5, limpiar_texto(texto_metodo))
-            pdf.ln(2)
+            pdf.multi_cell(0, 5.8, limpiar_texto(texto_metodo))
+            pdf.ln(6)
 
+            # --- Resultados por variable ---
             for variable in variables_a_mostrar:
-                pdf.set_font("Helvetica", "B", 13)
-                pdf.cell(0, 8, limpiar_texto(f"Resultados - {NOMBRE_VARIABLE[variable]}"), ln=1)
-                pdf.set_font("Helvetica", "", 9)
+                asegurar_espacio(pdf, 40)
+                titulo_seccion(pdf, f"Resultados - {NOMBRE_VARIABLE[variable]}")
+
+                sin_curva = all(RES[variable][g][m].get("insuficiente", False)
+                                 for g in DATOS[variable] for m in modelos_a_mostrar)
+
+                if sin_curva:
+                    dias_g, medias_g, _, _ = media_sd_por_dia(DATOS[variable]["-M"])
+                    dias_p, medias_p, _, _ = media_sd_por_dia(DATOS[variable]["+M"])
+                    dia_final = int(dias_g[-1])
+                    val_m, val_p = medias_g[-1], medias_p[-1]
+                    diff_pct = (val_p - val_m) / val_m * 100 if val_m != 0 else float("nan")
+                    pdf.set_font("Helvetica", "", 10)
+                    pdf.multi_cell(0, 5.8, limpiar_texto(
+                        f"Comparacion directa, dia {dia_final} (sin curva: dias insuficientes para ajustar un "
+                        f"modelo): -M = {val_m:.2f} {UNIDADES[variable]} | +M = {val_p:.2f} {UNIDADES[variable]} "
+                        f"| diferencia = {diff_pct:+.1f}%"
+                    ))
+                    pdf.ln(4)
+                    continue
 
                 # Tabla de R2/RMSE/MAE
-                pdf.set_font("Helvetica", "B", 9)
                 anchos = [18, 24, 46, 20, 20, 20]
                 encabezados = ["Grupo", "Modelo", "Estado", "R2", "RMSE", "MAE"]
+                pdf.set_font("Helvetica", "B", 9)
+                pdf.set_fill_color(*PDF_HEADER_BG)
+                pdf.set_text_color(255, 255, 255)
                 for enc, w in zip(encabezados, anchos):
-                    pdf.cell(w, 6, enc, border=1)
+                    pdf.cell(w, 7, enc, border=0, align="C", fill=True)
                 pdf.ln()
                 pdf.set_font("Helvetica", "", 9)
+                pdf.set_text_color(*PDF_INK)
+                fila_i = 0
                 for grupo in DATOS[variable]:
                     for nombre_modelo in modelos_a_mostrar:
                         res = RES[variable][grupo][nombre_modelo]
                         if res.get("insuficiente"):
                             estado = f"Sin sufic. dias ({res['dias_disponibles']}/{res['dias_requeridos']})"
-                        elif res["r2"] is None:
+                        elif pd.isna(res["r2"]):
                             estado = "Sin ajuste"
                         else:
                             estado = "OK"
                         fila = [grupo, nombre_modelo, estado,
-                                f"{res['r2']:.4f}" if res['r2'] is not None else "-",
-                                f"{res['rmse']:.4f}" if res['rmse'] is not None else "-",
-                                f"{res.get('mae'):.4f}" if res.get('mae') is not None else "-"]
+                                f"{res['r2']:.4f}" if not pd.isna(res['r2']) else "-",
+                                f"{res['rmse']:.4f}" if not pd.isna(res['rmse']) else "-",
+                                f"{res.get('mae'):.4f}" if not pd.isna(res.get('mae')) else "-"]
+                        pdf.set_fill_color(*(PDF_ROW_ALT if fila_i % 2 == 0 else (255, 255, 255)))
                         for val, w in zip(fila, anchos):
-                            pdf.cell(w, 6, limpiar_texto(str(val)), border=1)
+                            pdf.cell(w, 6.5, limpiar_texto(str(val)), border=0, align="C", fill=True)
                         pdf.ln()
-                pdf.ln(3)
-
-                # Grafica de resultados como imagen
-                t_fino = np.linspace(0, 120, 200)
-                fig = make_subplots(rows=1, cols=len(modelos_a_mostrar), subplot_titles=modelos_a_mostrar)
-                for i, nombre_modelo in enumerate(modelos_a_mostrar, start=1):
-                    func = MODELOS[nombre_modelo]["func"]
-                    for grupo in DATOS[variable]:
-                        res = RES[variable][grupo][nombre_modelo]
-                        color = "#9C968C" if grupo == "-M" else "#9A3324"
-                        dias_g, medias_g, sds_g, _ = media_sd_por_dia(DATOS[variable][grupo])
-                        fig.add_trace(go.Scatter(x=dias_g, y=medias_g, mode="markers", name=grupo,
-                                                  marker=dict(color=color, size=6),
-                                                  showlegend=(i == 1)), row=1, col=i)
-                        if res["params"] is not None:
-                            fig.add_trace(go.Scatter(x=t_fino, y=func(t_fino, *res["params"]), mode="lines",
-                                                      line=dict(color=color), showlegend=False), row=1, col=i)
-                fig.update_layout(height=280, width=900, paper_bgcolor="white", plot_bgcolor="white",
-                                   margin=dict(l=30, r=10, t=30, b=30))
-                png_bytes = fig.to_image(format="png", scale=2)
-                with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp_img:
-                    tmp_img.write(png_bytes)
-                    ruta_img = tmp_img.name
-                pdf.image(ruta_img, w=190)
+                        fila_i += 1
                 pdf.ln(4)
 
+                # Grafica de resultados como imagen (una curva por modelo/grupo, solo si hay al menos un ajuste)
+                hay_algun_ajuste = any(
+                    RES[variable][g][m]["params"] is not None
+                    for g in DATOS[variable] for m in modelos_a_mostrar
+                )
+                if hay_algun_ajuste:
+                    t_fino = np.linspace(0, max(media_sd_por_dia(DATOS[variable]["-M"])[0]), 200)
+                    fig = make_subplots(rows=1, cols=len(modelos_a_mostrar), subplot_titles=modelos_a_mostrar)
+                    for i, nombre_modelo in enumerate(modelos_a_mostrar, start=1):
+                        func = MODELOS[nombre_modelo]["func"]
+                        for grupo in DATOS[variable]:
+                            res = RES[variable][grupo][nombre_modelo]
+                            color = "#9C968C" if grupo == "-M" else "#9A3324"
+                            dias_g, medias_g, sds_g, _ = media_sd_por_dia(DATOS[variable][grupo])
+                            fig.add_trace(go.Scatter(x=dias_g, y=medias_g, mode="markers", name=grupo,
+                                                      marker=dict(color=color, size=6),
+                                                      showlegend=(i == 1)), row=1, col=i)
+                            if res["params"] is not None:
+                                fig.add_trace(go.Scatter(x=t_fino, y=func(t_fino, *res["params"]), mode="lines",
+                                                          line=dict(color=color), showlegend=False), row=1, col=i)
+                    fig.update_layout(height=280, width=900, paper_bgcolor="white", plot_bgcolor="white",
+                                       margin=dict(l=30, r=10, t=30, b=30))
+                    insertar_imagen_png(pdf, fig.to_image(format="png", scale=2))
+                else:
+                    pdf.set_font("Helvetica", "I", 9)
+                    pdf.set_text_color(*PDF_MUTED)
+                    pdf.multi_cell(0, 5.5, limpiar_texto(
+                        "No se dibuja grafica: ningun modelo pudo ajustarse para esta variable."
+                    ))
+                    pdf.set_text_color(*PDF_INK)
+                    pdf.ln(3)
+
+            # --- Comparacion visual -M vs +M (ilustracion esquematica) ---
+            png_ilustracion = generar_ilustracion_plantas(DATOS, st.session_state.fuente_datos)
+            if png_ilustracion is not None:
+                pdf.add_page()
+                titulo_seccion(pdf, "Comparacion visual -M vs +M")
+                pdf.set_font("Helvetica", "", 9)
+                pdf.set_text_color(*PDF_MUTED)
+                origen_pie = "los datos reales cargados" if st.session_state.fuente_datos == "real" else "los datos de prueba simulados"
+                pdf.multi_cell(0, 5.2, limpiar_texto(
+                    f"Ilustracion conceptual generada a partir de {origen_pie} en el ultimo dia de muestreo "
+                    "disponible -- NO es una fotografia del experimento."
+                ))
+                pdf.set_text_color(*PDF_INK)
+                pdf.ln(2)
+                insertar_imagen_png(pdf, png_ilustracion)
+
+            # --- Conclusiones ---
             pdf.add_page()
-            pdf.set_font("Helvetica", "B", 13)
-            pdf.cell(0, 8, "Conclusiones", ln=1)
-            pdf.set_font("Helvetica", "", 10)
-            conclusiones_txt = (
-                "1. Los tres modelos se ajustan razonablemente, pero Logistico y Gompertz superan "
-                "de forma consistente al Exponencial en R2.\n"
-                "2. La eleccion final entre Logistico y Gompertz debe basarse en cual describe "
-                "mejor el patron biologico observado, no solo en R2/RMSE.\n"
-                "3. El grupo +M muestra consistentemente valores mas altos que -M, lo que -con "
-                "datos reales- apoyaria la hipotesis de que la inoculacion con HMA favorece el "
-                "crecimiento.\n\n"
-                "Limitaciones: validacion externa pendiente; datos de prueba simulados en esta "
-                "fase (o datos reales, segun corresponda)."
-            )
-            pdf.multi_cell(0, 5.5, limpiar_texto(conclusiones_txt))
+            titulo_seccion(pdf, "Conclusiones")
+            conclusiones = [
+                "Los tres modelos se ajustan razonablemente, pero conviene comparar R2 y RMSE por variable "
+                "antes de elegir el definitivo, en vez de asumir que uno domina siempre.",
+                "La eleccion final entre Logistico y Gompertz debe basarse en cual describe mejor el patron "
+                "biologico observado, no solo en R2/RMSE.",
+                "El grupo +M muestra consistentemente valores mas altos que -M, lo que apoyaria la hipotesis "
+                "de que la inoculacion con HMA favorece el crecimiento.",
+            ]
+            lista_con_vinetas(pdf, conclusiones, numerada=True)
+
+            # --- Sugerencias (dinamicas segun la fuente de datos) ---
+            titulo_seccion(pdf, "Sugerencias")
+            lista_con_vinetas(pdf, generar_sugerencias(st.session_state.fuente_datos), numerada=False)
 
             pdf_bytes = bytes(pdf.output())
 

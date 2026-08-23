@@ -7,3 +7,4 @@ openpyxl
 fpdf2
 kaleido==0.2.1
 matplotlib
+Pillow

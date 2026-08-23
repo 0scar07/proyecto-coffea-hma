@@ -44,9 +44,11 @@ badges de bondad de ajuste (R²) por grupo y modelo
 
 ![Residuos](docs/screenshots/residuos.png)
 
-**Resultados con datos reales insuficientes** — cuando un dataset real solo
-tiene un día de muestreo, la app avisa de inmediato y muestra una
-comparación directa en vez de forzar un ajuste sin sentido
+**Resultados con datos reales** — con los 4 días de muestreo del Cuadro 2
+del paper, la app ajusta curvas completas para −M y +M en cada variable
+(cuando un dataset tiene menos días de los que un modelo necesita, la app
+avisa de inmediato y muestra una comparación directa en vez de forzar un
+ajuste sin sentido)
 
 ![Resultados con datos reales](docs/screenshots/resultados_datos_reales.png)
 
@@ -80,10 +82,13 @@ corresponden al Cuadro 2 de:
 > *Revista Fitotecnia Mexicana*, 46(3), 273-281.
 > DOI: [10.35196/rfm.2023.3.273](https://doi.org/10.35196/rfm.2023.3.273)
 
-Biomasa seca del brote y área foliar a día 135, n=34 réplicas por grupo.
-Al tener un solo día de muestreo, estos datos sirven para comparar valores
-puntuales entre grupos (con prueba t), pero no alcanzan para ajustar una
-curva de crecimiento — la app lo señala explícitamente en vez de simularlo.
+Altura, número de hojas, área foliar y biomasa total en 4 momentos de
+muestreo (28, 56, 84 y 112 días después del trasplante), 5 réplicas por
+grupo y día. Como el paper reporta media y desviación estándar por
+tratamiento (no mediciones planta por planta), las réplicas individuales
+cargadas son sintéticas — generadas para reproducir exactamente esos
+estadísticos reportados, no mediciones reales por planta. La variable
+diámetro del tallo no está en el paper y sigue usando datos simulados.
 
 ## Stack
 
@@ -139,13 +144,22 @@ quedado de una versión anterior).
 
 ## Estado y limitaciones conocidas
 
-- Datos reales completos solo para **biomasa** y **área foliar** (un día de
-  muestreo, Cuadro 2 del paper citado arriba). Las demás variables (altura,
-  diámetro del tallo, número de hojas) siguen usando datos simulados hasta
-  contar con mediciones reales en varios días.
-- Los parámetros de forma de Logístico y Gompertz (`k`, `Ti`) dependen de
-  qué tan buena sea la cobertura temporal real de las mediciones — con
-  pocos puntos, el ajuste pierde estabilidad.
+- Datos reales completos para 4 variables (altura, número de hojas, área
+  foliar y biomasa total) en 4 días de muestreo (28, 56, 84 y 112 ddt),
+  según el Cuadro 2 del paper citado arriba. La variable diámetro del
+  tallo sigue usando datos simulados, ya que el paper fuente no la reporta.
+- Los parámetros de forma de Logístico y Gompertz (`K`, tasa) dependen de
+  que los datos cubran también la fase de desaceleración del crecimiento,
+  no solo la fase inicial acelerada. Con los 4 días disponibles (28-112
+  ddt) la planta aún no muestra ese "codo" de desaceleración, y con solo 4
+  puntos por grupo (1 grado de libertad para un modelo de 3 parámetros) el
+  ajuste queda muy ajustado: en la práctica, **Gompertz falla en converger
+  en uno de los dos grupos** (−M o +M, según la variable) para altura,
+  área foliar y biomasa total, mientras que Exponencial y Logístico sí
+  ajustan de forma estable en esas tres variables. En número de hojas los
+  tres modelos convergen sin problema en ambos grupos. Esta es una
+  limitación esperada de pocos puntos de muestreo, no un error de la
+  aplicación.
 
 ## Licencia
 
