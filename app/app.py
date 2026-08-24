@@ -1025,7 +1025,6 @@ elif seccion == "Resultados":
         box-shadow: 0 6px 16px rgba(32,28,24,0.09); }}
     </style>""", unsafe_allow_html=True)
     RES = st.session_state.resultados
-    t_fino = np.linspace(0, 120, 300)
     COLOR_GRUPO = {"-M": T["CONTROL"], "+M": T["ACCENT"]}
 
     st.caption(f"Mostrando {etiqueta_lote.lower()} · "
@@ -1071,6 +1070,22 @@ elif seccion == "Resultados":
             st.write("")
             continue
 
+        dias_todos = sorted(set(DATOS[variable]["-M"].keys()) | set(DATOS[variable]["+M"].keys()))
+        t_fino = np.linspace(dias_todos[0], dias_todos[-1], 300)
+
+        # Rango de eje Y basado en los datos observados (media +/- DE), no en la curva
+        # ajustada: con pocos puntos, la banda de confianza Monte Carlo de un parametro
+        # mal identificado puede dispararse a valores absurdos y, si se deja que el eje
+        # se autoescale a eso, aplasta la curva real (que sigue siendo razonable).
+        extremos_obs = []
+        for grupo in DATOS[variable]:
+            _, medias_g, sds_g, _ = media_sd_por_dia(DATOS[variable][grupo])
+            extremos_obs.extend((medias_g - sds_g).tolist())
+            extremos_obs.extend((medias_g + sds_g).tolist())
+        y_obs_min, y_obs_max = min(extremos_obs), max(extremos_obs)
+        rango_obs = max(y_obs_max - y_obs_min, 1e-6)
+        rango_y = [y_obs_min - 0.25 * rango_obs, y_obs_max + 0.35 * rango_obs]
+
         n = len(modelos_a_mostrar)
         fig = make_subplots(rows=1, cols=n, subplot_titles=modelos_a_mostrar, horizontal_spacing=0.06)
 
@@ -1103,6 +1118,7 @@ elif seccion == "Resultados":
                         line=dict(color=color, width=2.5), hoverinfo="skip",
                     ), row=1, col=i)
             fig.update_xaxes(title_text="DAT (días)", row=1, col=i)
+            fig.update_yaxes(range=rango_y, row=1, col=i)
             if i == 1:
                 fig.update_yaxes(title_text=f"{NOMBRE_VARIABLE[variable]} ({UNIDADES[variable]})", row=1, col=i)
 
@@ -1129,8 +1145,12 @@ elif seccion == "Resultados":
         with st.container(border=True):
             st.markdown('<span class="ficha-marca"></span>', unsafe_allow_html=True)
             st.markdown('<span class="field-label">Tabla de ajuste</span>', unsafe_allow_html=True)
-            st.dataframe(df_tabla.style.background_gradient(subset=["R²"], cmap="Greens", vmin=0.5, vmax=1.0),
-                         width='stretch', hide_index=True)
+            estilo_tabla = (
+                df_tabla.style
+                .background_gradient(subset=["R²"], cmap="Greens", vmin=0.5, vmax=1.0)
+                .map(lambda v: f"background-color: {T['CARD']}; color: {T['INK']};" if pd.isna(v) else "", subset=["R²"])
+            )
+            st.dataframe(estilo_tabla, width='stretch', hide_index=True)
         st.write("")
 
 
@@ -1662,7 +1682,8 @@ elif seccion == "Exportar reporte":
                     for g in DATOS[variable] for m in modelos_a_mostrar
                 )
                 if hay_algun_ajuste:
-                    t_fino = np.linspace(0, max(media_sd_por_dia(DATOS[variable]["-M"])[0]), 200)
+                    dias_todos_pdf = sorted(set(DATOS[variable]["-M"].keys()) | set(DATOS[variable]["+M"].keys()))
+                    t_fino = np.linspace(dias_todos_pdf[0], dias_todos_pdf[-1], 200)
                     fig = make_subplots(rows=1, cols=len(modelos_a_mostrar), subplot_titles=modelos_a_mostrar)
                     for i, nombre_modelo in enumerate(modelos_a_mostrar, start=1):
                         func = MODELOS[nombre_modelo]["func"]
