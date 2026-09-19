@@ -210,10 +210,15 @@ def estilo_publicacion(fig, height=420, right_margin=190, top_margin=70, bottom_
     negro fino con ticks hacia afuera, cuadrícula tenue solo en Y, leyenda fuera
     del área de trazado (a la derecha), fuente y tamaños consistentes. No toca
     datos ni trazos, solo layout/ejes -- se llama al final de cada fig_*()."""
+    # Si la figura no trae titulo propio (varias no lo usan a proposito, para no
+    # chocar con subplot_titles), hay que fijar text="" explicitamente: si se deja
+    # sin definir, Plotly.js renderiza el titulo como el texto literal "undefined".
+    titulo_actual = fig.layout.title.text if fig.layout.title is not None else None
     fig.update_layout(
         font=dict(family=FUENTE_PUBLICACION, size=13, color="#1A1A1A"),
         paper_bgcolor="white", plot_bgcolor="white",
-        title=dict(font=dict(family=FUENTE_PUBLICACION, size=16, color="#1A1A1A"), x=0.01, xanchor="left"),
+        title=dict(text=titulo_actual or "", font=dict(family=FUENTE_PUBLICACION, size=16, color="#1A1A1A"),
+                    x=0.01, xanchor="left"),
         legend=dict(orientation="v", yanchor="middle", y=0.5, xanchor="left", x=1.02,
                     bgcolor="rgba(255,255,255,0)", bordercolor="rgba(0,0,0,0)",
                     font=dict(family=FUENTE_PUBLICACION, size=12)),
