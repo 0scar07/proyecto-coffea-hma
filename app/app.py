@@ -1778,14 +1778,6 @@ elif seccion == "Resultados":
     st.caption(f"Mostrando {etiqueta_lote.lower()} · "
                f"{', '.join(NOMBRE_VARIABLE[v] for v in variables_a_mostrar)} · {', '.join(modelos_a_mostrar)}")
 
-    if st.session_state.fuente_datos == "real":
-        st.info(
-            "**Nota metodológica.** Los datos provienen de Aguirre-Medina et al. (2023), Revista "
-            "Fitotecnia Mexicana. Las réplicas individuales fueron generadas sintéticamente a partir "
-            "de las medias y el CV% publicados en el artículo (no son mediciones planta por planta).",
-            icon="📄",
-        )
-
     for variable in variables_a_mostrar:
         st.markdown('<span class="eyebrow">Variable</span>', unsafe_allow_html=True)
         st.markdown(f"### {NOMBRE_VARIABLE[variable]} · {UNIDADES[variable]}")
