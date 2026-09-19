@@ -1,0 +1,4 @@
+# Archivos intermedios de la generación del PDF (previsualizaciones página por página,
+# capturas anotadas de borrador): se regeneran con fuente_pdf/generar_guia_pdf.py y no se versionan.
+previews/
+_build/

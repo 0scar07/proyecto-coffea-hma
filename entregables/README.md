@@ -19,6 +19,8 @@ La lista de productos y sus indicadores/beneficiarios provienen de la tabla de R
 | 9 | Desarrollar una guía práctica de uso e interpretación del modelo | [`06_guia_tecnica/`](06_guia_tecnica/) | Borrador para revisión del docente | Revisión del docente |
 | 10 | Socializar los resultados mediante una ponencia en un evento académico | [`07_ponencia/`](07_ponencia/) | Esquema (solo guion en Markdown) | Evento y fecha; generar el archivo de diapositivas si se solicita |
 
+La guía técnica del producto 9 ahora también existe en PDF: [`06_guia_tecnica/guia_tecnica_usuario.pdf`](06_guia_tecnica/guia_tecnica_usuario.pdf).
+
 ## Notas transversales a todos los documentos
 
 - Todas las cifras de resultados (R², RMSE, MAE, medias, incrementos %, valores t y p) se recalcularon directamente sobre `datos_reales/datos_reales_coffea_2023.xlsx` con las funciones reales de `app/app.py` el 2026-09-19 — no se copiaron de memoria ni se estimaron.
