@@ -26,6 +26,7 @@ from plotly.subplots import make_subplots
 from scipy.optimize import curve_fit
 from scipy.stats import t as t_dist, ttest_ind
 from fpdf import FPDF
+from fpdf.enums import XPos, YPos
 from PIL import Image
 
 st.set_page_config(page_title="Coffea arabica · Modelos de crecimiento", page_icon="⸙", layout="wide")
@@ -389,6 +390,123 @@ def prueba_t_independiente(datos, variable, dia):
     }
 
 
+NOTA_NO_CONVERGENCIA_K = (
+    "Cuando Logístico o Gompertz no convergen con estos datos, la causa más probable es que la "
+    "ventana de muestreo disponible no alcance a capturar la fase de desaceleración necesaria para "
+    "estimar la capacidad de carga (K) de una curva en forma de S."
+)
+
+
+def calcular_tabla_modelo(RES, datos, variable, modelos):
+    """Para una variable: por cada grupo (-M/+M), arma las filas Grupo/Modelo/R2/RMSE/MAE con una
+    nota corta cuando el modelo no pudo ajustarse, y determina el modelo con mejor R2 de entre los
+    que sí ajustaron. No recalcula nada: solo lee los resultados que ya produjo
+    `ajustar_todos_los_modelos` (misma regla de insuficiente/no convergió, sin tocarla)."""
+    filas = []
+    mejores = {}
+    for grupo in datos[variable]:
+        validos = []
+        for m in modelos:
+            r2 = RES[variable][grupo][m]["r2"]
+            if r2 is not None and not (isinstance(r2, float) and np.isnan(r2)):
+                validos.append((m, r2))
+        mejores[grupo] = max(validos, key=lambda x: x[1])[0] if validos else None
+        for m in modelos:
+            res = RES[variable][grupo][m]
+            r2, rmse, mae = res["r2"], res["rmse"], res.get("mae")
+            r2_ok = r2 is not None and not (isinstance(r2, float) and np.isnan(r2))
+            if res.get("insuficiente"):
+                nota = f"Sin suficientes días ({res['dias_disponibles']}/{res['dias_requeridos']})"
+            elif not r2_ok:
+                nota = "No convergió"
+            else:
+                nota = ""
+            filas.append({
+                "grupo": grupo, "modelo": m,
+                "r2": round(r2, 4) if r2_ok else None,
+                "rmse": round(rmse, 4) if rmse is not None and not (isinstance(rmse, float) and np.isnan(rmse)) else None,
+                "mae": round(mae, 4) if mae is not None and not (isinstance(mae, float) and np.isnan(mae)) else None,
+                "mejor": m == mejores[grupo],
+                "nota": nota,
+            })
+    return filas, mejores
+
+
+def calcular_efecto_micorriza(datos, variable):
+    """Por cada día con réplicas en ambos grupos, calcula el % de incremento de +M sobre -M y la
+    prueba t de Welch entre grupos, reutilizando `prueba_t_independiente` (misma prueba que ya usa
+    la sección Estadística, sin duplicar su lógica)."""
+    filas = []
+    dias = sorted(set(datos[variable]["-M"].keys()) & set(datos[variable]["+M"].keys()))
+    for dia in dias:
+        t_res = prueba_t_independiente(datos, variable, dia)
+        if t_res is None:
+            continue
+        incremento_pct = ((t_res["media_tratado"] - t_res["media_control"]) / t_res["media_control"] * 100
+                           if t_res["media_control"] != 0 else float("nan"))
+        filas.append({"dia": dia, "incremento_pct": incremento_pct, **t_res})
+    return filas
+
+
+def texto_interpretativo_efecto(variable, fila):
+    dia = int(fila["dia"])
+    inc = fila["incremento_pct"]
+    direccion = "superó a" if inc >= 0 else "fue menor que"
+    signif = "significativo" if fila["significativo"] else "no significativo"
+    return (f"A los {dia} ddt, {NOMBRE_VARIABLE[variable].lower()} de +M {direccion} -M en "
+            f"{abs(inc):.1f}% (p = {fila['p']:.4f}, {signif}).")
+
+
+def fig_barras_variable(datos, variable):
+    """Barras agrupadas -M vs +M por día: altura de barra = media de réplicas, con barras de error
+    = desviación estándar. Independiente de las curvas de crecimiento ya existentes."""
+    fig = go.Figure()
+    for grupo in ("-M", "+M"):
+        if grupo not in datos[variable]:
+            continue
+        color = T["CONTROL"] if grupo == "-M" else T["ACCENT"]
+        dias, medias, sds, _ = media_sd_por_dia(datos[variable][grupo])
+        fig.add_trace(go.Bar(
+            x=[str(int(d)) for d in dias], y=medias, name=grupo,
+            error_y=dict(type="data", array=sds, visible=True, color=T["INK_MUTED"], thickness=1.3, width=4),
+            marker_color=color,
+        ))
+    fig.update_layout(
+        barmode="group", height=380,
+        title=f"{NOMBRE_VARIABLE[variable]} por día — media ± DE",
+        xaxis_title="Día después del trasplante (ddt)",
+        yaxis_title=f"{NOMBRE_VARIABLE[variable]} ({UNIDADES[variable]})",
+        legend=dict(orientation="h", yanchor="bottom", y=1.06, x=0),
+    )
+    return fig
+
+
+def fig_barras_r2_comparacion(RES, datos, variables, modelos):
+    """Barras del R2 de cada modelo (Exponencial/Logístico/Gompertz) por variable y grupo, dejando
+    la barra en 0 con la etiqueta 'No convergió' o 'Sin días suficientes' donde corresponda."""
+    fig = make_subplots(rows=1, cols=len(variables), subplot_titles=[NOMBRE_VARIABLE[v] for v in variables],
+                         horizontal_spacing=0.08)
+    for i, variable in enumerate(variables, start=1):
+        for grupo in datos[variable]:
+            color = T["CONTROL"] if grupo == "-M" else T["ACCENT"]
+            ys, textos = [], []
+            for m in modelos:
+                res = RES[variable][grupo][m]
+                r2 = res["r2"]
+                if res.get("insuficiente"):
+                    ys.append(0); textos.append("Sin días suficientes")
+                elif r2 is None or (isinstance(r2, float) and np.isnan(r2)):
+                    ys.append(0); textos.append("No convergió")
+                else:
+                    ys.append(round(r2, 3)); textos.append(f"{r2:.3f}")
+            fig.add_trace(go.Bar(x=modelos, y=ys, name=grupo, legendgroup=grupo, showlegend=(i == 1),
+                                  marker_color=color, text=textos, textposition="outside"), row=1, col=i)
+        fig.update_yaxes(range=[0, 1.18], row=1, col=i, title_text=("R²" if i == 1 else None))
+    fig.update_layout(barmode="group", height=380, title="Comparación de R² por modelo y variable",
+                       legend=dict(orientation="h", yanchor="bottom", y=1.14, x=0))
+    return fig
+
+
 def calcular_banda_confianza(func, popt, pcov, t_eval, n_muestras=400, semilla_mc=7):
     if popt is None or pcov is None or np.any(np.isnan(pcov)):
         return None, None
@@ -728,6 +846,8 @@ with st.sidebar:
     st.markdown('<span class="field-label">Análisis</span>', unsafe_allow_html=True)
     nav_item("Metodología")
     nav_item("Resultados")
+    nav_item("Gráficas de barras")
+    nav_item("Resultados esperados")
     nav_item("Estadística")
     nav_item("Residuos")
     nav_item("Discusión y conclusiones")
@@ -943,7 +1063,8 @@ elif seccion == "Ajustar modelos":
 # ==============================================================================
 # GUARDIA
 # ==============================================================================
-elif seccion in ("Resultados", "Estadística", "Residuos", "Discusión y conclusiones", "Exportar reporte") and not st.session_state.ajustado:
+elif seccion in ("Resultados", "Gráficas de barras", "Resultados esperados", "Estadística", "Residuos",
+                  "Discusión y conclusiones", "Exportar reporte") and not st.session_state.ajustado:
     st.markdown(f"### {seccion}")
     with st.container(border=True):
         st.markdown('<span class="ficha-marca"></span>', unsafe_allow_html=True)
@@ -1029,6 +1150,14 @@ elif seccion == "Resultados":
 
     st.caption(f"Mostrando {etiqueta_lote.lower()} · "
                f"{', '.join(NOMBRE_VARIABLE[v] for v in variables_a_mostrar)} · {', '.join(modelos_a_mostrar)}")
+
+    if st.session_state.fuente_datos == "real":
+        st.info(
+            "**Nota metodológica.** Los datos provienen de Aguirre-Medina et al. (2023), Revista "
+            "Fitotecnia Mexicana. Las réplicas individuales fueron generadas sintéticamente a partir "
+            "de las medias y el CV% publicados en el artículo (no son mediciones planta por planta).",
+            icon="📄",
+        )
 
     for variable in variables_a_mostrar:
         st.markdown('<span class="eyebrow">Variable</span>', unsafe_allow_html=True)
@@ -1152,6 +1281,115 @@ elif seccion == "Resultados":
             )
             st.dataframe(estilo_tabla, width='stretch', hide_index=True)
         st.write("")
+
+
+# ==============================================================================
+# SECCIÓN · GRÁFICAS DE BARRAS
+# ==============================================================================
+elif seccion == "Gráficas de barras":
+    RES = st.session_state.resultados
+    st.markdown("### Gráficas de barras")
+    st.markdown(
+        "Comparación de medias por día (barras agrupadas −M vs +M), independiente de las curvas de "
+        "crecimiento ya ajustadas en **Resultados**. Cada figura se puede descargar en PNG."
+    )
+    st.write("")
+
+    for variable in variables_a_mostrar:
+        fig_var = fig_barras_variable(DATOS, variable)
+        st.plotly_chart(fig_var, width='stretch')
+        st.download_button(
+            f"Descargar PNG — {NOMBRE_VARIABLE[variable]}",
+            data=fig_var.to_image(format="png", scale=2),
+            file_name=f"barras_{variable}.png", mime="image/png", key=f"png_barras_{variable}",
+        )
+        st.write("")
+
+    st.markdown('<hr class="rule">', unsafe_allow_html=True)
+    st.markdown("### Comparación de R² por modelo")
+    st.markdown(
+        "R² de Exponencial, Logístico y Gompertz por variable y grupo. Donde un modelo no convergió "
+        "o no tuvo suficientes días de muestreo, la barra se muestra vacía con la etiqueta correspondiente."
+    )
+    fig_r2 = fig_barras_r2_comparacion(RES, DATOS, variables_a_mostrar, modelos_a_mostrar)
+    st.plotly_chart(fig_r2, width='stretch')
+    st.download_button(
+        "Descargar PNG — Comparación de R²",
+        data=fig_r2.to_image(format="png", scale=2),
+        file_name="barras_r2_comparacion.png", mime="image/png", key="png_barras_r2",
+    )
+    st.caption("Estas gráficas también se incluyen en el reporte PDF (sección Exportar reporte).")
+
+
+# ==============================================================================
+# SECCIÓN · RESULTADOS ESPERADOS
+# ==============================================================================
+elif seccion == "Resultados esperados":
+    RES = st.session_state.resultados
+    st.markdown("### Resultados esperados")
+    st.markdown(
+        "Generado automáticamente a partir de los datos y el último ajuste. Cubre los dos resultados "
+        "esperados del proyecto que se pueden calcular directamente con estos datos: **(1)** el modelo "
+        "de crecimiento que mejor describe cada variable, y **(2)** el efecto de la inoculación "
+        "micorrízica (+M vs −M). Los demás resultados esperados del proyecto (manuscrito para revista "
+        "indexada, taller de capacitación, publicación colaborativa, guía técnica, ponencia) son "
+        "entregables de gestión/difusión y no se calculan a partir de estos datos."
+    )
+    st.write("")
+
+    if st.session_state.fuente_datos == "real":
+        st.info(
+            "**Nota metodológica.** Los datos provienen de Aguirre-Medina et al. (2023), Revista "
+            "Fitotecnia Mexicana. Las réplicas individuales fueron generadas sintéticamente a partir "
+            "de las medias y el CV% publicados en el artículo (no son mediciones planta por planta).",
+            icon="📄",
+        )
+        st.write("")
+
+    st.markdown('<span class="eyebrow">Resultado esperado 1 · Modelo que mejor describe cada variable</span>',
+                unsafe_allow_html=True)
+    if len(modelos_a_mostrar) < 3:
+        st.caption(
+            "Nota: el último ajuste solo incluyó " + ", ".join(modelos_a_mostrar) + ". Para comparar "
+            "los tres modelos, vuelve a *Ajustar modelos* con Exponencial, Logístico y Gompertz activados."
+        )
+    for variable in variables_a_mostrar:
+        filas_modelo, mejores = calcular_tabla_modelo(RES, DATOS, variable, modelos_a_mostrar)
+        st.markdown(f"**{NOMBRE_VARIABLE[variable]}**")
+        df_modelo = pd.DataFrame([{
+            "Grupo": f["grupo"], "Modelo": f["modelo"], "R²": f["r2"], "RMSE": f["rmse"], "MAE": f["mae"],
+            "Mejor modelo": "⭐" if f["mejor"] else "", "Nota": f["nota"],
+        } for f in filas_modelo])
+        st.dataframe(df_modelo, width='stretch', hide_index=True)
+        for grupo, mejor in mejores.items():
+            st.caption(f"{grupo}: " + (f"mejor modelo = **{mejor}**." if mejor
+                                        else "ningún modelo convergió con los datos actuales."))
+        if any(f["nota"] == "No convergió" for f in filas_modelo):
+            st.caption(f"ℹ️ {NOTA_NO_CONVERGENCIA_K}")
+        st.write("")
+
+    st.markdown('<hr class="rule">', unsafe_allow_html=True)
+    st.markdown('<span class="eyebrow">Resultado esperado 2 · Efecto de la inoculación micorrízica (+M vs −M)</span>',
+                unsafe_allow_html=True)
+    for variable in variables_a_mostrar:
+        filas_efecto = calcular_efecto_micorriza(DATOS, variable)
+        st.markdown(f"**{NOMBRE_VARIABLE[variable]}**")
+        if not filas_efecto:
+            st.caption("No hay suficientes réplicas en ambos grupos para calcular el efecto.")
+            continue
+        df_efecto = pd.DataFrame([{
+            "Día (ddt)": int(f["dia"]),
+            f"Media −M ({UNIDADES[variable]})": round(f["media_control"], 2),
+            f"Media +M ({UNIDADES[variable]})": round(f["media_tratado"], 2),
+            "Incremento +M vs −M (%)": round(f["incremento_pct"], 1),
+            "t (Welch)": round(f["t"], 3), "p": round(f["p"], 4),
+            "Significativo (p<0.05)": "Sí" if f["significativo"] else "No",
+        } for f in filas_efecto])
+        st.dataframe(df_efecto, width='stretch', hide_index=True)
+        st.markdown(texto_interpretativo_efecto(variable, filas_efecto[-1]))
+        st.write("")
+
+    st.caption("Ambos resultados se incluyen en el reporte PDF (sección Exportar reporte).")
 
 
 # ==============================================================================
@@ -1498,6 +1736,8 @@ elif seccion == "Exportar reporte":
             "- Metodología breve de los tres modelos comparados\n"
             "- Tabla de R², RMSE y MAE por grupo y modelo (con el estado de cada ajuste)\n"
             "- Gráficas de curvas ajustadas por variable\n"
+            "- Gráficas de barras por variable y comparación de R² por modelo\n"
+            "- Resultados esperados: mejor modelo por variable y efecto +M vs −M con prueba t\n"
             "- Conclusiones generales"
         )
         generar_pdf = st.button("Generar reporte PDF", type="primary")
@@ -1583,6 +1823,22 @@ elif seccion == "Exportar reporte":
         asegurar_espacio(pdf, alto_mm + 6)
         pdf.image(ruta_img, w=ancho_mm)
         pdf.ln(5)
+
+    def tabla_pdf(pdf, encabezados, anchos, filas):
+        pdf.set_font("Helvetica", "B", 9)
+        pdf.set_fill_color(*PDF_HEADER_BG)
+        pdf.set_text_color(255, 255, 255)
+        for enc, w in zip(encabezados, anchos):
+            pdf.cell(w, 7, limpiar_texto(enc), border=0, align="C", fill=True)
+        pdf.ln()
+        pdf.set_font("Helvetica", "", 8)
+        pdf.set_text_color(*PDF_INK)
+        for i, fila in enumerate(filas):
+            pdf.set_fill_color(*(PDF_ROW_ALT if i % 2 == 0 else (255, 255, 255)))
+            for val, w in zip(fila, anchos):
+                pdf.cell(w, 6.5, limpiar_texto(str(val)), border=0, align="C", fill=True)
+            pdf.ln()
+        pdf.ln(4)
 
     if generar_pdf:
         with st.spinner("Generando PDF..."):
@@ -1708,6 +1964,99 @@ elif seccion == "Exportar reporte":
                     ))
                     pdf.set_text_color(*PDF_INK)
                     pdf.ln(3)
+
+            # --- Graficas de barras (independientes de las curvas ya incluidas arriba) ---
+            pdf.add_page()
+            titulo_seccion(pdf, "Graficas de barras")
+            for variable in variables_a_mostrar:
+                asegurar_espacio(pdf, 90)
+                subtitulo_variable(pdf, NOMBRE_VARIABLE[variable])
+                fig_barra_pdf = fig_barras_variable(DATOS, variable)
+                fig_barra_pdf.update_layout(paper_bgcolor="white", plot_bgcolor="white", width=900, height=340)
+                insertar_imagen_png(pdf, fig_barra_pdf.to_image(format="png", scale=2))
+
+            asegurar_espacio(pdf, 90)
+            subtitulo_variable(pdf, "Comparacion de R2 por modelo")
+            fig_r2_pdf = fig_barras_r2_comparacion(RES, DATOS, variables_a_mostrar, modelos_a_mostrar)
+            fig_r2_pdf.update_layout(paper_bgcolor="white", plot_bgcolor="white", width=1000, height=340)
+            insertar_imagen_png(pdf, fig_r2_pdf.to_image(format="png", scale=2))
+
+            # --- Resultados esperados (modelo que mejor describe cada variable + efecto +M vs -M) ---
+            pdf.add_page()
+            titulo_seccion(pdf, "Resultados esperados")
+
+            if st.session_state.fuente_datos == "real":
+                pdf.set_font("Helvetica", "I", 9)
+                pdf.set_text_color(*PDF_MUTED)
+                pdf.multi_cell(0, 5.2, limpiar_texto(
+                    "Nota metodologica: los datos provienen de Aguirre-Medina et al. (2023), Revista "
+                    "Fitotecnia Mexicana. Las replicas individuales fueron generadas sinteticamente a "
+                    "partir de las medias y el CV% publicados en el articulo (no son mediciones planta "
+                    "por planta)."
+                ), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+                pdf.set_text_color(*PDF_INK)
+                pdf.ln(3)
+
+            subtitulo_variable(pdf, "Resultado esperado 1 - Modelo que mejor describe cada variable")
+            hubo_no_convergencia = False
+            for variable in variables_a_mostrar:
+                filas_modelo, mejores = calcular_tabla_modelo(RES, DATOS, variable, modelos_a_mostrar)
+                asegurar_espacio(pdf, 12 + 6.5 * len(filas_modelo))
+                pdf.set_font("Helvetica", "B", 10)
+                pdf.cell(0, 7, limpiar_texto(NOMBRE_VARIABLE[variable]), ln=1)
+                encabezados_m = ["Grupo", "Modelo", "R2", "RMSE", "MAE", "Mejor", "Nota"]
+                anchos_m = [16, 24, 18, 18, 18, 16, 80]
+                filas_pdf_m = [[
+                    f["grupo"], f["modelo"],
+                    f"{f['r2']:.4f}" if f["r2"] is not None else "-",
+                    f"{f['rmse']:.4f}" if f["rmse"] is not None else "-",
+                    f"{f['mae']:.4f}" if f["mae"] is not None else "-",
+                    "Si" if f["mejor"] else "", f["nota"] or "-",
+                ] for f in filas_modelo]
+                tabla_pdf(pdf, encabezados_m, anchos_m, filas_pdf_m)
+                for grupo, mejor in mejores.items():
+                    pdf.set_font("Helvetica", "", 9)
+                    pdf.multi_cell(0, 5.2, limpiar_texto(
+                        f"{grupo}: " + (f"mejor modelo = {mejor}." if mejor
+                                        else "ningun modelo convergio con los datos actuales.")
+                    ), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+                if any(f["nota"] == "No convergió" for f in filas_modelo):
+                    hubo_no_convergencia = True
+                pdf.ln(2)
+            if hubo_no_convergencia:
+                pdf.set_font("Helvetica", "I", 8.5)
+                pdf.set_text_color(*PDF_MUTED)
+                pdf.multi_cell(0, 5, limpiar_texto(f"Nota: {NOTA_NO_CONVERGENCIA_K}"),
+                               new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+                pdf.set_text_color(*PDF_INK)
+            pdf.ln(4)
+
+            subtitulo_variable(pdf, "Resultado esperado 2 - Efecto de la inoculacion micorrizica (+M vs -M)")
+            for variable in variables_a_mostrar:
+                filas_efecto = calcular_efecto_micorriza(DATOS, variable)
+                asegurar_espacio(pdf, 20)
+                pdf.set_font("Helvetica", "B", 10)
+                pdf.cell(0, 7, limpiar_texto(NOMBRE_VARIABLE[variable]), ln=1)
+                if not filas_efecto:
+                    pdf.set_font("Helvetica", "", 9)
+                    pdf.multi_cell(0, 5.5, limpiar_texto(
+                        "No hay suficientes replicas en ambos grupos para calcular el efecto."
+                    ), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+                    pdf.ln(2)
+                    continue
+                asegurar_espacio(pdf, 12 + 6.5 * len(filas_efecto))
+                encabezados_e = ["Dia", "Media -M", "Media +M", "Increm. %", "t", "p", "Signif."]
+                anchos_e = [16, 28, 28, 26, 20, 22, 20]
+                filas_pdf_e = [[
+                    int(f["dia"]), f"{f['media_control']:.2f}", f"{f['media_tratado']:.2f}",
+                    f"{f['incremento_pct']:+.1f}", f"{f['t']:.3f}", f"{f['p']:.4f}",
+                    "Si" if f["significativo"] else "No",
+                ] for f in filas_efecto]
+                tabla_pdf(pdf, encabezados_e, anchos_e, filas_pdf_e)
+                pdf.set_font("Helvetica", "", 9)
+                pdf.multi_cell(0, 5.5, limpiar_texto(texto_interpretativo_efecto(variable, filas_efecto[-1])),
+                               new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+                pdf.ln(3)
 
             # --- Comparacion visual -M vs +M (ilustracion esquematica) ---
             png_ilustracion = generar_ilustracion_plantas(DATOS, st.session_state.fuente_datos)
