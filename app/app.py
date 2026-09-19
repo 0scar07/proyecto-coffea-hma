@@ -705,20 +705,27 @@ def fig_barras_r2_comparacion(RES, datos, variables, modelos):
     return fig
 
 
-def _asintota_k_plausible(res, y_max_obs_grupo):
-    """Criterio de plausibilidad de K acordado explícitamente (la app no tenía antes ninguna
-    regla de este tipo): se dibuja la asíntota solo si (1) el modelo convergió, (2) R² >= 0.9
-    y (3) K no supera 3x el máximo observado en ese grupo/variable. Devuelve (dibujar, K, motivo)."""
+def _asintota_k_plausible(res, y_max_obs_grupo, dia_min, dia_max):
+    """Criterio de plausibilidad de K (versión endurecida): se dibuja la asíntota solo si
+    se cumplen TODAS: (1) el modelo convergió, (2) R² >= 0.90, (3) K <= 1.5x el máximo
+    observado en ese grupo/variable, y (4) el punto de inflexión Ti cae dentro del rango de
+    días observados (o sea que los datos sí alcanzan a mostrar la desaceleración hacia K).
+    Devuelve (dibujar, K, motivo). El Exponencial no tiene K y nunca llega a llamar esto
+    (se filtra en el llamador por nombres_param)."""
     if res.get("insuficiente") or res["params"] is None:
-        return False, None, None
+        return False, None, "el modelo no convergió"
     r2 = res["r2"]
     if r2 is None or (isinstance(r2, float) and np.isnan(r2)):
-        return False, None, None
+        return False, None, "el modelo no convergió"
     K = res["params"][0]
-    if r2 < 0.9:
+    Ti = res["params"][2]
+    if r2 < 0.90:
         return False, K, f"R²={r2:.3f} < 0.90"
-    if y_max_obs_grupo > 0 and K > 3 * y_max_obs_grupo:
-        return False, K, f"K={K:.1f} supera 3× el máximo observado ({y_max_obs_grupo:.1f})"
+    if y_max_obs_grupo > 0 and K > 1.5 * y_max_obs_grupo:
+        return False, K, f"K={K:.1f} supera 1.5× el máximo observado ({y_max_obs_grupo:.1f})"
+    if not (dia_min <= Ti <= dia_max):
+        return False, K, (f"el punto de inflexión (Ti={Ti:.1f}) cae fuera de la ventana "
+                           f"observada ({dia_min:.0f}–{dia_max:.0f} ddt)")
     return True, K, None
 
 
@@ -735,7 +742,7 @@ def fig_curvas_publicacion(datos, RES, variable, modelos, fuente_datos="simulado
 
     todos_los_valores = [v for g in grupos for vals in datos[variable][g].values() for v in vals]
     y_obs_min, y_obs_max = min(todos_los_valores), max(todos_los_valores)
-    y_max_con_asintotas = y_obs_max
+    dia_min, dia_max = dias_todos[0], dias_todos[-1]
 
     etiquetas_panel = {"-M": "(a) −M", "+M": "(b) +M"}
     fig = make_subplots(rows=1, cols=len(grupos), subplot_titles=[etiquetas_panel[g] for g in grupos],
@@ -788,15 +795,16 @@ def fig_curvas_publicacion(datos, RES, variable, modelos, fuente_datos="simulado
             ), row=1, col=col)
             leyenda_mostrada.add(modelo)
 
+            # El Exponencial (P0, r) no tiene asíntota: nunca entra aquí porque su primer
+            # parámetro no se llama "K" (ver MODELOS). Solo Logístico y Gompertz la tienen.
             if MODELOS[modelo]["nombres_param"][0] == "K":
-                dibujar_k, K, motivo = _asintota_k_plausible(res, y_max_obs_grupo)
+                dibujar_k, K, motivo = _asintota_k_plausible(res, y_max_obs_grupo, dia_min, dia_max)
                 if dibujar_k:
                     fig.add_trace(go.Scatter(
                         x=[t_fino[0], t_fino[-1]], y=[K, K], mode="lines", showlegend=False,
                         legendgroup=modelo, line=dict(color=estilo["color"], dash="dot", width=1.1),
                         hovertemplate=f"K ({modelo}) = {K:.2f} {UNIDADES[variable]}<extra></extra>",
                     ), row=1, col=col)
-                    y_max_con_asintotas = max(y_max_con_asintotas, K)
                 else:
                     notas.append(f"{modelo} ({grupo}): asíntota K no se dibuja ({motivo}).")
 
@@ -804,14 +812,21 @@ def fig_curvas_publicacion(datos, RES, variable, modelos, fuente_datos="simulado
         if col == 1:
             fig.update_yaxes(title_text=f"{NOMBRE_VARIABLE[variable]} ({UNIDADES[variable]})", row=1, col=col)
 
-    rango_total = max(y_max_con_asintotas - y_obs_min, 1e-6)
-    fig.update_yaxes(range=[y_obs_min - 0.08 * rango_total, y_max_con_asintotas + 0.12 * rango_total])
-    estilo_publicacion(fig, height=440, right_margin=220)
+    # Eje Y limitado a ~1.25x el maximo observado (no a la curva/asintota ajustada): asi
+    # ninguna curva ni asintota -- ni siquiera una que si paso el criterio de plausibilidad --
+    # puede dominar la escala del panel. Si una K dibujada supera este techo, su linea queda
+    # fuera de vista (no se agranda el eje para acomodarla).
+    rango_total = max(y_obs_max - y_obs_min, 1e-6)
+    fig.update_yaxes(range=[min(0, y_obs_min) - 0.05 * rango_total, y_obs_max * 1.25])
+    # height=500 (no 440): con 4 entradas de leyenda (replicas + 3 modelos) kaleido a veces
+    # corta la ultima entrada si el lienzo queda muy justo -- se confirmo comparando renders.
+    estilo_publicacion(fig, height=500, right_margin=220)
 
     pie = [
         "Círculos = réplicas individuales observadas. Líneas = modelos convergidos (R² en la leyenda).",
-        "Banda sombreada = IC 95% (Monte Carlo). Línea punteada fina = asíntota K, solo cuando R² ≥ 0.90 "
-        "y K ≤ 3× el máximo observado.",
+        "Eje Y limitado a ~1.25× el máximo observado.",
+        "Asíntota K (línea punteada fina): solo si el modelo convergió, R² ≥ 0.90,",
+        "K ≤ 1.5× el máximo observado, y el punto de inflexión cae dentro de los días observados.",
     ]
     pie.extend(notas)
     if fuente_datos == "real":
