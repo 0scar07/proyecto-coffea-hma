@@ -195,6 +195,57 @@ pio.templates.default = "cuaderno"
 
 
 # ==============================================================================
+# ESTILO DE PUBLICACIÓN — helper único aplicado a las gráficas exportables
+# (pantalla, PNG y PDF). El template "cuaderno" de arriba define look-and-feel
+# del dashboard interactivo, pero sus márgenes (l=10,r=10,b=10) asumen el
+# auto-margin del navegador y no funcionan al exportar con kaleido (títulos y
+# etiquetas se cortan o se encima). Esta función fija márgenes explícitos y
+# saca la leyenda del área del título para que nunca se tapen entre sí.
+# ==============================================================================
+FUENTE_PUBLICACION = "Arial, Helvetica, sans-serif"
+
+
+def estilo_publicacion(fig, height=420, right_margin=190, top_margin=70, bottom_margin=70, left_margin=70):
+    """Plantilla visual única para toda gráfica exportable: fondo blanco, marco
+    negro fino con ticks hacia afuera, cuadrícula tenue solo en Y, leyenda fuera
+    del área de trazado (a la derecha), fuente y tamaños consistentes. No toca
+    datos ni trazos, solo layout/ejes -- se llama al final de cada fig_*()."""
+    fig.update_layout(
+        font=dict(family=FUENTE_PUBLICACION, size=13, color="#1A1A1A"),
+        paper_bgcolor="white", plot_bgcolor="white",
+        title=dict(font=dict(family=FUENTE_PUBLICACION, size=16, color="#1A1A1A"), x=0.01, xanchor="left"),
+        legend=dict(orientation="v", yanchor="middle", y=0.5, xanchor="left", x=1.02,
+                    bgcolor="rgba(255,255,255,0)", bordercolor="rgba(0,0,0,0)",
+                    font=dict(family=FUENTE_PUBLICACION, size=12)),
+        margin=dict(l=left_margin, r=right_margin, t=top_margin, b=bottom_margin),
+        height=height,
+    )
+    fig.update_xaxes(
+        showgrid=False, zeroline=False, showline=True, linewidth=1.3, linecolor="black", mirror=True,
+        ticks="outside", tickwidth=1.2, ticklen=5,
+        tickfont=dict(family=FUENTE_PUBLICACION, size=12, color="#1A1A1A"),
+        title_font=dict(family=FUENTE_PUBLICACION, size=14, color="#1A1A1A"),
+        automargin=True, title_standoff=14,
+    )
+    fig.update_yaxes(
+        showgrid=True, gridcolor="rgba(0,0,0,0.10)", gridwidth=0.6, zeroline=False, showline=True,
+        linewidth=1.3, linecolor="black", mirror=True, ticks="outside", tickwidth=1.2, ticklen=5,
+        tickfont=dict(family=FUENTE_PUBLICACION, size=12, color="#1A1A1A"),
+        title_font=dict(family=FUENTE_PUBLICACION, size=14, color="#1A1A1A"),
+        automargin=True, title_standoff=14,
+    )
+    fig.update_annotations(font=dict(family=FUENTE_PUBLICACION, size=13, color="#1A1A1A"))
+    return fig
+
+
+def formatear_p(p):
+    """Evita el 'p = 0.0000' enganoso: por debajo de 0.0001 se reporta como cota superior."""
+    if p < 0.0001:
+        return "p < 0.0001"
+    return f"p = {p:.4f}"
+
+
+# ==============================================================================
 # 1. MODELOS MATEMÁTICOS
 # ==============================================================================
 def modelo_exponencial(t, P0, r):
@@ -454,7 +505,7 @@ def texto_interpretativo_efecto(variable, fila):
     direccion = "superó a" if inc >= 0 else "fue menor que"
     signif = "significativo" if fila["significativo"] else "no significativo"
     return (f"A los {dia} ddt, {NOMBRE_VARIABLE[variable].lower()} de +M {direccion} -M en "
-            f"{abs(inc):.1f}% (p = {fila['p']:.4f}, {signif}).")
+            f"{abs(inc):.1f}% ({formatear_p(fila['p'])}, {signif}).")
 
 
 def fig_barras_variable(datos, variable):
@@ -472,12 +523,12 @@ def fig_barras_variable(datos, variable):
             marker_color=color,
         ))
     fig.update_layout(
-        barmode="group", height=380,
+        barmode="group",
         title=f"{NOMBRE_VARIABLE[variable]} por día — media ± DE",
         xaxis_title="Día después del trasplante (ddt)",
         yaxis_title=f"{NOMBRE_VARIABLE[variable]} ({UNIDADES[variable]})",
-        legend=dict(orientation="h", yanchor="bottom", y=1.06, x=0),
     )
+    estilo_publicacion(fig, height=420)
     return fig
 
 
@@ -489,21 +540,42 @@ def fig_barras_r2_comparacion(RES, datos, variables, modelos):
     for i, variable in enumerate(variables, start=1):
         for grupo in datos[variable]:
             color = T["CONTROL"] if grupo == "-M" else T["ACCENT"]
-            ys, textos = [], []
+            y_num, texto_num, y_nota, texto_nota = [], [], [], []
             for m in modelos:
                 res = RES[variable][grupo][m]
                 r2 = res["r2"]
                 if res.get("insuficiente"):
-                    ys.append(0); textos.append("Sin días suficientes")
+                    y_num.append(None); texto_num.append("")
+                    y_nota.append(0); texto_nota.append("Sin días suficientes")
                 elif r2 is None or (isinstance(r2, float) and np.isnan(r2)):
-                    ys.append(0); textos.append("No convergió")
+                    y_num.append(None); texto_num.append("")
+                    y_nota.append(0); texto_nota.append("No convergió")
                 else:
-                    ys.append(round(r2, 3)); textos.append(f"{r2:.3f}")
-            fig.add_trace(go.Bar(x=modelos, y=ys, name=grupo, legendgroup=grupo, showlegend=(i == 1),
-                                  marker_color=color, text=textos, textposition="outside"), row=1, col=i)
-        fig.update_yaxes(range=[0, 1.18], row=1, col=i, title_text=("R²" if i == 1 else None))
-    fig.update_layout(barmode="group", height=380, title="Comparación de R² por modelo y variable",
-                       legend=dict(orientation="h", yanchor="bottom", y=1.14, x=0))
+                    # Etiqueta a 2 decimales (no 3-4 como en las tablas): con 3+ decimales el
+                    # texto de -M y +M se toca entre si en subplots angostos de 3 categorias.
+                    y_num.append(round(r2, 3)); texto_num.append(f"{r2:.2f}")
+                    y_nota.append(None); texto_nota.append("")
+            # `textangle` es un escalar por traza (no admite un valor distinto por barra), así
+            # que las notas "no convergió"/"sin días suficientes" van en una traza aparte con
+            # texto vertical (-90°): con el ángulo horizontal por defecto el texto es más ancho
+            # que una sola barra y se encima con las etiquetas de las barras vecinas.
+            fig.add_trace(go.Bar(x=modelos, y=y_num, name=grupo, legendgroup=grupo, showlegend=(i == 1),
+                                  marker_color=color, text=texto_num, textposition="outside", cliponaxis=False,
+                                  constraintext="none",
+                                  textfont=dict(family=FUENTE_PUBLICACION, size=11, color="#1A1A1A")), row=1, col=i)
+            fig.add_trace(go.Bar(x=modelos, y=y_nota, name=grupo, legendgroup=grupo, showlegend=False,
+                                  marker_color=color, text=texto_nota, textposition="outside", cliponaxis=False,
+                                  constraintext="none", textangle=-90,
+                                  textfont=dict(family=FUENTE_PUBLICACION, size=11, color="#1A1A1A")), row=1, col=i)
+        fig.update_yaxes(range=[0, 1.22], row=1, col=i, title_text=("R²" if i == 1 else None),
+                          tickmode="linear", tick0=0, dtick=0.2)
+        fig.update_xaxes(row=1, col=i, tickfont=dict(size=11))
+    # Sin título interno: el encabezado "### Comparación de R² por modelo" ya lo pone la
+    # sección que llama a esta función -- evita que título y subplot_titles se encimen.
+    # bargap/bargroupgap mas amplios para que las etiquetas numericas de -M y +M no se
+    # encimen entre si al quedar tan cerca en barras angostas de 3 categorias.
+    fig.update_layout(barmode="group", bargap=0.35, bargroupgap=0.2)
+    estilo_publicacion(fig, height=460, bottom_margin=80)
     return fig
 
 
@@ -1267,19 +1339,21 @@ elif seccion == "Resultados":
                 else:
                     estado = "OK"
                 filas.append({"Grupo": grupo, "Modelo": nombre_modelo, "Estado": estado,
-                               "R²": round(res["r2"], 4) if not pd.isna(res["r2"]) else None,
-                               "RMSE": round(res["rmse"], 4) if not pd.isna(res["rmse"]) else None,
-                               "MAE": round(res["mae"], 4) if not pd.isna(res.get("mae")) else None})
+                               "R²": round(res["r2"], 4) if not pd.isna(res["r2"]) else np.nan,
+                               "RMSE": round(res["rmse"], 4) if not pd.isna(res["rmse"]) else np.nan,
+                               "MAE": round(res["mae"], 4) if not pd.isna(res.get("mae")) else np.nan})
         df_tabla = pd.DataFrame(filas)
         with st.container(border=True):
             st.markdown('<span class="ficha-marca"></span>', unsafe_allow_html=True)
             st.markdown('<span class="field-label">Tabla de ajuste</span>', unsafe_allow_html=True)
             estilo_tabla = (
                 df_tabla.style
+                .format(na_rep="–", precision=4, subset=["R²", "RMSE", "MAE"])
                 .background_gradient(subset=["R²"], cmap="Greens", vmin=0.5, vmax=1.0)
                 .map(lambda v: f"background-color: {T['CARD']}; color: {T['INK']};" if pd.isna(v) else "", subset=["R²"])
             )
             st.dataframe(estilo_tabla, width='stretch', hide_index=True)
+            st.caption("'–': el modelo no convergió o no tuvo suficientes días de muestreo para este grupo/variable (ver columna Estado).")
         st.write("")
 
 
@@ -1353,11 +1427,15 @@ elif seccion == "Resultados esperados":
             "Nota: el último ajuste solo incluyó " + ", ".join(modelos_a_mostrar) + ". Para comparar "
             "los tres modelos, vuelve a *Ajustar modelos* con Exponencial, Logístico y Gompertz activados."
         )
+    st.caption("'–': el modelo no convergió o no tuvo suficientes días de muestreo (ver columna Nota).")
     for variable in variables_a_mostrar:
         filas_modelo, mejores = calcular_tabla_modelo(RES, DATOS, variable, modelos_a_mostrar)
         st.markdown(f"**{NOMBRE_VARIABLE[variable]}**")
         df_modelo = pd.DataFrame([{
-            "Grupo": f["grupo"], "Modelo": f["modelo"], "R²": f["r2"], "RMSE": f["rmse"], "MAE": f["mae"],
+            "Grupo": f["grupo"], "Modelo": f["modelo"],
+            "R²": f"{f['r2']:.4f}" if f["r2"] is not None else "–",
+            "RMSE": f"{f['rmse']:.4f}" if f["rmse"] is not None else "–",
+            "MAE": f"{f['mae']:.4f}" if f["mae"] is not None else "–",
             "Mejor modelo": "⭐" if f["mejor"] else "", "Nota": f["nota"],
         } for f in filas_modelo])
         st.dataframe(df_modelo, width='stretch', hide_index=True)
@@ -1423,9 +1501,9 @@ elif seccion == "Estadística":
                             unsafe_allow_html=True)
                 st.caption(f"Día {dia_sel} DAT")
                 interpretacion = (
-                    f"Diferencia **estadísticamente significativa** entre −M y +M (p = {resultado_t['p']:.4f} < 0.05)."
+                    f"Diferencia **estadísticamente significativa** entre −M y +M ({formatear_p(resultado_t['p'])} < 0.05)."
                     if resultado_t["significativo"] else
-                    f"Diferencia **no significativa** entre −M y +M en este día (p = {resultado_t['p']:.4f} ≥ 0.05)."
+                    f"Diferencia **no significativa** entre −M y +M en este día ({formatear_p(resultado_t['p'])} ≥ 0.05)."
                 )
                 st.markdown(interpretacion)
                 st.caption(
@@ -1451,17 +1529,18 @@ elif seccion == "Estadística":
                     estado = (f"Sin suficientes días ({res['dias_disponibles']}/{res['dias_requeridos']})"
                               if res.get("insuficiente") else "Sin ajuste")
                     filas_ci.append({"Grupo": grupo, "Modelo": nombre_modelo, "Parámetro": estado,
-                                      "Valor": None, "IC 95% (inferior)": None, "IC 95% (superior)": None})
+                                      "Valor": "–", "IC 95% (inferior)": "–", "IC 95% (superior)": "–"})
                     continue
                 nombres_p = MODELOS[nombre_modelo]["nombres_param"]
                 for i, nombre_p in enumerate(nombres_p):
                     filas_ci.append({
                         "Grupo": grupo, "Modelo": nombre_modelo, "Parámetro": nombre_p,
-                        "Valor": round(res["params"][i], 4),
-                        "IC 95% (inferior)": round(res["ci_bajo"][i], 4),
-                        "IC 95% (superior)": round(res["ci_alto"][i], 4),
+                        "Valor": f"{res['params'][i]:.4f}",
+                        "IC 95% (inferior)": f"{res['ci_bajo'][i]:.4f}",
+                        "IC 95% (superior)": f"{res['ci_alto'][i]:.4f}",
                     })
         st.dataframe(pd.DataFrame(filas_ci), width='stretch', hide_index=True)
+        st.caption("'–': el modelo no convergió o no tuvo suficientes días de muestreo.")
         st.write("")
 
 
@@ -1571,7 +1650,7 @@ elif seccion == "Discusión y conclusiones":
             if resultado_t is not None:
                 st.markdown(
                     f"- La prueba t (día final) {'confirma' if resultado_t['significativo'] else 'no confirma'} "
-                    f"que la diferencia sea estadísticamente significativa (p = {resultado_t['p']:.4f})."
+                    f"que la diferencia sea estadísticamente significativa ({formatear_p(resultado_t['p'])})."
                 )
 
     st.write("")
