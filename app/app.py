@@ -788,6 +788,14 @@ def fig_curvas_publicacion(datos, RES, variable, modelos, fuente_datos="simulado
     y_obs_min, y_obs_max = min(todos_los_valores), max(todos_los_valores)
     dia_min, dia_max = dias_todos[0], dias_todos[-1]
 
+    # Techo/piso del eje Y calculados ANTES de dibujar nada (Tarea 1b): se usan tanto para
+    # fijar el rango final del eje como para decidir, por modelo, si su banda de confianza
+    # es "estable" (cabe razonablemente en el rango visible) o hay que omitirla en vez de
+    # dejar que un pcov mal condicionado pinte un rectangulo solido de borde a borde.
+    rango_total = max(y_obs_max - y_obs_min, 1e-6)
+    y_bottom_cap = min(0, y_obs_min) - 0.05 * rango_total
+    y_top_cap = y_obs_max * 1.25
+
     etiquetas_panel = {"-M": "(a) −M", "+M": "(b) +M"}
     fig = make_subplots(rows=1, cols=len(grupos), subplot_titles=[etiquetas_panel[g] for g in grupos],
                          horizontal_spacing=0.07, shared_yaxes=True)
@@ -820,17 +828,45 @@ def fig_curvas_publicacion(datos, RES, variable, modelos, fuente_datos="simulado
 
             func = MODELOS[modelo]["func"]
             y_fino = func(t_fino, *res["params"])
+            tiene_k = MODELOS[modelo]["nombres_param"][0] == "K"
+
+            # Si el modelo tiene K, el MISMO criterio de plausibilidad que decide la
+            # asíntota (Tarea 1 de la sesión anterior) decide también si su fit es
+            # "estable" -- si K no es plausible, no tiene sentido mostrar una banda de
+            # incertidumbre de un ajuste que ya se considera poco confiable.
+            dibujar_k, K, motivo_k = (_asintota_k_plausible(res, y_max_obs_grupo, dia_min, dia_max)
+                                        if tiene_k else (True, None, None))
 
             # Banda de confianza del 95% (Monte Carlo sobre pcov, ya existente en la app):
-            # se dibuja antes que la linea del modelo para que quede debajo.
+            # se dibuja antes que la linea del modelo para que quede debajo. Se omite si el
+            # modelo no es "estable" (K implausible) o si la banda numérica se dispara muy
+            # por fuera del rango visible del eje Y -- en ambos casos, el motivo real es el
+            # mismo: el ajuste está mal identificado con solo estos puntos, y una banda
+            # gigante clippeada por Plotly termina pintando un rectangulo solido que oculta
+            # los datos en vez de comunicar incertidumbre.
             banda_baja, banda_alta = calcular_banda_confianza(func, res["params"], res["pcov"], t_fino)
+            dibujar_banda, motivo_banda = False, None
             if banda_baja is not None:
+                if tiene_k and not dibujar_k:
+                    motivo_banda = f"ajuste inestable ({motivo_k})"
+                elif np.max(banda_alta) > 3 * y_top_cap or np.min(banda_baja) < 3 * y_bottom_cap - 2 * rango_total:
+                    motivo_banda = "la incertidumbre del ajuste excede varias veces el rango visible"
+                else:
+                    dibujar_banda = True
+            if dibujar_banda:
+                # Recorte defensivo al rango visible: aunque la banda ya se consideró
+                # "estable", puede sobresalir un poco por los bordes: no se agranda el
+                # eje para acomodarla (mismo principio que la asíntota K).
+                banda_alta_recortada = np.clip(banda_alta, y_bottom_cap, y_top_cap)
+                banda_baja_recortada = np.clip(banda_baja, y_bottom_cap, y_top_cap)
                 r, g, b = (int(estilo["color"][1:3], 16), int(estilo["color"][3:5], 16), int(estilo["color"][5:7], 16))
-                fig.add_trace(go.Scatter(x=t_fino, y=banda_alta, mode="lines", line=dict(width=0),
+                fig.add_trace(go.Scatter(x=t_fino, y=banda_alta_recortada, mode="lines", line=dict(width=0),
                                           legendgroup=modelo, showlegend=False, hoverinfo="skip"), row=1, col=col)
-                fig.add_trace(go.Scatter(x=t_fino, y=banda_baja, mode="lines", line=dict(width=0),
+                fig.add_trace(go.Scatter(x=t_fino, y=banda_baja_recortada, mode="lines", line=dict(width=0),
                                           fill="tonexty", fillcolor=f"rgba({r},{g},{b},0.15)",
                                           legendgroup=modelo, showlegend=False, hoverinfo="skip"), row=1, col=col)
+            elif motivo_banda is not None:
+                notas.append(f"{modelo} ({grupo}): banda de confianza no se dibuja ({motivo_banda}).")
 
             fig.add_trace(go.Scatter(
                 x=t_fino, y=y_fino, mode="lines", name=f"{modelo} (R²={r2:.3f})",
@@ -841,8 +877,7 @@ def fig_curvas_publicacion(datos, RES, variable, modelos, fuente_datos="simulado
 
             # El Exponencial (P0, r) no tiene asíntota: nunca entra aquí porque su primer
             # parámetro no se llama "K" (ver MODELOS). Solo Logístico y Gompertz la tienen.
-            if MODELOS[modelo]["nombres_param"][0] == "K":
-                dibujar_k, K, motivo = _asintota_k_plausible(res, y_max_obs_grupo, dia_min, dia_max)
+            if tiene_k:
                 if dibujar_k:
                     fig.add_trace(go.Scatter(
                         x=[t_fino[0], t_fino[-1]], y=[K, K], mode="lines", showlegend=False,
@@ -850,7 +885,7 @@ def fig_curvas_publicacion(datos, RES, variable, modelos, fuente_datos="simulado
                         hovertemplate=f"K ({modelo}) = {K:.2f} {UNIDADES[variable]}<extra></extra>",
                     ), row=1, col=col)
                 else:
-                    notas.append(f"{modelo} ({grupo}): asíntota K no se dibuja ({motivo}).")
+                    notas.append(f"{modelo} ({grupo}): asíntota K no se dibuja ({motivo_k}).")
 
         fig.update_xaxes(title_text="Día después del trasplante (ddt)", row=1, col=col)
         if col == 1:
@@ -860,8 +895,7 @@ def fig_curvas_publicacion(datos, RES, variable, modelos, fuente_datos="simulado
     # ninguna curva ni asintota -- ni siquiera una que si paso el criterio de plausibilidad --
     # puede dominar la escala del panel. Si una K dibujada supera este techo, su linea queda
     # fuera de vista (no se agranda el eje para acomodarla).
-    rango_total = max(y_obs_max - y_obs_min, 1e-6)
-    fig.update_yaxes(range=[min(0, y_obs_min) - 0.05 * rango_total, y_obs_max * 1.25])
+    fig.update_yaxes(range=[y_bottom_cap, y_top_cap])
     # height=500 (no 440): con 4 entradas de leyenda (replicas + 3 modelos) kaleido a veces
     # corta la ultima entrada si el lienzo queda muy justo -- se confirmo comparando renders.
     estilo_publicacion(fig, height=500, right_margin=220)
