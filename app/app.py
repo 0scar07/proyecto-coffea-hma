@@ -945,6 +945,7 @@ def fig_tasas_crecimiento(datos, RES, variable, modelos, fuente_datos="simulado"
         "mejor R² en cada grupo (sin reajustar).",
         "AGR = dP/dt; RGR = (1/P)·dP/dt.",
     ]
+    pie.extend(f"Modelo usado en {g}: {mejores[g]} (mejor R² entre los convergidos)." for g in grupos_validos)
     if len(grupos_validos) < len(grupos):
         pie.append(f"Sin tasas para {', '.join(g for g in grupos if g not in grupos_validos)}: "
                    "ningún modelo convergió en ese grupo.")
@@ -2161,6 +2162,7 @@ elif seccion == "Exportar reporte":
             "- Tabla de R², RMSE y MAE por grupo y modelo (con el estado de cada ajuste)\n"
             "- Gráficas de curvas ajustadas por variable\n"
             "- Gráficas de barras por variable y comparación de R² por modelo\n"
+            "- Tasas de crecimiento (AGR y RGR) del modelo con mejor R² en cada grupo\n"
             "- Resultados esperados: mejor modelo por variable y efecto +M vs −M con prueba t\n"
             "- Conclusiones generales"
         )
@@ -2395,6 +2397,33 @@ elif seccion == "Exportar reporte":
             # volvia a aplastar la segunda fila como antes de la Tarea 3.
             fig_r2_pdf.update_layout(paper_bgcolor="white", plot_bgcolor="white", width=1000)
             insertar_imagen_png(pdf, fig_r2_pdf.to_image(format="png", scale=3))
+
+            # --- Tasas de crecimiento (AGR y RGR) -- mismas figuras que el expander opcional
+            # de la seccion Resultados en la app, del modelo con mejor R2 en cada grupo. ---
+            pdf.add_page()
+            titulo_seccion(pdf, "Tasas de crecimiento (AGR y RGR)")
+            pdf.set_font("Helvetica", "", 10)
+            pdf.multi_cell(0, 5.5, limpiar_texto(
+                "AGR (tasa de crecimiento absoluta, dP/dt) y RGR (tasa de crecimiento relativa, "
+                "(1/P)*dP/dt) del modelo con mejor R2 en cada grupo, calculadas analiticamente a "
+                "partir de los parametros ya ajustados (sin reajustar). Solo se muestran modelos "
+                "convergidos."
+            ), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+            pdf.ln(3)
+            for variable in variables_a_mostrar:
+                asegurar_espacio(pdf, 100)
+                subtitulo_variable(pdf, NOMBRE_VARIABLE[variable])
+                fig_tasas_pdf, motivo_sin_tasas = fig_tasas_crecimiento(
+                    DATOS, RES, variable, modelos_a_mostrar, st.session_state.fuente_datos)
+                if fig_tasas_pdf is None:
+                    pdf.set_font("Helvetica", "I", 9)
+                    pdf.set_text_color(*PDF_MUTED)
+                    pdf.multi_cell(0, 5.5, limpiar_texto(motivo_sin_tasas), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+                    pdf.set_text_color(*PDF_INK)
+                    pdf.ln(3)
+                else:
+                    fig_tasas_pdf.update_layout(paper_bgcolor="white", plot_bgcolor="white", width=1000)
+                    insertar_imagen_png(pdf, fig_tasas_pdf.to_image(format="png", scale=3))
 
             # --- Resultados esperados (modelo que mejor describe cada variable + efecto +M vs -M) ---
             pdf.add_page()
