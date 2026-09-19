@@ -686,11 +686,19 @@ def fig_barras_resumen_2x2(datos, variables, fuente_datos="simulado"):
 
 
 def fig_barras_r2_comparacion(RES, datos, variables, modelos):
-    """Barras del R2 de cada modelo (Exponencial/Logístico/Gompertz) por variable y grupo, dejando
-    la barra en 0 con la etiqueta 'No convergió' o 'Sin días suficientes' donde corresponda."""
-    fig = make_subplots(rows=1, cols=len(variables), subplot_titles=[NOMBRE_VARIABLE[v] for v in variables],
-                         horizontal_spacing=0.08)
-    for i, variable in enumerate(variables, start=1):
+    """Cuadrícula 2x2 (una variable por subplot, no una fila de 4) del R² de cada modelo,
+    dejando la barra en 0 con la etiqueta 'No convergió' o 'Sin días suficientes' donde
+    corresponda. Eje Y siempre 0-1.15 (las barras parten de 0 -- no se recorta para
+    exagerar diferencias). Mismo patrón+color por grupo que el resto de las gráficas."""
+    n = len(variables)
+    cols_n = min(n, 2)
+    filas_n = -(-n // cols_n)  # ceil(n / cols_n)
+    fig = make_subplots(rows=filas_n, cols=cols_n, subplot_titles=[NOMBRE_VARIABLE[v] for v in variables],
+                         horizontal_spacing=0.12, vertical_spacing=0.16)
+
+    leyenda_mostrada = set()
+    for idx, variable in enumerate(variables):
+        fila, col = idx // cols_n + 1, idx % cols_n + 1
         for grupo in datos[variable]:
             color = T["CONTROL"] if grupo == "-M" else T["ACCENT"]
             y_num, texto_num, y_nota, texto_nota = [], [], [], []
@@ -704,31 +712,35 @@ def fig_barras_r2_comparacion(RES, datos, variables, modelos):
                     y_num.append(None); texto_num.append("")
                     y_nota.append(0); texto_nota.append(ESTADO_NO_CONVERGIO)
                 else:
-                    # Etiqueta a 2 decimales (no 3-4 como en las tablas): con 3+ decimales el
-                    # texto de -M y +M se toca entre si en subplots angostos de 3 categorias.
                     y_num.append(round(r2, 3)); texto_num.append(f"{r2:.2f}")
                     y_nota.append(None); texto_nota.append("")
+            mostrar_leyenda = grupo not in leyenda_mostrada
+            marcador = dict(color=color, line=dict(color="black", width=1),
+                             pattern=dict(shape=PATRON_GRUPO[grupo], fillmode="overlay",
+                                          fgcolor="#1A1A1A", size=5, solidity=0.3))
             # `textangle` es un escalar por traza (no admite un valor distinto por barra), así
             # que las notas "no convergió"/"sin días suficientes" van en una traza aparte con
             # texto vertical (-90°): con el ángulo horizontal por defecto el texto es más ancho
             # que una sola barra y se encima con las etiquetas de las barras vecinas.
-            fig.add_trace(go.Bar(x=modelos, y=y_num, name=grupo, legendgroup=grupo, showlegend=(i == 1),
-                                  marker_color=color, text=texto_num, textposition="outside", cliponaxis=False,
+            fig.add_trace(go.Bar(x=modelos, y=y_num, name=grupo, legendgroup=grupo, showlegend=mostrar_leyenda,
+                                  marker=marcador, text=texto_num, textposition="outside", cliponaxis=False,
                                   constraintext="none",
-                                  textfont=dict(family=FUENTE_PUBLICACION, size=11, color="#1A1A1A")), row=1, col=i)
+                                  textfont=dict(family=FUENTE_PUBLICACION, size=12, color="#1A1A1A")),
+                          row=fila, col=col)
             fig.add_trace(go.Bar(x=modelos, y=y_nota, name=grupo, legendgroup=grupo, showlegend=False,
-                                  marker_color=color, text=texto_nota, textposition="outside", cliponaxis=False,
+                                  marker=marcador, text=texto_nota, textposition="outside", cliponaxis=False,
                                   constraintext="none", textangle=-90,
-                                  textfont=dict(family=FUENTE_PUBLICACION, size=11, color="#1A1A1A")), row=1, col=i)
-        fig.update_yaxes(range=[0, 1.22], row=1, col=i, title_text=("R²" if i == 1 else None),
-                          tickmode="linear", tick0=0, dtick=0.2)
-        fig.update_xaxes(row=1, col=i, tickfont=dict(size=11))
+                                  textfont=dict(family=FUENTE_PUBLICACION, size=12, color="#1A1A1A")),
+                          row=fila, col=col)
+            leyenda_mostrada.add(grupo)
+        fig.update_yaxes(range=[0, 1.15], row=fila, col=col, tickmode="linear", tick0=0, dtick=0.2,
+                          title_text=("R²" if col == 1 else None))
+        fig.update_xaxes(row=fila, col=col, tickfont=dict(size=12))
+
     # Sin título interno: el encabezado "### Comparación de R² por modelo" ya lo pone la
     # sección que llama a esta función -- evita que título y subplot_titles se encimen.
-    # bargap/bargroupgap mas amplios para que las etiquetas numericas de -M y +M no se
-    # encimen entre si al quedar tan cerca en barras angostas de 3 categorias.
-    fig.update_layout(barmode="group", bargap=0.35, bargroupgap=0.2)
-    estilo_publicacion(fig, height=460, bottom_margin=80)
+    fig.update_layout(barmode="group", bargap=0.4, bargroupgap=0.3)
+    estilo_publicacion(fig, height=460 if filas_n == 1 else 460 * filas_n, right_margin=190)
     return fig
 
 
@@ -2378,7 +2390,10 @@ elif seccion == "Exportar reporte":
             asegurar_espacio(pdf, 100)
             subtitulo_variable(pdf, "Comparacion de R2 por modelo")
             fig_r2_pdf = fig_barras_r2_comparacion(RES, DATOS, variables_a_mostrar, modelos_a_mostrar)
-            fig_r2_pdf.update_layout(paper_bgcolor="white", plot_bgcolor="white", width=1000, height=480)
+            # No se fuerza "height": la propia figura calcula su alto segun 1 o 2 filas de
+            # subplots (cuadricula 2x2 cuando hay 4 variables), y forzar un alto fijo aqui
+            # volvia a aplastar la segunda fila como antes de la Tarea 3.
+            fig_r2_pdf.update_layout(paper_bgcolor="white", plot_bgcolor="white", width=1000)
             insertar_imagen_png(pdf, fig_r2_pdf.to_image(format="png", scale=3))
 
             # --- Resultados esperados (modelo que mejor describe cada variable + efecto +M vs -M) ---
