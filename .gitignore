@@ -2,4 +2,11 @@ __pycache__/
 *.pyc
 .venv/
 venv/
+.venv_deploy_test/
 .streamlit/secrets.toml
+.claude/
+
+# PDFs y previsualizaciones temporales generadas durante pruebas manuales
+/*.pdf
+/preview_*.png
+/tmp_*.png
