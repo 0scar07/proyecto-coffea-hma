@@ -1,5 +1,10 @@
 __pycache__/
 *.pyc
-.venv/
-venv/
-.streamlit/secrets.toml
+.venv*/
+venv*/
+**/.streamlit/secrets.toml
+.env
+.env.*
+.claude/
+previews/
+*.tmp

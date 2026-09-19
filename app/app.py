@@ -26,7 +26,8 @@ from plotly.subplots import make_subplots
 from scipy.optimize import curve_fit
 from scipy.stats import t as t_dist, ttest_ind
 from fpdf import FPDF
-from PIL import Image
+from fpdf.enums import XPos, YPos
+from PIL import Image, ImageDraw, ImageFont
 
 st.set_page_config(page_title="Coffea arabica · Modelos de crecimiento", page_icon="⸙", layout="wide")
 
@@ -191,6 +192,235 @@ pio.templates["cuaderno"] = go.layout.Template(
     )
 )
 pio.templates.default = "cuaderno"
+
+
+# ==============================================================================
+# ESTILO DE PUBLICACIÓN — helper único aplicado a las gráficas exportables
+# (pantalla, PNG y PDF).
+#
+# PRINCIPIO DE DISEÑO: la figura y su texto son cosas separadas.
+#   - La figura de Plotly (estilo_publicacion) contiene SOLO paneles, ejes, leyenda y
+#     etiquetas de panel. Nunca lleva pie de figura incrustado como anotación.
+#   - El pie de figura (construir_pie) se muestra aparte: con st.caption/st.markdown
+#     debajo de la figura en la app (mostrar_pie_streamlit), como texto debajo de la
+#     imagen en el PDF (pie_a_lineas_texto + multi_cell), y compuesto con la imagen final
+#     en los PNG descargables (componer_png_con_pie, vía PIL).
+# ==============================================================================
+FUENTE_PUBLICACION = "Arial, Helvetica, sans-serif"
+
+
+def estilo_publicacion(fig, width=None, height=420, left_margin=70, top_margin=60,
+                        espacio_eje_x_px=38, espacio_leyenda_px=34):
+    """Plantilla visual única para toda gráfica exportable: fondo blanco, marco negro
+    fino con ticks hacia afuera, cuadrícula tenue solo en Y, leyenda en UNA fila
+    horizontal centrada debajo de los paneles (no a la derecha: con el pie de figura ya
+    afuera, no hace falta reservar una columna lateral ancha), fuente y tamaños
+    consistentes. No toca datos ni trazos, solo layout/ejes -- se llama al final de cada
+    fig_*(), antes de construir_pie()."""
+    # Si la figura no trae titulo propio (varias no lo usan a proposito, para no
+    # chocar con subplot_titles), hay que fijar text="" explicitamente: si se deja
+    # sin definir, Plotly.js renderiza el titulo como el texto literal "undefined".
+    titulo_actual = fig.layout.title.text if fig.layout.title is not None else None
+
+    # Margen inferior fijo: solo tiene que alcanzar para el título del eje X y UNA fila
+    # de leyenda (ya no depende de cuántas notas tenga un pie, porque el pie ya no vive
+    # dentro de la figura). La posición de la leyenda se calcula en píxeles reales y se
+    # convierte a fracción según el alto real del área de trazado (yref="paper" es
+    # relativo a esa área, no al lienzo completo).
+    margen_b = espacio_eje_x_px + espacio_leyenda_px + 14
+    alto_trazado = max(height - top_margin - margen_b, 50)
+    y_leyenda = -(espacio_eje_x_px + espacio_leyenda_px / 2) / alto_trazado
+
+    layout_kwargs = dict(
+        font=dict(family=FUENTE_PUBLICACION, size=13, color="#1A1A1A"),
+        paper_bgcolor="white", plot_bgcolor="white",
+        title=dict(text=titulo_actual or "", font=dict(family=FUENTE_PUBLICACION, size=16, color="#1A1A1A"),
+                    x=0.01, xanchor="left"),
+        legend=dict(orientation="h", xanchor="center", x=0.5, yanchor="middle", y=y_leyenda,
+                    bgcolor="rgba(255,255,255,0)", bordercolor="rgba(0,0,0,0)",
+                    font=dict(family=FUENTE_PUBLICACION, size=12)),
+        margin=dict(l=left_margin, r=20, t=top_margin, b=margen_b),
+        height=height,
+    )
+    if width is not None:
+        layout_kwargs["width"] = width
+    fig.update_layout(**layout_kwargs)
+    fig.update_xaxes(
+        showgrid=False, zeroline=False, showline=True, linewidth=1.3, linecolor="black", mirror=True,
+        ticks="outside", tickwidth=1.2, ticklen=5,
+        tickfont=dict(family=FUENTE_PUBLICACION, size=12, color="#1A1A1A"),
+        title_font=dict(family=FUENTE_PUBLICACION, size=14, color="#1A1A1A"),
+        automargin=True, title_standoff=14,
+    )
+    fig.update_yaxes(
+        showgrid=True, gridcolor="rgba(0,0,0,0.10)", gridwidth=0.6, zeroline=False, showline=True,
+        linewidth=1.3, linecolor="black", mirror=True, ticks="outside", tickwidth=1.2, ticklen=5, nticks=6,
+        tickfont=dict(family=FUENTE_PUBLICACION, size=12, color="#1A1A1A"),
+        title_font=dict(family=FUENTE_PUBLICACION, size=14, color="#1A1A1A"),
+        automargin=True, title_standoff=14,
+    )
+    return fig
+
+
+def alinear_titulos_panel_izquierda(fig, n_paneles, tam_fuente=13):
+    """Los subplot_titles de Plotly (usados para las etiquetas "(a) −M"/"(b) +M", etc.) se
+    centran por defecto; el diseño pide que vayan arriba a la IZQUIERDA de cada panel, no
+    centradas. Reposiciona las primeras `n_paneles` anotaciones (que son exactamente los
+    subplot_titles, en el mismo orden en que se crearon) al borde izquierdo del dominio de
+    su propio eje X."""
+    for i in range(n_paneles):
+        ann = fig.layout.annotations[i]
+        nombre_eje = "xaxis" if i == 0 else f"xaxis{i + 1}"
+        eje = fig.layout[nombre_eje]
+        x0 = eje.domain[0] if eje.domain else 0
+        ann.update(x=x0, xanchor="left", font=dict(size=tam_fuente, family=FUENTE_PUBLICACION, color="#1A1A1A"))
+    return fig
+
+
+def construir_pie(descripcion, notas=None, extra=None):
+    """Estructura común del pie de figura: una línea de descripción + una lista corta de
+    notas (una viñeta por modelo que no dibujó asíntota/banda o que no convergió) + una
+    nota final opcional (ej. réplicas sintéticas). Nunca se agrega como anotación dentro
+    de la figura de Plotly -- se usa igual en mostrar_pie_streamlit, pie_a_lineas_texto y
+    componer_png_con_pie."""
+    return {"descripcion": descripcion, "notas": list(notas or []), "extra": extra}
+
+
+def pie_a_lineas_texto(pie):
+    """Aplana el pie a líneas de texto plano, para el PDF y los PNG compuestos."""
+    lineas = [pie["descripcion"]]
+    if pie["notas"]:
+        lineas.append("Notas:")
+        lineas.extend(f"• {n}" for n in pie["notas"])
+    if pie["extra"]:
+        lineas.append(pie["extra"])
+    return lineas
+
+
+def mostrar_pie_streamlit(pie):
+    """Muestra el pie DEBAJO de la figura en la app, con st.caption/st.markdown -- nunca
+    como anotación de Plotly (principio de diseño: figura y texto son cosas separadas)."""
+    st.caption(pie["descripcion"])
+    if pie["notas"]:
+        st.markdown("**Notas:**\n" + "\n".join(f"- {n}" for n in pie["notas"]))
+    if pie["extra"]:
+        st.caption(pie["extra"])
+
+
+_FUENTE_PIE_PNG_CACHE = {}
+
+
+def _fuente_pie_png(tam_px):
+    """Fuente TTF real para componer el pie en los PNG descargables (el bitmap por
+    defecto de PIL es ilegible a cualquier tamaño). Reutiliza la DejaVu Sans que ya trae
+    matplotlib -- ya es dependencia de la app, no se agrega ninguna nueva."""
+    if tam_px not in _FUENTE_PIE_PNG_CACHE:
+        import matplotlib.font_manager as fm
+        ruta = fm.findfont("DejaVu Sans")
+        _FUENTE_PIE_PNG_CACHE[tam_px] = ImageFont.truetype(ruta, tam_px)
+    return _FUENTE_PIE_PNG_CACHE[tam_px]
+
+
+def componer_png_con_pie(png_bytes, pie, scale=3):
+    """Compone el PNG final para descarga: la figura de Plotly (limpia, sin pie
+    incrustado) arriba, y el pie como una franja blanca debajo, con texto envuelto a
+    líneas, alineado a la izquierda, fuente >= 11pt (proporcional a `scale`, igual que el
+    resto de la figura, para que no quede diminuta en la imagen de alta resolución)."""
+    img = Image.open(io.BytesIO(png_bytes)).convert("RGB")
+    ancho = img.width
+    tam_fuente = max(int(15 * scale), 14)
+    interlineado = int(tam_fuente * 1.5)
+    margen = int(14 * scale)
+    fuente = _fuente_pie_png(tam_fuente)
+
+    draw_tmp = ImageDraw.Draw(img)
+    ancho_max_texto = ancho - 2 * margen
+
+    def envolver(texto):
+        palabras = texto.split(" ")
+        actual, salida = "", []
+        for palabra in palabras:
+            prueba = (actual + " " + palabra).strip()
+            if not actual or draw_tmp.textlength(prueba, font=fuente) <= ancho_max_texto:
+                actual = prueba
+            else:
+                salida.append(actual)
+                actual = palabra
+        if actual:
+            salida.append(actual)
+        return salida or [""]
+
+    lineas_fisicas = [fisica for logica in pie_a_lineas_texto(pie) for fisica in envolver(logica)]
+
+    alto_pie = margen * 2 + interlineado * len(lineas_fisicas)
+    lienzo = Image.new("RGB", (ancho, img.height + alto_pie), "white")
+    lienzo.paste(img, (0, 0))
+    draw = ImageDraw.Draw(lienzo)
+    y = img.height + margen
+    for linea in lineas_fisicas:
+        draw.text((margen, y), linea, font=fuente, fill=(60, 56, 50))
+        y += interlineado
+
+    buf = io.BytesIO()
+    lienzo.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def formatear_p(p):
+    """Evita el 'p = 0.0000' enganoso: por debajo de 0.0001 se reporta como cota superior."""
+    if p < 0.0001:
+        return "p < 0.0001"
+    return f"p = {p:.4f}"
+
+
+# Paleta Okabe-Ito (distinguible para las formas mas comunes de daltonismo) para los 3
+# modelos de crecimiento, combinada con un tipo de linea distinto por modelo para que
+# tambien se distingan en blanco y negro (no dependen solo del color).
+MODELO_ESTILO = {
+    "Exponencial": {"color": "#0072B2", "dash": "dot"},
+    "Logístico":   {"color": "#E69F00", "dash": "dash"},
+    "Gompertz":    {"color": "#009E73", "dash": "solid"},
+}
+
+# Patron de trama por grupo para las barras -- redundante con el color -M/+M que ya usa
+# la app (T["CONTROL"]/T["ACCENT"]), para que las barras tambien se distingan sin color.
+PATRON_GRUPO = {"-M": ".", "+M": "/"}
+
+
+def texto_significancia(p):
+    """Asteriscos de significancia (convencion estandar): ns, *, **, ***."""
+    if p < 0.001:
+        return "***"
+    if p < 0.01:
+        return "**"
+    if p < 0.05:
+        return "*"
+    return "ns"
+
+
+def agregar_pie_figura(fig, lineas, altura_linea_px=17, espacio_eje_x_px=70):
+    """Agrega una o mas lineas de texto como pie de figura, debajo del título del eje X, y
+    expande el margen inferior para que quepan. Las anotaciones usan yref="paper", que es
+    relativo al ALTO DEL ÁREA DE TRAZADO (no de la figura completa) -- por eso la posición de
+    cada línea se calcula en píxeles reales y se convierte a fracción usando el alto de
+    trazado resultante, en vez de una fracción fija que se desalinea según cuántas líneas
+    tenga el pie o cuánto margen ya tuviera la figura (con muchas líneas, una fracción fija
+    dejaba el texto encimado con el título del eje X)."""
+    margen = fig.layout.margin
+    alto_total = fig.layout.height or 450
+    margen_t = margen.t if margen and margen.t is not None else 70
+    margen_b_actual = margen.b if margen and margen.b is not None else 70
+    margen_b_nuevo = margen_b_actual + espacio_eje_x_px + altura_linea_px * len(lineas) + 12
+    alto_trazado = max(alto_total - margen_t - margen_b_nuevo, 50)
+    for i, linea in enumerate(lineas):
+        y_px = espacio_eje_x_px + i * altura_linea_px
+        fig.add_annotation(
+            text=linea, xref="paper", yref="paper", x=0, y=-(y_px / alto_trazado),
+            showarrow=False, align="left", xanchor="left", yanchor="top",
+            font=dict(family=FUENTE_PUBLICACION, size=10.5, color=T["INK_MUTED"]),
+        )
+    fig.update_layout(margin=dict(b=margen_b_nuevo))
+    return fig
 
 
 # ==============================================================================
@@ -389,6 +619,522 @@ def prueba_t_independiente(datos, variable, dia):
     }
 
 
+NOTA_NO_CONVERGENCIA_K = (
+    "Cuando Logístico o Gompertz no convergen con estos datos, la causa más probable es que la "
+    "ventana de muestreo disponible no alcance a capturar la fase de desaceleración necesaria para "
+    "estimar la capacidad de carga (K) de una curva en forma de S."
+)
+
+# ==============================================================================
+# VOCABULARIO ÚNICO DE ESTADO — antes convivían "Sin ajuste"/"No convergió" para el
+# MISMO caso (curve_fit lanzó RuntimeError) y "Sin suficientes días"/"Sin días
+# suficientes"/"Sin sufic. dias" para el caso de días insuficientes, con distinta
+# redacción en la app y el PDF. Estas constantes son la única fuente de verdad para
+# los 3 estados posibles de un ajuste (no cambian la regla, solo cómo se nombra):
+#   - ESTADO_OK: el modelo convergió y tiene R².
+#   - ESTADO_NO_CONVERGIO: había días suficientes pero curve_fit no encontró solución.
+#   - ESTADO_SIN_DIAS: no hay suficientes días distintos para ese modelo (nunca se
+#     intenta el ajuste; es una limitación matemática de los datos, no un fallo).
+# ==============================================================================
+ESTADO_OK = "OK"
+ESTADO_NO_CONVERGIO = "No convergió"
+ESTADO_SIN_DIAS = "Sin días suficientes"
+
+
+def texto_estado_sin_dias(dias_disponibles, dias_requeridos):
+    return f"{ESTADO_SIN_DIAS} ({dias_disponibles}/{dias_requeridos})"
+
+
+def estado_de_ajuste(res):
+    """Determina el estado (ESTADO_OK / ESTADO_NO_CONVERGIO / texto_estado_sin_dias) de un
+    resultado de `ajustar_todos_los_modelos`, sin recalcular ni reinterpretar la regla de
+    insuficiente/no convergió que ya define esa función -- solo nombra el mismo caso siempre
+    de la misma forma en toda la app y el PDF."""
+    if res.get("insuficiente"):
+        return texto_estado_sin_dias(res["dias_disponibles"], res["dias_requeridos"])
+    r2 = res["r2"]
+    r2_ok = r2 is not None and not (isinstance(r2, float) and np.isnan(r2))
+    return ESTADO_OK if r2_ok else ESTADO_NO_CONVERGIO
+
+
+def calcular_tabla_modelo(RES, datos, variable, modelos):
+    """Para una variable: por cada grupo (-M/+M), arma las filas Grupo/Modelo/R2/RMSE/MAE con una
+    nota corta cuando el modelo no pudo ajustarse, y determina el modelo con mejor R2 de entre los
+    que sí ajustaron. No recalcula nada: solo lee los resultados que ya produjo
+    `ajustar_todos_los_modelos` (misma regla de insuficiente/no convergió, sin tocarla)."""
+    filas = []
+    mejores = {}
+    for grupo in datos[variable]:
+        validos = []
+        for m in modelos:
+            r2 = RES[variable][grupo][m]["r2"]
+            if r2 is not None and not (isinstance(r2, float) and np.isnan(r2)):
+                validos.append((m, r2))
+        mejores[grupo] = max(validos, key=lambda x: x[1])[0] if validos else None
+        for m in modelos:
+            res = RES[variable][grupo][m]
+            r2, rmse, mae = res["r2"], res["rmse"], res.get("mae")
+            r2_ok = r2 is not None and not (isinstance(r2, float) and np.isnan(r2))
+            estado = estado_de_ajuste(res)
+            nota = "" if estado == ESTADO_OK else estado
+            filas.append({
+                "grupo": grupo, "modelo": m,
+                "r2": round(r2, 4) if r2_ok else None,
+                "rmse": round(rmse, 4) if rmse is not None and not (isinstance(rmse, float) and np.isnan(rmse)) else None,
+                "mae": round(mae, 4) if mae is not None and not (isinstance(mae, float) and np.isnan(mae)) else None,
+                "mejor": m == mejores[grupo],
+                "nota": nota,
+            })
+    return filas, mejores
+
+
+def calcular_efecto_micorriza(datos, variable):
+    """Por cada día con réplicas en ambos grupos, calcula el % de incremento de +M sobre -M y la
+    prueba t de Welch entre grupos, reutilizando `prueba_t_independiente` (misma prueba que ya usa
+    la sección Estadística, sin duplicar su lógica)."""
+    filas = []
+    dias = sorted(set(datos[variable]["-M"].keys()) & set(datos[variable]["+M"].keys()))
+    for dia in dias:
+        t_res = prueba_t_independiente(datos, variable, dia)
+        if t_res is None:
+            continue
+        incremento_pct = ((t_res["media_tratado"] - t_res["media_control"]) / t_res["media_control"] * 100
+                           if t_res["media_control"] != 0 else float("nan"))
+        filas.append({"dia": dia, "incremento_pct": incremento_pct, **t_res})
+    return filas
+
+
+def texto_interpretativo_efecto(variable, fila):
+    dia = int(fila["dia"])
+    inc = fila["incremento_pct"]
+    direccion = "superó a" if inc >= 0 else "fue menor que"
+    signif = "significativo" if fila["significativo"] else "no significativo"
+    return (f"A los {dia} ddt, {NOMBRE_VARIABLE[variable].lower()} de +M {direccion} -M en "
+            f"{abs(inc):.1f}% ({formatear_p(fila['p'])}, {signif}).")
+
+
+def fig_barras_variable(datos, variable, fuente_datos="simulado"):
+    """Barras agrupadas -M vs +M por día: altura de barra = media de réplicas, con barras de
+    error = desviación estándar, patrón de trama por grupo (redundante con el color, para que
+    se distingan también en blanco y negro) y marcas de significancia (ns/*/**/***) sobre cada
+    día -- reutilizando prueba_t_independiente ya existente, sin recalcular nada nuevo.
+    Independiente de las curvas de crecimiento ya existentes."""
+    dias_comunes = sorted(set(datos[variable].get("-M", {})) | set(datos[variable].get("+M", {})))
+    fig = go.Figure()
+    n_replicas_vistas = set()
+    y_max_con_error = 0.0
+    for grupo in ("-M", "+M"):
+        if grupo not in datos[variable]:
+            continue
+        color = T["CONTROL"] if grupo == "-M" else T["ACCENT"]
+        dias, medias, sds, ns = media_sd_por_dia(datos[variable][grupo])
+        n_replicas_vistas.update(int(n) for n in ns)
+        if len(medias):
+            y_max_con_error = max(y_max_con_error, float(np.max(medias + sds)))
+        fig.add_trace(go.Bar(
+            x=[str(int(d)) for d in dias], y=medias, name=grupo,
+            error_y=dict(type="data", array=sds, visible=True, color="#1A1A1A", thickness=1.3, width=5),
+            marker=dict(color=color, line=dict(color="black", width=1),
+                        pattern=dict(shape=PATRON_GRUPO[grupo], fillmode="overlay", fgcolor="#1A1A1A", size=5, solidity=0.3)),
+        ))
+
+    # Marcas de significancia sobre cada día con réplicas en ambos grupos: se anota el
+    # resultado de la prueba t de Welch ya implementada (prueba_t_independiente), no se
+    # calcula una prueba nueva ni se decide un umbral distinto al que ya usa la app (p<0.05).
+    if "-M" in datos[variable] and "+M" in datos[variable]:
+        y_rango = y_max_con_error if y_max_con_error > 0 else 1.0
+        for dia in dias_comunes:
+            resultado_t = prueba_t_independiente(datos, variable, dia)
+            if resultado_t is None:
+                continue
+            y_top = max(resultado_t["media_control"] + resultado_t["sd_control"],
+                        resultado_t["media_tratado"] + resultado_t["sd_tratado"])
+            fig.add_annotation(
+                x=str(int(dia)), y=y_top + 0.045 * y_rango, text=texto_significancia(resultado_t["p"]),
+                showarrow=False, yanchor="bottom",
+                font=dict(family=FUENTE_PUBLICACION, size=13, color="#1A1A1A"),
+            )
+
+    fig.update_layout(
+        barmode="group",
+        title=f"{NOMBRE_VARIABLE[variable]} por día — media ± DE",
+        xaxis_title="Día después del trasplante (ddt)",
+        yaxis_title=f"{NOMBRE_VARIABLE[variable]} ({UNIDADES[variable]})",
+    )
+    if y_max_con_error > 0:
+        fig.update_yaxes(range=[0, y_max_con_error * 1.25])
+    estilo_publicacion(fig, width=900, height=480)
+
+    n_reps_txt = "/".join(str(n) for n in sorted(n_replicas_vistas)) if n_replicas_vistas else "?"
+    descripcion = (
+        f"{NOMBRE_VARIABLE[variable]} ({UNIDADES[variable]}), media ± DE, n = {n_reps_txt} réplicas por día y "
+        "grupo. Significancia (prueba t de Welch, −M vs +M): ns = p ≥ 0.05 · * p < 0.05 · ** p < 0.01 · "
+        "*** p < 0.001."
+    )
+    extra = ("Réplicas sintéticas generadas a partir de medias y CV% publicados (Aguirre-Medina et al., 2023)."
+             if fuente_datos == "real" else None)
+    return fig, construir_pie(descripcion, extra=extra)
+
+
+def fig_barras_resumen_2x2(datos, variables, fuente_datos="simulado"):
+    """Figura resumen 2x2 con hasta 4 variables, etiquetas (a)-(d), ejes Y independientes por
+    panel (cada variable tiene su propia unidad) y una sola leyenda. Complementa -- no
+    reemplaza -- las figuras individuales por variable."""
+    letras = ["a", "b", "c", "d"]
+    vars_incluidas = variables[:4]
+    cols_n = 2
+    fig = make_subplots(
+        rows=2, cols=cols_n,
+        subplot_titles=[f"({letras[i]}) {NOMBRE_VARIABLE[v]}" for i, v in enumerate(vars_incluidas)],
+        horizontal_spacing=0.15, vertical_spacing=0.22,
+    )
+    for idx, variable in enumerate(vars_incluidas):
+        fila, col = idx // cols_n + 1, idx % cols_n + 1
+        dias_variable = sorted(set().union(*(datos[variable][g].keys() for g in datos[variable])))
+        for grupo in ("-M", "+M"):
+            if grupo not in datos[variable]:
+                continue
+            color = T["CONTROL"] if grupo == "-M" else T["ACCENT"]
+            dias, medias, sds, _ = media_sd_por_dia(datos[variable][grupo])
+            fig.add_trace(go.Bar(
+                x=[str(int(d)) for d in dias], y=medias, name=grupo, legendgroup=grupo,
+                showlegend=(idx == 0),
+                error_y=dict(type="data", array=sds, visible=True, color="#1A1A1A", thickness=1.1, width=4),
+                marker=dict(color=color, line=dict(color="black", width=1),
+                            pattern=dict(shape=PATRON_GRUPO[grupo], fillmode="overlay", fgcolor="#1A1A1A", size=4, solidity=0.3)),
+            ), row=fila, col=col)
+        fig.update_xaxes(title_text="Día (ddt)", tickvals=[str(int(d)) for d in dias_variable], row=fila, col=col)
+        fig.update_yaxes(title_text=UNIDADES[variable], row=fila, col=col)
+    fig.update_layout(barmode="group")
+    estilo_publicacion(fig, width=1200, height=900, top_margin=70)
+    alinear_titulos_panel_izquierda(fig, len(vars_incluidas))
+
+    extra = ("Réplicas sintéticas generadas a partir de medias y CV% publicados (Aguirre-Medina et al., 2023)."
+             if fuente_datos == "real" else None)
+    pie = construir_pie(
+        "Media ± DE por día y grupo. Ejes Y independientes por panel (unidad propia de cada variable).",
+        extra=extra,
+    )
+    return fig, pie
+
+
+def fig_barras_r2_comparacion(RES, datos, variables, modelos):
+    """Cuadrícula 2x2 (una variable por subplot, no una fila de 4) del R² de cada modelo,
+    dejando la barra en 0 con la etiqueta 'No convergió' o 'Sin días suficientes' donde
+    corresponda. Eje Y siempre 0-1.15 (las barras parten de 0 -- no se recorta para
+    exagerar diferencias). Mismo patrón+color por grupo que el resto de las gráficas."""
+    n = len(variables)
+    cols_n = min(n, 2)
+    filas_n = -(-n // cols_n)  # ceil(n / cols_n)
+    fig = make_subplots(rows=filas_n, cols=cols_n, subplot_titles=[NOMBRE_VARIABLE[v] for v in variables],
+                         horizontal_spacing=0.12, vertical_spacing=0.16)
+
+    leyenda_mostrada = set()
+    for idx, variable in enumerate(variables):
+        fila, col = idx // cols_n + 1, idx % cols_n + 1
+        for grupo in datos[variable]:
+            color = T["CONTROL"] if grupo == "-M" else T["ACCENT"]
+            y_num, texto_num, y_nota, texto_nota = [], [], [], []
+            for m in modelos:
+                res = RES[variable][grupo][m]
+                r2 = res["r2"]
+                if res.get("insuficiente"):
+                    y_num.append(None); texto_num.append("")
+                    y_nota.append(0); texto_nota.append(ESTADO_SIN_DIAS)
+                elif r2 is None or (isinstance(r2, float) and np.isnan(r2)):
+                    y_num.append(None); texto_num.append("")
+                    y_nota.append(0); texto_nota.append(ESTADO_NO_CONVERGIO)
+                else:
+                    y_num.append(round(r2, 3)); texto_num.append(f"{r2:.2f}")
+                    y_nota.append(None); texto_nota.append("")
+            mostrar_leyenda = grupo not in leyenda_mostrada
+            marcador = dict(color=color, line=dict(color="black", width=1),
+                             pattern=dict(shape=PATRON_GRUPO[grupo], fillmode="overlay",
+                                          fgcolor="#1A1A1A", size=5, solidity=0.3))
+            # `textangle` es un escalar por traza (no admite un valor distinto por barra), así
+            # que las notas "no convergió"/"sin días suficientes" van en una traza aparte con
+            # texto vertical (-90°): con el ángulo horizontal por defecto el texto es más ancho
+            # que una sola barra y se encima con las etiquetas de las barras vecinas.
+            fig.add_trace(go.Bar(x=modelos, y=y_num, name=grupo, legendgroup=grupo, showlegend=mostrar_leyenda,
+                                  marker=marcador, text=texto_num, textposition="outside", cliponaxis=False,
+                                  constraintext="none",
+                                  textfont=dict(family=FUENTE_PUBLICACION, size=12, color="#1A1A1A")),
+                          row=fila, col=col)
+            fig.add_trace(go.Bar(x=modelos, y=y_nota, name=grupo, legendgroup=grupo, showlegend=False,
+                                  marker=marcador, text=texto_nota, textposition="outside", cliponaxis=False,
+                                  constraintext="none", textangle=-90,
+                                  textfont=dict(family=FUENTE_PUBLICACION, size=12, color="#1A1A1A")),
+                          row=fila, col=col)
+            leyenda_mostrada.add(grupo)
+        fig.update_yaxes(range=[0, 1.15], row=fila, col=col, tickmode="linear", tick0=0, dtick=0.2,
+                          title_text=("R²" if col == 1 else None))
+        fig.update_xaxes(row=fila, col=col, tickfont=dict(size=12))
+
+    # Sin título interno: el encabezado "### Comparación de R² por modelo" ya lo pone la
+    # sección que llama a esta función -- evita que título y subplot_titles se encimen.
+    fig.update_layout(barmode="group", bargap=0.4, bargroupgap=0.3)
+    estilo_publicacion(fig, width=1200, height=460 if filas_n == 1 else 460 * filas_n, top_margin=60)
+    alinear_titulos_panel_izquierda(fig, len(variables))
+
+    pie = construir_pie(
+        "R² de cada modelo (Exponencial, Logístico, Gompertz) por variable y grupo. Eje Y fijo en 0-1.15: "
+        "las barras siempre parten de 0.",
+        notas=["Barras vacías con etiqueta vertical = modelo no convergió o sin días suficientes."],
+    )
+    return fig, pie
+
+
+def _asintota_k_plausible(res, y_max_obs_grupo, dia_min, dia_max):
+    """Criterio de plausibilidad de K (versión endurecida): se dibuja la asíntota solo si
+    se cumplen TODAS: (1) el modelo convergió, (2) R² >= 0.90, (3) K <= 1.5x el máximo
+    observado en ese grupo/variable, y (4) el punto de inflexión Ti cae dentro del rango de
+    días observados (o sea que los datos sí alcanzan a mostrar la desaceleración hacia K).
+    Devuelve (dibujar, K, motivo). El Exponencial no tiene K y nunca llega a llamar esto
+    (se filtra en el llamador por nombres_param)."""
+    if res.get("insuficiente") or res["params"] is None:
+        return False, None, "el modelo no convergió"
+    r2 = res["r2"]
+    if r2 is None or (isinstance(r2, float) and np.isnan(r2)):
+        return False, None, "el modelo no convergió"
+    K = res["params"][0]
+    Ti = res["params"][2]
+    if r2 < 0.90:
+        return False, K, f"R²={r2:.3f} < 0.90"
+    if y_max_obs_grupo > 0 and K > 1.5 * y_max_obs_grupo:
+        return False, K, f"K={K:.1f} supera 1.5× el máximo observado ({y_max_obs_grupo:.1f})"
+    if not (dia_min <= Ti <= dia_max):
+        return False, K, (f"el punto de inflexión (Ti={Ti:.1f}) cae fuera de la ventana "
+                           f"observada ({dia_min:.0f}–{dia_max:.0f} ddt)")
+    return True, K, None
+
+
+def fig_curvas_publicacion(datos, RES, variable, modelos, fuente_datos="simulado"):
+    """Curvas de crecimiento estilo publicación: panel (a) = -M, panel (b) = +M, con el mismo
+    eje Y compartido. Puntos = TODAS las réplicas observadas (círculos vacíos, con
+    transparencia), no solo la media. Un color + tipo de línea por modelo (MODELO_ESTILO,
+    paleta colorblind-safe). Los modelos que no convergieron (o sin días suficientes) NO se
+    dibujan -- se anotan en el pie de figura, igual que la asíntota K cuando no es plausible.
+    No cambia el ajuste ni la regla de insuficiente/no convergió: solo lee RES."""
+    grupos = [g for g in ("-M", "+M") if g in datos[variable]]
+    dias_todos = sorted(set().union(*[set(datos[variable][g].keys()) for g in grupos]))
+    t_fino = np.linspace(dias_todos[0], dias_todos[-1], 300)
+
+    todos_los_valores = [v for g in grupos for vals in datos[variable][g].values() for v in vals]
+    y_obs_min, y_obs_max = min(todos_los_valores), max(todos_los_valores)
+    dia_min, dia_max = dias_todos[0], dias_todos[-1]
+
+    # Techo/piso del eje Y calculados ANTES de dibujar nada (Tarea 1b): se usan tanto para
+    # fijar el rango final del eje como para decidir, por modelo, si su banda de confianza
+    # es "estable" (cabe razonablemente en el rango visible) o hay que omitirla en vez de
+    # dejar que un pcov mal condicionado pinte un rectangulo solido de borde a borde.
+    rango_total = max(y_obs_max - y_obs_min, 1e-6)
+    y_bottom_cap = min(0, y_obs_min) - 0.05 * rango_total
+    y_top_cap = y_obs_max * 1.25
+
+    etiquetas_panel = {"-M": "(a) −M", "+M": "(b) +M"}
+    fig = make_subplots(rows=1, cols=len(grupos), subplot_titles=[etiquetas_panel[g] for g in grupos],
+                         horizontal_spacing=0.07, shared_yaxes=True)
+
+    notas = []
+    leyenda_mostrada = set()
+    for col, grupo in enumerate(grupos, start=1):
+        y_max_obs_grupo = max(v for vals in datos[variable][grupo].values() for v in vals)
+        t_flat, y_flat = flatten_replicas(datos[variable][grupo])
+        fig.add_trace(go.Scatter(
+            x=t_flat, y=y_flat, mode="markers", name="Réplicas observadas",
+            legendgroup="obs", showlegend=("obs" not in leyenda_mostrada),
+            marker=dict(symbol="circle-open", color="#1A1A1A", size=7, opacity=0.55, line=dict(width=1.3)),
+            hovertemplate=f"DAT %{{x}}<br>%{{y:.2f}} {UNIDADES[variable]}<extra></extra>",
+        ), row=1, col=col)
+        leyenda_mostrada.add("obs")
+
+        for modelo in modelos:
+            res = RES[variable][grupo][modelo]
+            estilo = MODELO_ESTILO[modelo]
+            if res.get("insuficiente"):
+                notas.append(f"{modelo} ({grupo}): sin suficientes días de muestreo "
+                              f"({res['dias_disponibles']}/{res['dias_requeridos']}).")
+                continue
+            r2 = res["r2"]
+            r2_ok = r2 is not None and not (isinstance(r2, float) and np.isnan(r2))
+            if res["params"] is None or not r2_ok:
+                notas.append(f"{modelo} ({grupo}): no convergió.")
+                continue
+
+            func = MODELOS[modelo]["func"]
+            y_fino = func(t_fino, *res["params"])
+            tiene_k = MODELOS[modelo]["nombres_param"][0] == "K"
+
+            # Si el modelo tiene K, el MISMO criterio de plausibilidad que decide la
+            # asíntota (Tarea 1 de la sesión anterior) decide también si su fit es
+            # "estable" -- si K no es plausible, no tiene sentido mostrar una banda de
+            # incertidumbre de un ajuste que ya se considera poco confiable.
+            dibujar_k, K, motivo_k = (_asintota_k_plausible(res, y_max_obs_grupo, dia_min, dia_max)
+                                        if tiene_k else (True, None, None))
+
+            # Banda de confianza del 95% (Monte Carlo sobre pcov, ya existente en la app):
+            # se dibuja antes que la linea del modelo para que quede debajo. Se omite si el
+            # modelo no es "estable" (K implausible) o si la banda numérica se dispara muy
+            # por fuera del rango visible del eje Y -- en ambos casos, el motivo real es el
+            # mismo: el ajuste está mal identificado con solo estos puntos, y una banda
+            # gigante clippeada por Plotly termina pintando un rectangulo solido que oculta
+            # los datos en vez de comunicar incertidumbre.
+            banda_baja, banda_alta = calcular_banda_confianza(func, res["params"], res["pcov"], t_fino)
+            dibujar_banda, motivo_banda_propio = False, None
+            k_causa_banda = tiene_k and not dibujar_k
+            if banda_baja is not None:
+                if k_causa_banda:
+                    pass  # se anota una sola vez junto con la asíntota, misma causa (ver abajo)
+                elif np.max(banda_alta) > 3 * y_top_cap or np.min(banda_baja) < 3 * y_bottom_cap - 2 * rango_total:
+                    motivo_banda_propio = "la incertidumbre del ajuste excede varias veces el rango visible"
+                else:
+                    dibujar_banda = True
+            if dibujar_banda:
+                # Recorte defensivo al rango visible: aunque la banda ya se consideró
+                # "estable", puede sobresalir un poco por los bordes: no se agranda el
+                # eje para acomodarla (mismo principio que la asíntota K).
+                banda_alta_recortada = np.clip(banda_alta, y_bottom_cap, y_top_cap)
+                banda_baja_recortada = np.clip(banda_baja, y_bottom_cap, y_top_cap)
+                r, g, b = (int(estilo["color"][1:3], 16), int(estilo["color"][3:5], 16), int(estilo["color"][5:7], 16))
+                fig.add_trace(go.Scatter(x=t_fino, y=banda_alta_recortada, mode="lines", line=dict(width=0),
+                                          legendgroup=modelo, showlegend=False, hoverinfo="skip"), row=1, col=col)
+                fig.add_trace(go.Scatter(x=t_fino, y=banda_baja_recortada, mode="lines", line=dict(width=0),
+                                          fill="tonexty", fillcolor=f"rgba({r},{g},{b},0.15)",
+                                          legendgroup=modelo, showlegend=False, hoverinfo="skip"), row=1, col=col)
+            elif motivo_banda_propio is not None:
+                notas.append(f"{modelo} ({grupo}): banda de confianza no se dibuja ({motivo_banda_propio}).")
+
+            fig.add_trace(go.Scatter(
+                x=t_fino, y=y_fino, mode="lines", name=f"{modelo} (R²={r2:.3f})",
+                legendgroup=modelo, showlegend=(modelo not in leyenda_mostrada),
+                line=dict(color=estilo["color"], dash=estilo["dash"], width=2.4),
+            ), row=1, col=col)
+            leyenda_mostrada.add(modelo)
+
+            # El Exponencial (P0, r) no tiene asíntota: nunca entra aquí porque su primer
+            # parámetro no se llama "K" (ver MODELOS). Solo Logístico y Gompertz la tienen.
+            if tiene_k:
+                if dibujar_k:
+                    fig.add_trace(go.Scatter(
+                        x=[t_fino[0], t_fino[-1]], y=[K, K], mode="lines", showlegend=False,
+                        legendgroup=modelo, line=dict(color=estilo["color"], dash="dot", width=1.1),
+                        hovertemplate=f"K ({modelo}) = {K:.2f} {UNIDADES[variable]}<extra></extra>",
+                    ), row=1, col=col)
+                elif banda_baja is not None:
+                    # Una sola viñeta: la asíntota Y la banda comparten la misma causa (K implausible).
+                    notas.append(f"{modelo} ({grupo}): ni la asíntota K ni la banda de confianza se "
+                                  f"dibujan ({motivo_k}).")
+                else:
+                    notas.append(f"{modelo} ({grupo}): asíntota K no se dibuja ({motivo_k}).")
+
+        fig.update_xaxes(title_text="Día después del trasplante (ddt)", tickvals=dias_todos, row=1, col=col)
+        if col == 1:
+            fig.update_yaxes(title_text=f"{NOMBRE_VARIABLE[variable]} ({UNIDADES[variable]})", row=1, col=col)
+
+    # Eje Y limitado a ~1.25x el maximo observado (no a la curva/asintota ajustada): asi
+    # ninguna curva ni asintota -- ni siquiera una que si paso el criterio de plausibilidad --
+    # puede dominar la escala del panel. Si una K dibujada supera este techo, su linea queda
+    # fuera de vista (no se agranda el eje para acomodarla).
+    fig.update_yaxes(range=[y_bottom_cap, y_top_cap])
+    # Tamaño fijo 1200x520 (dos paneles): eje Y compartido, misma altura en (a) y (b).
+    estilo_publicacion(fig, width=1200, height=520, top_margin=55)
+    alinear_titulos_panel_izquierda(fig, len(grupos))
+
+    descripcion = ("Círculos = réplicas individuales observadas. Líneas = modelos convergidos (R² en la "
+                   "leyenda). Eje Y limitado a ~1.25× el máximo observado. Asíntota K (línea punteada fina): "
+                   "solo si el modelo convergió, R² ≥ 0.90, K ≤ 1.5× el máximo observado, y el punto de "
+                   "inflexión cae dentro de los días observados.")
+    extra = ("Réplicas sintéticas generadas a partir de medias y CV% publicados (Aguirre-Medina et al., 2023)."
+             if fuente_datos == "real" else None)
+    return fig, construir_pie(descripcion, notas=notas, extra=extra)
+
+
+def calcular_agr_rgr(modelo, params, t):
+    """AGR (dP/dt) y RGR ((1/P)·dP/dt), calculados analíticamente a partir de las derivadas
+    cerradas de cada modelo y de los parámetros que YA ajustó curve_fit -- no se reajusta ni
+    se modifica el ajuste, solo se evalúan formulas conocidas en esos parámetros:
+      Exponencial P=P0·e^(rt)      -> dP/dt = r·P            -> RGR = r (constante)
+      Logístico  P=K/(1+e^-k(t-Ti)) -> dP/dt = k·P·(1-P/K)   -> RGR = k·(1-P/K)
+      Gompertz   P=K·e^(-e^-k(t-Ti)) -> dP/dt = k·P·ln(K/P)  -> RGR = k·ln(K/P)
+    """
+    if modelo == "Exponencial":
+        P0, r = params
+        P = P0 * np.exp(r * t)
+        rgr = np.full_like(t, r, dtype=float)
+        agr = r * P
+    elif modelo == "Logístico":
+        K, k, Ti = params
+        P = K / (1 + np.exp(-k * (t - Ti)))
+        rgr = k * (1 - P / K)
+        agr = P * rgr
+    elif modelo == "Gompertz":
+        K, k, Ti = params
+        P = K * np.exp(-np.exp(-k * (t - Ti)))
+        with np.errstate(divide="ignore", invalid="ignore"):
+            rgr = k * np.log(K / P)
+        agr = P * rgr
+    else:
+        raise ValueError(f"Modelo desconocido: {modelo}")
+    return agr, rgr
+
+
+def fig_tasas_crecimiento(datos, RES, variable, modelos, fuente_datos="simulado"):
+    """AGR y RGR (Tarea 5, opcional) del modelo con MEJOR R² en cada grupo -- reutiliza
+    calcular_tabla_modelo para decidir cuál es el mejor, sin duplicar ese criterio. Devuelve
+    (fig, None) o (None, motivo) si ningún grupo tiene un modelo convergido."""
+    grupos = [g for g in ("-M", "+M") if g in datos[variable]]
+    _, mejores = calcular_tabla_modelo(RES, datos, variable, modelos)
+    grupos_validos = [g for g in grupos if mejores.get(g)]
+    if not grupos_validos:
+        return None, "Ningún modelo convergió en ningún grupo: no hay tasas de crecimiento que calcular."
+
+    dias_todos = sorted(set().union(*[set(datos[variable][g].keys()) for g in grupos]))
+    t_fino = np.linspace(dias_todos[0], dias_todos[-1], 300)
+    etiqueta_agr = {"-M": "(c) AGR −M", "+M": "(d) AGR +M"}
+    etiqueta_rgr = {"-M": "(e) RGR −M", "+M": "(f) RGR +M"}
+    titulos = [etiqueta_agr[g] for g in grupos_validos] + [etiqueta_rgr[g] for g in grupos_validos]
+    fig = make_subplots(rows=2, cols=len(grupos_validos), subplot_titles=titulos,
+                         horizontal_spacing=0.09, vertical_spacing=0.2, shared_xaxes=True)
+
+    for col, grupo in enumerate(grupos_validos, start=1):
+        modelo = mejores[grupo]
+        estilo = MODELO_ESTILO[modelo]
+        res = RES[variable][grupo][modelo]
+        agr, rgr = calcular_agr_rgr(modelo, res["params"], t_fino)
+        fig.add_trace(go.Scatter(x=t_fino, y=agr, mode="lines", name=f"{grupo}: {modelo} (mejor R²)",
+                                  legendgroup=f"{grupo}-{modelo}", showlegend=True,
+                                  line=dict(color=estilo["color"], dash=estilo["dash"], width=2.2)),
+                      row=1, col=col)
+        fig.add_trace(go.Scatter(x=t_fino, y=rgr, mode="lines", showlegend=False,
+                                  legendgroup=f"{grupo}-{modelo}",
+                                  line=dict(color=estilo["color"], dash=estilo["dash"], width=2.2)),
+                      row=2, col=col)
+        if col == 1:
+            fig.update_yaxes(title_text=f"AGR ({UNIDADES[variable]}/día)", row=1, col=col)
+            fig.update_yaxes(title_text="RGR (día⁻¹)", row=2, col=col)
+        # shared_xaxes=True (arriba) oculta las etiquetas numericas de la fila de AGR por
+        # defecto, dejando solo las marcas sin numero -- se fuerza showticklabels=True para
+        # que las 4 fechas (28/56/84/112) se vean en las 4 filas, no solo en la de abajo.
+        fig.update_xaxes(tickvals=dias_todos, showticklabels=True, row=1, col=col)
+        fig.update_xaxes(title_text="Día después del trasplante (ddt)", tickvals=dias_todos,
+                          showticklabels=True, row=2, col=col)
+
+    # 1200 de ancho igual que las curvas; el alto crece proporcionalmente porque aquí hay
+    # 2 FILAS de paneles (AGR arriba, RGR abajo) en vez de 1.
+    estilo_publicacion(fig, width=1200, height=860, top_margin=55)
+    alinear_titulos_panel_izquierda(fig, len(titulos))
+
+    notas = [f"Modelo usado en {g}: {mejores[g]} (mejor R² entre los convergidos)." for g in grupos_validos]
+    if len(grupos_validos) < len(grupos):
+        notas.append(f"Sin tasas para {', '.join(g for g in grupos if g not in grupos_validos)}: "
+                     "ningún modelo convergió en ese grupo.")
+    extra = ("Réplicas sintéticas generadas a partir de medias y CV% publicados (Aguirre-Medina et al., 2023)."
+             if fuente_datos == "real" else None)
+    descripcion = ("Tasas calculadas analíticamente a partir de los parámetros ya ajustados del modelo con "
+                   "mejor R² en cada grupo (sin reajustar). AGR = dP/dt; RGR = (1/P)·dP/dt.")
+    return fig, construir_pie(descripcion, notas=notas, extra=extra)
+
+
 def calcular_banda_confianza(func, popt, pcov, t_eval, n_muestras=400, semilla_mc=7):
     if popt is None or pcov is None or np.any(np.isnan(pcov)):
         return None, None
@@ -405,10 +1151,10 @@ def calcular_banda_confianza(func, popt, pcov, t_eval, n_muestras=400, semilla_m
 
 def badge_r2(r2, insuficiente=False, dias_disponibles=None, dias_requeridos=None):
     if insuficiente:
-        return (f'<span class="badge badge-ambar">Sin suficientes días · {dias_disponibles}/{dias_requeridos} '
+        return (f'<span class="badge badge-ambar">{ESTADO_SIN_DIAS} · {dias_disponibles}/{dias_requeridos} '
                 f'necesarios para este modelo</span>')
     if r2 is None or np.isnan(r2):
-        return '<span class="badge badge-rojo">Sin ajuste</span>'
+        return f'<span class="badge badge-rojo">{ESTADO_NO_CONVERGIO}</span>'
     if r2 >= 0.9:
         return f'<span class="badge badge-verde">Ajuste fuerte · R² {r2:.3f}</span>'
     if r2 >= 0.7:
@@ -679,7 +1425,7 @@ def advertir_dias_insuficientes(datos):
         "(Exponencial: mínimo 2 días; Logístico y Gompertz: mínimo 3 días). Con un solo día de datos "
         "solo se puede comparar el valor puntual entre grupos, no ajustar una curva.\n\n"
         + "\n".join(lineas) +
-        "\n\nEsas combinaciones se mostrarán como **'Sin suficientes días'** en vez de un R² una vez "
+        f"\n\nEsas combinaciones se mostrarán como **'{ESTADO_SIN_DIAS}'** en vez de un R² una vez "
         "que ajustes los modelos — no es un error, es una limitación real de estos datos hasta que se "
         "agreguen más fechas de muestreo.",
         icon="⚠️",
@@ -728,6 +1474,8 @@ with st.sidebar:
     st.markdown('<span class="field-label">Análisis</span>', unsafe_allow_html=True)
     nav_item("Metodología")
     nav_item("Resultados")
+    nav_item("Gráficas de barras")
+    nav_item("Resultados esperados")
     nav_item("Estadística")
     nav_item("Residuos")
     nav_item("Discusión y conclusiones")
@@ -943,7 +1691,8 @@ elif seccion == "Ajustar modelos":
 # ==============================================================================
 # GUARDIA
 # ==============================================================================
-elif seccion in ("Resultados", "Estadística", "Residuos", "Discusión y conclusiones", "Exportar reporte") and not st.session_state.ajustado:
+elif seccion in ("Resultados", "Gráficas de barras", "Resultados esperados", "Estadística", "Residuos",
+                  "Discusión y conclusiones", "Exportar reporte") and not st.session_state.ajustado:
     st.markdown(f"### {seccion}")
     with st.container(border=True):
         st.markdown('<span class="ficha-marca"></span>', unsafe_allow_html=True)
@@ -1025,10 +1774,17 @@ elif seccion == "Resultados":
         box-shadow: 0 6px 16px rgba(32,28,24,0.09); }}
     </style>""", unsafe_allow_html=True)
     RES = st.session_state.resultados
-    COLOR_GRUPO = {"-M": T["CONTROL"], "+M": T["ACCENT"]}
 
     st.caption(f"Mostrando {etiqueta_lote.lower()} · "
                f"{', '.join(NOMBRE_VARIABLE[v] for v in variables_a_mostrar)} · {', '.join(modelos_a_mostrar)}")
+
+    if st.session_state.fuente_datos == "real":
+        st.info(
+            "**Nota metodológica.** Los datos provienen de Aguirre-Medina et al. (2023), Revista "
+            "Fitotecnia Mexicana. Las réplicas individuales fueron generadas sintéticamente a partir "
+            "de las medias y el CV% publicados en el artículo (no son mediciones planta por planta).",
+            icon="📄",
+        )
 
     for variable in variables_a_mostrar:
         st.markdown('<span class="eyebrow">Variable</span>', unsafe_allow_html=True)
@@ -1070,88 +1826,178 @@ elif seccion == "Resultados":
             st.write("")
             continue
 
-        dias_todos = sorted(set(DATOS[variable]["-M"].keys()) | set(DATOS[variable]["+M"].keys()))
-        t_fino = np.linspace(dias_todos[0], dias_todos[-1], 300)
-
-        # Rango de eje Y basado en los datos observados (media +/- DE), no en la curva
-        # ajustada: con pocos puntos, la banda de confianza Monte Carlo de un parametro
-        # mal identificado puede dispararse a valores absurdos y, si se deja que el eje
-        # se autoescale a eso, aplasta la curva real (que sigue siendo razonable).
-        extremos_obs = []
-        for grupo in DATOS[variable]:
-            _, medias_g, sds_g, _ = media_sd_por_dia(DATOS[variable][grupo])
-            extremos_obs.extend((medias_g - sds_g).tolist())
-            extremos_obs.extend((medias_g + sds_g).tolist())
-        y_obs_min, y_obs_max = min(extremos_obs), max(extremos_obs)
-        rango_obs = max(y_obs_max - y_obs_min, 1e-6)
-        rango_y = [y_obs_min - 0.25 * rango_obs, y_obs_max + 0.35 * rango_obs]
-
-        n = len(modelos_a_mostrar)
-        fig = make_subplots(rows=1, cols=n, subplot_titles=modelos_a_mostrar, horizontal_spacing=0.06)
-
-        for i, nombre_modelo in enumerate(modelos_a_mostrar, start=1):
-            func = MODELOS[nombre_modelo]["func"]
-            for grupo in DATOS[variable]:
-                res = RES[variable][grupo][nombre_modelo]
-                color = COLOR_GRUPO[grupo]
-                dias_g, medias_g, sds_g, _ = media_sd_por_dia(DATOS[variable][grupo])
-
-                if res["params"] is not None:
-                    banda_baja, banda_alta = calcular_banda_confianza(func, res["params"], res["pcov"], t_fino)
-                    if banda_baja is not None:
-                        fig.add_trace(go.Scatter(x=t_fino, y=banda_alta, mode="lines", line=dict(width=0),
-                                                  showlegend=False, hoverinfo="skip"), row=1, col=i)
-                        fig.add_trace(go.Scatter(x=t_fino, y=banda_baja, mode="lines", line=dict(width=0),
-                                                  fill="tonexty", fillcolor=f"rgba({int(color[1:3],16)},{int(color[3:5],16)},{int(color[5:7],16)},0.15)",
-                                                  showlegend=False, hoverinfo="skip"), row=1, col=i)
-
-                fig.add_trace(go.Scatter(
-                    x=dias_g, y=medias_g, mode="markers", name=f"{grupo} media±DE", legendgroup=grupo, showlegend=(i == 1),
-                    error_y=dict(type="data", array=sds_g, visible=True, color=color, thickness=1.2),
-                    marker=dict(color=color, size=7, line=dict(width=1, color=color)),
-                    hovertemplate=f"{grupo} · DAT %{{x}}<br>%{{y:.2f}} {UNIDADES[variable]}<extra></extra>",
-                ), row=1, col=i)
-                if res["params"] is not None:
-                    y_fino = func(t_fino, *res["params"])
-                    fig.add_trace(go.Scatter(
-                        x=t_fino, y=y_fino, mode="lines", name=f"{grupo} ajuste", legendgroup=grupo, showlegend=False,
-                        line=dict(color=color, width=2.5), hoverinfo="skip",
-                    ), row=1, col=i)
-            fig.update_xaxes(title_text="DAT (días)", row=1, col=i)
-            fig.update_yaxes(range=rango_y, row=1, col=i)
-            if i == 1:
-                fig.update_yaxes(title_text=f"{NOMBRE_VARIABLE[variable]} ({UNIDADES[variable]})", row=1, col=i)
-
-        fig.update_layout(height=420, legend=dict(orientation="h", yanchor="bottom", y=1.08, x=0))
-        fig.update_annotations(font=dict(family="IBM Plex Mono, monospace", size=12, color=T["INK_MUTED"]))
+        fig, pie = fig_curvas_publicacion(DATOS, RES, variable, modelos_a_mostrar, st.session_state.fuente_datos)
         st.plotly_chart(fig, width='stretch')
-        st.caption("Puntos = media ± desviación estándar de las réplicas. Banda sombreada = intervalo de confianza del 95% de la curva completa.")
+        mostrar_pie_streamlit(pie)
+        st.download_button(
+            f"Descargar PNG — Curvas {NOMBRE_VARIABLE[variable]}",
+            data=componer_png_con_pie(fig.to_image(format="png", scale=3), pie),
+            file_name=f"curvas_{variable}.png", mime="image/png", key=f"png_curvas_{variable}",
+        )
+
+        with st.expander(f"Tasas de crecimiento (AGR/RGR) — {NOMBRE_VARIABLE[variable]}"):
+            st.caption(
+                "Opcional: AGR (dP/dt) y RGR ((1/P)·dP/dt) del modelo con mejor R² en cada grupo, "
+                "calculadas analíticamente a partir de los parámetros ya ajustados (sin reajustar)."
+            )
+            fig_tasas, pie_tasas_o_motivo = fig_tasas_crecimiento(
+                DATOS, RES, variable, modelos_a_mostrar, st.session_state.fuente_datos)
+            if fig_tasas is None:
+                st.info(pie_tasas_o_motivo)
+            else:
+                st.plotly_chart(fig_tasas, width='stretch')
+                mostrar_pie_streamlit(pie_tasas_o_motivo)
+                st.download_button(
+                    f"Descargar PNG — Tasas {NOMBRE_VARIABLE[variable]}",
+                    data=componer_png_con_pie(fig_tasas.to_image(format="png", scale=3), pie_tasas_o_motivo),
+                    file_name=f"tasas_{variable}.png", mime="image/png", key=f"png_tasas_{variable}",
+                )
 
         filas = []
         for grupo in DATOS[variable]:
             for nombre_modelo in modelos_a_mostrar:
                 res = RES[variable][grupo][nombre_modelo]
-                if res.get("insuficiente"):
-                    estado = f"Sin suficientes días ({res['dias_disponibles']}/{res['dias_requeridos']})"
-                elif pd.isna(res["r2"]):
-                    estado = "Sin ajuste"
-                else:
-                    estado = "OK"
+                estado = estado_de_ajuste(res)
                 filas.append({"Grupo": grupo, "Modelo": nombre_modelo, "Estado": estado,
-                               "R²": round(res["r2"], 4) if not pd.isna(res["r2"]) else None,
-                               "RMSE": round(res["rmse"], 4) if not pd.isna(res["rmse"]) else None,
-                               "MAE": round(res["mae"], 4) if not pd.isna(res.get("mae")) else None})
+                               "R²": round(res["r2"], 4) if not pd.isna(res["r2"]) else np.nan,
+                               "RMSE": round(res["rmse"], 4) if not pd.isna(res["rmse"]) else np.nan,
+                               "MAE": round(res["mae"], 4) if not pd.isna(res.get("mae")) else np.nan})
         df_tabla = pd.DataFrame(filas)
         with st.container(border=True):
             st.markdown('<span class="ficha-marca"></span>', unsafe_allow_html=True)
             st.markdown('<span class="field-label">Tabla de ajuste</span>', unsafe_allow_html=True)
             estilo_tabla = (
                 df_tabla.style
+                .format(na_rep="–", precision=4, subset=["R²", "RMSE", "MAE"])
                 .background_gradient(subset=["R²"], cmap="Greens", vmin=0.5, vmax=1.0)
                 .map(lambda v: f"background-color: {T['CARD']}; color: {T['INK']};" if pd.isna(v) else "", subset=["R²"])
             )
             st.dataframe(estilo_tabla, width='stretch', hide_index=True)
+            st.caption("'–': el modelo no convergió o no tuvo suficientes días de muestreo para este grupo/variable (ver columna Estado).")
         st.write("")
+
+
+# ==============================================================================
+# SECCIÓN · GRÁFICAS DE BARRAS
+# ==============================================================================
+elif seccion == "Gráficas de barras":
+    RES = st.session_state.resultados
+    st.markdown("### Gráficas de barras")
+    st.markdown(
+        "Comparación de medias por día (barras agrupadas −M vs +M), independiente de las curvas de "
+        "crecimiento ya ajustadas en **Resultados**. Cada figura se puede descargar en PNG."
+    )
+    st.write("")
+
+    for variable in variables_a_mostrar:
+        fig_var, pie_var = fig_barras_variable(DATOS, variable, st.session_state.fuente_datos)
+        st.plotly_chart(fig_var, width='stretch')
+        mostrar_pie_streamlit(pie_var)
+        st.download_button(
+            f"Descargar PNG — {NOMBRE_VARIABLE[variable]}",
+            data=componer_png_con_pie(fig_var.to_image(format="png", scale=3), pie_var),
+            file_name=f"barras_{variable}.png", mime="image/png", key=f"png_barras_{variable}",
+        )
+        st.write("")
+
+    if len(variables_a_mostrar) >= 2:
+        st.markdown('<hr class="rule">', unsafe_allow_html=True)
+        st.markdown("### Resumen (a)–(d)")
+        fig_resumen, pie_resumen = fig_barras_resumen_2x2(DATOS, variables_a_mostrar, st.session_state.fuente_datos)
+        st.plotly_chart(fig_resumen, width='stretch')
+        mostrar_pie_streamlit(pie_resumen)
+        st.download_button(
+            "Descargar PNG — Resumen (a)–(d)",
+            data=componer_png_con_pie(fig_resumen.to_image(format="png", scale=3), pie_resumen),
+            file_name="barras_resumen.png", mime="image/png", key="png_barras_resumen",
+        )
+
+    st.markdown('<hr class="rule">', unsafe_allow_html=True)
+    st.markdown("### Comparación de R² por modelo")
+    fig_r2, pie_r2 = fig_barras_r2_comparacion(RES, DATOS, variables_a_mostrar, modelos_a_mostrar)
+    st.plotly_chart(fig_r2, width='stretch')
+    mostrar_pie_streamlit(pie_r2)
+    st.download_button(
+        "Descargar PNG — Comparación de R²",
+        data=componer_png_con_pie(fig_r2.to_image(format="png", scale=3), pie_r2),
+        file_name="barras_r2_comparacion.png", mime="image/png", key="png_barras_r2",
+    )
+    st.caption("Estas gráficas también se incluyen en el reporte PDF (sección Exportar reporte).")
+
+
+# ==============================================================================
+# SECCIÓN · RESULTADOS ESPERADOS
+# ==============================================================================
+elif seccion == "Resultados esperados":
+    RES = st.session_state.resultados
+    st.markdown("### Resultados esperados")
+    st.markdown(
+        "Generado automáticamente a partir de los datos y el último ajuste. Cubre los dos resultados "
+        "esperados del proyecto que se pueden calcular directamente con estos datos: **(1)** el modelo "
+        "de crecimiento que mejor describe cada variable, y **(2)** el efecto de la inoculación "
+        "micorrízica (+M vs −M). Los demás resultados esperados del proyecto (manuscrito para revista "
+        "indexada, taller de capacitación, publicación colaborativa, guía técnica, ponencia) son "
+        "entregables de gestión/difusión y no se calculan a partir de estos datos."
+    )
+    st.write("")
+
+    if st.session_state.fuente_datos == "real":
+        st.info(
+            "**Nota metodológica.** Los datos provienen de Aguirre-Medina et al. (2023), Revista "
+            "Fitotecnia Mexicana. Las réplicas individuales fueron generadas sintéticamente a partir "
+            "de las medias y el CV% publicados en el artículo (no son mediciones planta por planta).",
+            icon="📄",
+        )
+        st.write("")
+
+    st.markdown('<span class="eyebrow">Resultado esperado 1 · Modelo que mejor describe cada variable</span>',
+                unsafe_allow_html=True)
+    if len(modelos_a_mostrar) < 3:
+        st.caption(
+            "Nota: el último ajuste solo incluyó " + ", ".join(modelos_a_mostrar) + ". Para comparar "
+            "los tres modelos, vuelve a *Ajustar modelos* con Exponencial, Logístico y Gompertz activados."
+        )
+    st.caption("'–': el modelo no convergió o no tuvo suficientes días de muestreo (ver columna Nota).")
+    for variable in variables_a_mostrar:
+        filas_modelo, mejores = calcular_tabla_modelo(RES, DATOS, variable, modelos_a_mostrar)
+        st.markdown(f"**{NOMBRE_VARIABLE[variable]}**")
+        df_modelo = pd.DataFrame([{
+            "Grupo": f["grupo"], "Modelo": f["modelo"],
+            "R²": f"{f['r2']:.4f}" if f["r2"] is not None else "–",
+            "RMSE": f"{f['rmse']:.4f}" if f["rmse"] is not None else "–",
+            "MAE": f"{f['mae']:.4f}" if f["mae"] is not None else "–",
+            "Mejor modelo": "⭐" if f["mejor"] else "", "Nota": f["nota"],
+        } for f in filas_modelo])
+        st.dataframe(df_modelo, width='stretch', hide_index=True)
+        for grupo, mejor in mejores.items():
+            st.caption(f"{grupo}: " + (f"mejor modelo = **{mejor}**." if mejor
+                                        else "ningún modelo convergió con los datos actuales."))
+        if any(f["nota"] == ESTADO_NO_CONVERGIO for f in filas_modelo):
+            st.caption(f"ℹ️ {NOTA_NO_CONVERGENCIA_K}")
+        st.write("")
+
+    st.markdown('<hr class="rule">', unsafe_allow_html=True)
+    st.markdown('<span class="eyebrow">Resultado esperado 2 · Efecto de la inoculación micorrízica (+M vs −M)</span>',
+                unsafe_allow_html=True)
+    for variable in variables_a_mostrar:
+        filas_efecto = calcular_efecto_micorriza(DATOS, variable)
+        st.markdown(f"**{NOMBRE_VARIABLE[variable]}**")
+        if not filas_efecto:
+            st.caption("No hay suficientes réplicas en ambos grupos para calcular el efecto.")
+            continue
+        df_efecto = pd.DataFrame([{
+            "Día (ddt)": int(f["dia"]),
+            f"Media −M ({UNIDADES[variable]})": round(f["media_control"], 2),
+            f"Media +M ({UNIDADES[variable]})": round(f["media_tratado"], 2),
+            "Incremento +M vs −M (%)": round(f["incremento_pct"], 1),
+            "t (Welch)": round(f["t"], 3), "p": round(f["p"], 4),
+            "Significativo (p<0.05)": "Sí" if f["significativo"] else "No",
+        } for f in filas_efecto])
+        st.dataframe(df_efecto, width='stretch', hide_index=True)
+        st.markdown(texto_interpretativo_efecto(variable, filas_efecto[-1]))
+        st.write("")
+
+    st.caption("Ambos resultados se incluyen en el reporte PDF (sección Exportar reporte).")
 
 
 # ==============================================================================
@@ -1185,9 +2031,9 @@ elif seccion == "Estadística":
                             unsafe_allow_html=True)
                 st.caption(f"Día {dia_sel} DAT")
                 interpretacion = (
-                    f"Diferencia **estadísticamente significativa** entre −M y +M (p = {resultado_t['p']:.4f} < 0.05)."
+                    f"Diferencia **estadísticamente significativa** entre −M y +M ({formatear_p(resultado_t['p'])} < 0.05)."
                     if resultado_t["significativo"] else
-                    f"Diferencia **no significativa** entre −M y +M en este día (p = {resultado_t['p']:.4f} ≥ 0.05)."
+                    f"Diferencia **no significativa** entre −M y +M en este día ({formatear_p(resultado_t['p'])} ≥ 0.05)."
                 )
                 st.markdown(interpretacion)
                 st.caption(
@@ -1210,20 +2056,19 @@ elif seccion == "Estadística":
             for nombre_modelo in modelos_a_mostrar:
                 res = RES[variable][grupo][nombre_modelo]
                 if res["params"] is None:
-                    estado = (f"Sin suficientes días ({res['dias_disponibles']}/{res['dias_requeridos']})"
-                              if res.get("insuficiente") else "Sin ajuste")
-                    filas_ci.append({"Grupo": grupo, "Modelo": nombre_modelo, "Parámetro": estado,
-                                      "Valor": None, "IC 95% (inferior)": None, "IC 95% (superior)": None})
+                    filas_ci.append({"Grupo": grupo, "Modelo": nombre_modelo, "Parámetro": estado_de_ajuste(res),
+                                      "Valor": "–", "IC 95% (inferior)": "–", "IC 95% (superior)": "–"})
                     continue
                 nombres_p = MODELOS[nombre_modelo]["nombres_param"]
                 for i, nombre_p in enumerate(nombres_p):
                     filas_ci.append({
                         "Grupo": grupo, "Modelo": nombre_modelo, "Parámetro": nombre_p,
-                        "Valor": round(res["params"][i], 4),
-                        "IC 95% (inferior)": round(res["ci_bajo"][i], 4),
-                        "IC 95% (superior)": round(res["ci_alto"][i], 4),
+                        "Valor": f"{res['params'][i]:.4f}",
+                        "IC 95% (inferior)": f"{res['ci_bajo'][i]:.4f}",
+                        "IC 95% (superior)": f"{res['ci_alto'][i]:.4f}",
                     })
         st.dataframe(pd.DataFrame(filas_ci), width='stretch', hide_index=True)
+        st.caption("'–': el modelo no convergió o no tuvo suficientes días de muestreo.")
         st.write("")
 
 
@@ -1245,7 +2090,8 @@ elif seccion == "Residuos":
     for variable in variables_a_mostrar:
         st.markdown(f"### {NOMBRE_VARIABLE[variable]}")
         n = len(modelos_a_mostrar)
-        fig = make_subplots(rows=1, cols=n, subplot_titles=modelos_a_mostrar, horizontal_spacing=0.06)
+        dias_variable = sorted(set().union(*(DATOS[variable][g].keys() for g in DATOS[variable])))
+        fig = make_subplots(rows=1, cols=n, subplot_titles=modelos_a_mostrar, horizontal_spacing=0.08)
         for i, nombre_modelo in enumerate(modelos_a_mostrar, start=1):
             for grupo in DATOS[variable]:
                 res = RES[variable][grupo][nombre_modelo]
@@ -1256,11 +2102,12 @@ elif seccion == "Residuos":
                                           legendgroup=grupo, showlegend=(i == 1),
                                           marker=dict(color=color, size=6, opacity=0.7)), row=1, col=i)
             fig.add_hline(y=0, line=dict(color=T["INK_MUTED"], dash="dash", width=1), row=1, col=i)
-            fig.update_xaxes(title_text="DAT (días)", row=1, col=i)
+            fig.update_xaxes(title_text="DAT (días)", tickvals=dias_variable, row=1, col=i)
             if i == 1:
                 fig.update_yaxes(title_text=f"Residuo ({UNIDADES[variable]})", row=1, col=i)
-        fig.update_layout(height=380, legend=dict(orientation="h", yanchor="bottom", y=1.1, x=0))
-        fig.update_annotations(font=dict(family="IBM Plex Mono, monospace", size=12, color=T["INK_MUTED"]))
+        # Sin título interno: el encabezado "### {variable}" ya lo pone esta sección.
+        estilo_publicacion(fig, width=1200, height=420, top_margin=55)
+        alinear_titulos_panel_izquierda(fig, n)
         st.plotly_chart(fig, width='stretch')
 
         with st.container(border=True):
@@ -1333,7 +2180,7 @@ elif seccion == "Discusión y conclusiones":
             if resultado_t is not None:
                 st.markdown(
                     f"- La prueba t (día final) {'confirma' if resultado_t['significativo'] else 'no confirma'} "
-                    f"que la diferencia sea estadísticamente significativa (p = {resultado_t['p']:.4f})."
+                    f"que la diferencia sea estadísticamente significativa ({formatear_p(resultado_t['p'])})."
                 )
 
     st.write("")
@@ -1465,9 +2312,7 @@ elif seccion == "Datos de prueba":
                 for grupo in DATOS[variable]:
                     for nombre_modelo in MODELOS:
                         res = RES[variable][grupo][nombre_modelo]
-                        estado = (f"Sin suficientes dias ({res['dias_disponibles']}/{res['dias_requeridos']})"
-                                  if res.get("insuficiente") else ("Sin ajuste" if pd.isna(res["r2"]) else "OK"))
-                        fila = {"Grupo": grupo, "Modelo": nombre_modelo, "Estado": estado,
+                        fila = {"Grupo": grupo, "Modelo": nombre_modelo, "Estado": estado_de_ajuste(res),
                                 "R2": res["r2"], "RMSE": res["rmse"]}
                         if res["params"] is not None:
                             for np_, vp_ in zip(MODELOS[nombre_modelo]["nombres_param"], res["params"]):
@@ -1498,6 +2343,9 @@ elif seccion == "Exportar reporte":
             "- Metodología breve de los tres modelos comparados\n"
             "- Tabla de R², RMSE y MAE por grupo y modelo (con el estado de cada ajuste)\n"
             "- Gráficas de curvas ajustadas por variable\n"
+            "- Gráficas de barras por variable y comparación de R² por modelo\n"
+            "- Tasas de crecimiento (AGR y RGR) del modelo con mejor R² en cada grupo\n"
+            "- Resultados esperados: mejor modelo por variable y efecto +M vs −M con prueba t\n"
             "- Conclusiones generales"
         )
         generar_pdf = st.button("Generar reporte PDF", type="primary")
@@ -1505,7 +2353,7 @@ elif seccion == "Exportar reporte":
     def limpiar_texto(s):
         reemplazos = {
             "−": "-", "·": "-", "→": "->", "²": "2", "±": "+/-", "–": "-", "—": "-",
-            "‘": "'", "’": "'", "“": '"', "”": '"',
+            "‘": "'", "’": "'", "“": '"', "”": '"', "≥": ">=", "≤": "<=",
         }
         for a, b in reemplazos.items():
             s = s.replace(a, b)
@@ -1584,6 +2432,41 @@ elif seccion == "Exportar reporte":
         pdf.image(ruta_img, w=ancho_mm)
         pdf.ln(5)
 
+    def insertar_pie_pdf(pdf, pie):
+        """Pie de figura como texto debajo de la imagen (principio de diseño: la figura de
+        Plotly no lleva pie incrustado -- ver construir_pie/mostrar_pie_streamlit)."""
+        pdf.set_font("Helvetica", "", 9)
+        pdf.set_text_color(*PDF_MUTED)
+        pdf.multi_cell(0, 5, limpiar_texto(pie["descripcion"]), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        if pie["notas"]:
+            pdf.set_font("Helvetica", "B", 9)
+            pdf.cell(0, 5, limpiar_texto("Notas:"), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+            pdf.set_font("Helvetica", "", 9)
+            for nota in pie["notas"]:
+                pdf.set_x(14)
+                pdf.multi_cell(0, 5, limpiar_texto(f"- {nota}"), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        if pie["extra"]:
+            pdf.set_font("Helvetica", "I", 8.5)
+            pdf.multi_cell(0, 5, limpiar_texto(pie["extra"]), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        pdf.set_text_color(*PDF_INK)
+        pdf.ln(3)
+
+    def tabla_pdf(pdf, encabezados, anchos, filas):
+        pdf.set_font("Helvetica", "B", 9)
+        pdf.set_fill_color(*PDF_HEADER_BG)
+        pdf.set_text_color(255, 255, 255)
+        for enc, w in zip(encabezados, anchos):
+            pdf.cell(w, 7, limpiar_texto(enc), border=0, align="C", fill=True)
+        pdf.ln()
+        pdf.set_font("Helvetica", "", 8)
+        pdf.set_text_color(*PDF_INK)
+        for i, fila in enumerate(filas):
+            pdf.set_fill_color(*(PDF_ROW_ALT if i % 2 == 0 else (255, 255, 255)))
+            for val, w in zip(fila, anchos):
+                pdf.cell(w, 6.5, limpiar_texto(str(val)), border=0, align="C", fill=True)
+            pdf.ln()
+        pdf.ln(4)
+
     if generar_pdf:
         with st.spinner("Generando PDF..."):
             pdf = ReportePDF()
@@ -1659,13 +2542,7 @@ elif seccion == "Exportar reporte":
                 for grupo in DATOS[variable]:
                     for nombre_modelo in modelos_a_mostrar:
                         res = RES[variable][grupo][nombre_modelo]
-                        if res.get("insuficiente"):
-                            estado = f"Sin sufic. dias ({res['dias_disponibles']}/{res['dias_requeridos']})"
-                        elif pd.isna(res["r2"]):
-                            estado = "Sin ajuste"
-                        else:
-                            estado = "OK"
-                        fila = [grupo, nombre_modelo, estado,
+                        fila = [grupo, nombre_modelo, estado_de_ajuste(res),
                                 f"{res['r2']:.4f}" if not pd.isna(res['r2']) else "-",
                                 f"{res['rmse']:.4f}" if not pd.isna(res['rmse']) else "-",
                                 f"{res.get('mae'):.4f}" if not pd.isna(res.get('mae')) else "-"]
@@ -1676,30 +2553,18 @@ elif seccion == "Exportar reporte":
                         fila_i += 1
                 pdf.ln(4)
 
-                # Grafica de resultados como imagen (una curva por modelo/grupo, solo si hay al menos un ajuste)
+                # Grafica de curvas (misma figura que usa la seccion Resultados de la app),
+                # solo si hay al menos un ajuste.
                 hay_algun_ajuste = any(
                     RES[variable][g][m]["params"] is not None
                     for g in DATOS[variable] for m in modelos_a_mostrar
                 )
                 if hay_algun_ajuste:
-                    dias_todos_pdf = sorted(set(DATOS[variable]["-M"].keys()) | set(DATOS[variable]["+M"].keys()))
-                    t_fino = np.linspace(dias_todos_pdf[0], dias_todos_pdf[-1], 200)
-                    fig = make_subplots(rows=1, cols=len(modelos_a_mostrar), subplot_titles=modelos_a_mostrar)
-                    for i, nombre_modelo in enumerate(modelos_a_mostrar, start=1):
-                        func = MODELOS[nombre_modelo]["func"]
-                        for grupo in DATOS[variable]:
-                            res = RES[variable][grupo][nombre_modelo]
-                            color = "#9C968C" if grupo == "-M" else "#9A3324"
-                            dias_g, medias_g, sds_g, _ = media_sd_por_dia(DATOS[variable][grupo])
-                            fig.add_trace(go.Scatter(x=dias_g, y=medias_g, mode="markers", name=grupo,
-                                                      marker=dict(color=color, size=6),
-                                                      showlegend=(i == 1)), row=1, col=i)
-                            if res["params"] is not None:
-                                fig.add_trace(go.Scatter(x=t_fino, y=func(t_fino, *res["params"]), mode="lines",
-                                                          line=dict(color=color), showlegend=False), row=1, col=i)
-                    fig.update_layout(height=280, width=900, paper_bgcolor="white", plot_bgcolor="white",
-                                       margin=dict(l=30, r=10, t=30, b=30))
-                    insertar_imagen_png(pdf, fig.to_image(format="png", scale=2))
+                    fig_curvas_pdf, pie_curvas_pdf = fig_curvas_publicacion(
+                        DATOS, RES, variable, modelos_a_mostrar, st.session_state.fuente_datos)
+                    fig_curvas_pdf.update_layout(paper_bgcolor="white", plot_bgcolor="white")
+                    insertar_imagen_png(pdf, fig_curvas_pdf.to_image(format="png", scale=3))
+                    insertar_pie_pdf(pdf, pie_curvas_pdf)
                 else:
                     pdf.set_font("Helvetica", "I", 9)
                     pdf.set_text_color(*PDF_MUTED)
@@ -1708,6 +2573,141 @@ elif seccion == "Exportar reporte":
                     ))
                     pdf.set_text_color(*PDF_INK)
                     pdf.ln(3)
+
+            # --- Graficas de barras (independientes de las curvas ya incluidas arriba) ---
+            pdf.add_page()
+            titulo_seccion(pdf, "Graficas de barras")
+            for variable in variables_a_mostrar:
+                asegurar_espacio(pdf, 100)
+                subtitulo_variable(pdf, NOMBRE_VARIABLE[variable])
+                fig_barra_pdf, pie_barra_pdf = fig_barras_variable(DATOS, variable, st.session_state.fuente_datos)
+                fig_barra_pdf.update_layout(paper_bgcolor="white", plot_bgcolor="white")
+                insertar_imagen_png(pdf, fig_barra_pdf.to_image(format="png", scale=3))
+                insertar_pie_pdf(pdf, pie_barra_pdf)
+
+            if len(variables_a_mostrar) >= 2:
+                asegurar_espacio(pdf, 110)
+                subtitulo_variable(pdf, "Resumen (a)-(d)")
+                fig_resumen_pdf, pie_resumen_pdf = fig_barras_resumen_2x2(
+                    DATOS, variables_a_mostrar, st.session_state.fuente_datos)
+                fig_resumen_pdf.update_layout(paper_bgcolor="white", plot_bgcolor="white")
+                insertar_imagen_png(pdf, fig_resumen_pdf.to_image(format="png", scale=3))
+                insertar_pie_pdf(pdf, pie_resumen_pdf)
+
+            asegurar_espacio(pdf, 100)
+            subtitulo_variable(pdf, "Comparacion de R2 por modelo")
+            fig_r2_pdf, pie_r2_pdf = fig_barras_r2_comparacion(RES, DATOS, variables_a_mostrar, modelos_a_mostrar)
+            # No se fuerza "height": la propia figura calcula su alto segun 1 o 2 filas de
+            # subplots (cuadricula 2x2 cuando hay 4 variables), y forzar un alto fijo aqui
+            # volvia a aplastar la segunda fila como antes de la Tarea 3.
+            fig_r2_pdf.update_layout(paper_bgcolor="white", plot_bgcolor="white")
+            insertar_imagen_png(pdf, fig_r2_pdf.to_image(format="png", scale=3))
+            insertar_pie_pdf(pdf, pie_r2_pdf)
+
+            # --- Tasas de crecimiento (AGR y RGR) -- mismas figuras que el expander opcional
+            # de la seccion Resultados en la app, del modelo con mejor R2 en cada grupo. ---
+            pdf.add_page()
+            titulo_seccion(pdf, "Tasas de crecimiento (AGR y RGR)")
+            pdf.set_font("Helvetica", "", 10)
+            pdf.multi_cell(0, 5.5, limpiar_texto(
+                "AGR (tasa de crecimiento absoluta, dP/dt) y RGR (tasa de crecimiento relativa, "
+                "(1/P)*dP/dt) del modelo con mejor R2 en cada grupo, calculadas analiticamente a "
+                "partir de los parametros ya ajustados (sin reajustar). Solo se muestran modelos "
+                "convergidos."
+            ), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+            pdf.ln(3)
+            for variable in variables_a_mostrar:
+                asegurar_espacio(pdf, 100)
+                subtitulo_variable(pdf, NOMBRE_VARIABLE[variable])
+                fig_tasas_pdf, pie_tasas_pdf_o_motivo = fig_tasas_crecimiento(
+                    DATOS, RES, variable, modelos_a_mostrar, st.session_state.fuente_datos)
+                if fig_tasas_pdf is None:
+                    pdf.set_font("Helvetica", "I", 9)
+                    pdf.set_text_color(*PDF_MUTED)
+                    pdf.multi_cell(0, 5.5, limpiar_texto(pie_tasas_pdf_o_motivo), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+                    pdf.set_text_color(*PDF_INK)
+                    pdf.ln(3)
+                else:
+                    fig_tasas_pdf.update_layout(paper_bgcolor="white", plot_bgcolor="white")
+                    insertar_imagen_png(pdf, fig_tasas_pdf.to_image(format="png", scale=3))
+                    insertar_pie_pdf(pdf, pie_tasas_pdf_o_motivo)
+
+            # --- Resultados esperados (modelo que mejor describe cada variable + efecto +M vs -M) ---
+            pdf.add_page()
+            titulo_seccion(pdf, "Resultados esperados")
+
+            if st.session_state.fuente_datos == "real":
+                pdf.set_font("Helvetica", "I", 9)
+                pdf.set_text_color(*PDF_MUTED)
+                pdf.multi_cell(0, 5.2, limpiar_texto(
+                    "Nota metodologica: los datos provienen de Aguirre-Medina et al. (2023), Revista "
+                    "Fitotecnia Mexicana. Las replicas individuales fueron generadas sinteticamente a "
+                    "partir de las medias y el CV% publicados en el articulo (no son mediciones planta "
+                    "por planta)."
+                ), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+                pdf.set_text_color(*PDF_INK)
+                pdf.ln(3)
+
+            subtitulo_variable(pdf, "Resultado esperado 1 - Modelo que mejor describe cada variable")
+            hubo_no_convergencia = False
+            for variable in variables_a_mostrar:
+                filas_modelo, mejores = calcular_tabla_modelo(RES, DATOS, variable, modelos_a_mostrar)
+                asegurar_espacio(pdf, 12 + 6.5 * len(filas_modelo))
+                pdf.set_font("Helvetica", "B", 10)
+                pdf.cell(0, 7, limpiar_texto(NOMBRE_VARIABLE[variable]), ln=1)
+                encabezados_m = ["Grupo", "Modelo", "R2", "RMSE", "MAE", "Mejor", "Nota"]
+                anchos_m = [16, 24, 18, 18, 18, 16, 80]
+                filas_pdf_m = [[
+                    f["grupo"], f["modelo"],
+                    f"{f['r2']:.4f}" if f["r2"] is not None else "-",
+                    f"{f['rmse']:.4f}" if f["rmse"] is not None else "-",
+                    f"{f['mae']:.4f}" if f["mae"] is not None else "-",
+                    "Si" if f["mejor"] else "", f["nota"] or "-",
+                ] for f in filas_modelo]
+                tabla_pdf(pdf, encabezados_m, anchos_m, filas_pdf_m)
+                for grupo, mejor in mejores.items():
+                    pdf.set_font("Helvetica", "", 9)
+                    pdf.multi_cell(0, 5.2, limpiar_texto(
+                        f"{grupo}: " + (f"mejor modelo = {mejor}." if mejor
+                                        else "ningun modelo convergio con los datos actuales.")
+                    ), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+                if any(f["nota"] == ESTADO_NO_CONVERGIO for f in filas_modelo):
+                    hubo_no_convergencia = True
+                pdf.ln(2)
+            if hubo_no_convergencia:
+                pdf.set_font("Helvetica", "I", 8.5)
+                pdf.set_text_color(*PDF_MUTED)
+                pdf.multi_cell(0, 5, limpiar_texto(f"Nota: {NOTA_NO_CONVERGENCIA_K}"),
+                               new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+                pdf.set_text_color(*PDF_INK)
+            pdf.ln(4)
+
+            subtitulo_variable(pdf, "Resultado esperado 2 - Efecto de la inoculacion micorrizica (+M vs -M)")
+            for variable in variables_a_mostrar:
+                filas_efecto = calcular_efecto_micorriza(DATOS, variable)
+                asegurar_espacio(pdf, 20)
+                pdf.set_font("Helvetica", "B", 10)
+                pdf.cell(0, 7, limpiar_texto(NOMBRE_VARIABLE[variable]), ln=1)
+                if not filas_efecto:
+                    pdf.set_font("Helvetica", "", 9)
+                    pdf.multi_cell(0, 5.5, limpiar_texto(
+                        "No hay suficientes replicas en ambos grupos para calcular el efecto."
+                    ), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+                    pdf.ln(2)
+                    continue
+                asegurar_espacio(pdf, 12 + 6.5 * len(filas_efecto))
+                encabezados_e = ["Dia", "Media -M", "Media +M", "Increm. %", "t", "p", "Signif."]
+                anchos_e = [16, 28, 28, 26, 20, 22, 20]
+                filas_pdf_e = [[
+                    int(f["dia"]), f"{f['media_control']:.2f}", f"{f['media_tratado']:.2f}",
+                    f"{f['incremento_pct']:+.1f}", f"{f['t']:.3f}", f"{f['p']:.4f}",
+                    "Si" if f["significativo"] else "No",
+                ] for f in filas_efecto]
+                tabla_pdf(pdf, encabezados_e, anchos_e, filas_pdf_e)
+                pdf.set_font("Helvetica", "", 9)
+                pdf.multi_cell(0, 5.5, limpiar_texto(texto_interpretativo_efecto(variable, filas_efecto[-1])),
+                               new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+                pdf.ln(3)
 
             # --- Comparacion visual -M vs +M (ilustracion esquematica) ---
             png_ilustracion = generar_ilustracion_plantas(DATOS, st.session_state.fuente_datos)

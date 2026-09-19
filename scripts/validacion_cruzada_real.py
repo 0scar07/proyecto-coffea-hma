@@ -15,15 +15,17 @@ compara la media del set de entrenamiento contra la media del set de prueba
 y no depende de que replicas especificas cayeron en la muestra.
 
 Nota: con solo 5 replicas por combinacion, el split 80/20 es 4 vs 1 -- un
-holdout muy pequeno. Se lee directamente el Excel bundleado en este mismo
-directorio en vez de hardcodear valores, para no desincronizarse otra vez
-del dataset real si este se actualiza.
+holdout muy pequeno. Se lee directamente el Excel del dataset real en vez de
+hardcodear valores, para no desincronizarse otra vez del dataset si este se
+actualiza.
 """
 import os
 import numpy as np
 import pandas as pd
 
-RUTA_EXCEL = os.path.join(os.path.dirname(__file__), "datos_reales_coffea_2023.xlsx")
+RUTA_EXCEL = os.path.join(
+    os.path.dirname(__file__), "..", "datos_reales", "datos_reales_coffea_2023.xlsx"
+)
 
 
 def validacion_cruzada_holdout(valores, prop_entrenamiento=0.8, n_repeticiones=200, seed=123):
