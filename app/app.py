@@ -245,6 +245,44 @@ def formatear_p(p):
     return f"p = {p:.4f}"
 
 
+# Paleta Okabe-Ito (distinguible para las formas mas comunes de daltonismo) para los 3
+# modelos de crecimiento, combinada con un tipo de linea distinto por modelo para que
+# tambien se distingan en blanco y negro (no dependen solo del color).
+MODELO_ESTILO = {
+    "Exponencial": {"color": "#0072B2", "dash": "dot"},
+    "Logístico":   {"color": "#E69F00", "dash": "dash"},
+    "Gompertz":    {"color": "#009E73", "dash": "solid"},
+}
+
+# Patron de trama por grupo para las barras -- redundante con el color -M/+M que ya usa
+# la app (T["CONTROL"]/T["ACCENT"]), para que las barras tambien se distingan sin color.
+PATRON_GRUPO = {"-M": ".", "+M": "/"}
+
+
+def texto_significancia(p):
+    """Asteriscos de significancia (convencion estandar): ns, *, **, ***."""
+    if p < 0.001:
+        return "***"
+    if p < 0.01:
+        return "**"
+    if p < 0.05:
+        return "*"
+    return "ns"
+
+
+def agregar_pie_figura(fig, lineas):
+    """Agrega una o mas lineas de texto como pie de figura, fuera del area de trazado
+    (debajo del eje X), y expande el margen inferior para que no se corten."""
+    for i, linea in enumerate(lineas):
+        fig.add_annotation(
+            text=linea, xref="paper", yref="paper", x=0, y=-0.22 - i * 0.07,
+            showarrow=False, align="left", xanchor="left", yanchor="top",
+            font=dict(family=FUENTE_PUBLICACION, size=10.5, color=T["INK_MUTED"]),
+        )
+    fig.update_layout(margin=dict(b=50 + 22 * len(lineas)))
+    return fig
+
+
 # ==============================================================================
 # 1. MODELOS MATEMÁTICOS
 # ==============================================================================
@@ -1374,7 +1412,7 @@ elif seccion == "Gráficas de barras":
         st.plotly_chart(fig_var, width='stretch')
         st.download_button(
             f"Descargar PNG — {NOMBRE_VARIABLE[variable]}",
-            data=fig_var.to_image(format="png", scale=2),
+            data=fig_var.to_image(format="png", scale=3),
             file_name=f"barras_{variable}.png", mime="image/png", key=f"png_barras_{variable}",
         )
         st.write("")
@@ -1389,7 +1427,7 @@ elif seccion == "Gráficas de barras":
     st.plotly_chart(fig_r2, width='stretch')
     st.download_button(
         "Descargar PNG — Comparación de R²",
-        data=fig_r2.to_image(format="png", scale=2),
+        data=fig_r2.to_image(format="png", scale=3),
         file_name="barras_r2_comparacion.png", mime="image/png", key="png_barras_r2",
     )
     st.caption("Estas gráficas también se incluyen en el reporte PDF (sección Exportar reporte).")
@@ -1576,8 +1614,8 @@ elif seccion == "Residuos":
             fig.update_xaxes(title_text="DAT (días)", row=1, col=i)
             if i == 1:
                 fig.update_yaxes(title_text=f"Residuo ({UNIDADES[variable]})", row=1, col=i)
-        fig.update_layout(height=380, legend=dict(orientation="h", yanchor="bottom", y=1.1, x=0))
-        fig.update_annotations(font=dict(family="IBM Plex Mono, monospace", size=12, color=T["INK_MUTED"]))
+        # Sin título interno: el encabezado "### {variable}" ya lo pone esta sección.
+        estilo_publicacion(fig, height=380)
         st.plotly_chart(fig, width='stretch')
 
         with st.container(border=True):
@@ -2034,7 +2072,7 @@ elif seccion == "Exportar reporte":
                                                           line=dict(color=color), showlegend=False), row=1, col=i)
                     fig.update_layout(height=280, width=900, paper_bgcolor="white", plot_bgcolor="white",
                                        margin=dict(l=30, r=10, t=30, b=30))
-                    insertar_imagen_png(pdf, fig.to_image(format="png", scale=2))
+                    insertar_imagen_png(pdf, fig.to_image(format="png", scale=3))
                 else:
                     pdf.set_font("Helvetica", "I", 9)
                     pdf.set_text_color(*PDF_MUTED)
@@ -2052,13 +2090,13 @@ elif seccion == "Exportar reporte":
                 subtitulo_variable(pdf, NOMBRE_VARIABLE[variable])
                 fig_barra_pdf = fig_barras_variable(DATOS, variable)
                 fig_barra_pdf.update_layout(paper_bgcolor="white", plot_bgcolor="white", width=900, height=340)
-                insertar_imagen_png(pdf, fig_barra_pdf.to_image(format="png", scale=2))
+                insertar_imagen_png(pdf, fig_barra_pdf.to_image(format="png", scale=3))
 
             asegurar_espacio(pdf, 90)
             subtitulo_variable(pdf, "Comparacion de R2 por modelo")
             fig_r2_pdf = fig_barras_r2_comparacion(RES, DATOS, variables_a_mostrar, modelos_a_mostrar)
             fig_r2_pdf.update_layout(paper_bgcolor="white", plot_bgcolor="white", width=1000, height=340)
-            insertar_imagen_png(pdf, fig_r2_pdf.to_image(format="png", scale=2))
+            insertar_imagen_png(pdf, fig_r2_pdf.to_image(format="png", scale=3))
 
             # --- Resultados esperados (modelo que mejor describe cada variable + efecto +M vs -M) ---
             pdf.add_page()
