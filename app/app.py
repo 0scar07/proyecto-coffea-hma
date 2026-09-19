@@ -497,6 +497,37 @@ NOTA_NO_CONVERGENCIA_K = (
     "estimar la capacidad de carga (K) de una curva en forma de S."
 )
 
+# ==============================================================================
+# VOCABULARIO ÚNICO DE ESTADO — antes convivían "Sin ajuste"/"No convergió" para el
+# MISMO caso (curve_fit lanzó RuntimeError) y "Sin suficientes días"/"Sin días
+# suficientes"/"Sin sufic. dias" para el caso de días insuficientes, con distinta
+# redacción en la app y el PDF. Estas constantes son la única fuente de verdad para
+# los 3 estados posibles de un ajuste (no cambian la regla, solo cómo se nombra):
+#   - ESTADO_OK: el modelo convergió y tiene R².
+#   - ESTADO_NO_CONVERGIO: había días suficientes pero curve_fit no encontró solución.
+#   - ESTADO_SIN_DIAS: no hay suficientes días distintos para ese modelo (nunca se
+#     intenta el ajuste; es una limitación matemática de los datos, no un fallo).
+# ==============================================================================
+ESTADO_OK = "OK"
+ESTADO_NO_CONVERGIO = "No convergió"
+ESTADO_SIN_DIAS = "Sin días suficientes"
+
+
+def texto_estado_sin_dias(dias_disponibles, dias_requeridos):
+    return f"{ESTADO_SIN_DIAS} ({dias_disponibles}/{dias_requeridos})"
+
+
+def estado_de_ajuste(res):
+    """Determina el estado (ESTADO_OK / ESTADO_NO_CONVERGIO / texto_estado_sin_dias) de un
+    resultado de `ajustar_todos_los_modelos`, sin recalcular ni reinterpretar la regla de
+    insuficiente/no convergió que ya define esa función -- solo nombra el mismo caso siempre
+    de la misma forma en toda la app y el PDF."""
+    if res.get("insuficiente"):
+        return texto_estado_sin_dias(res["dias_disponibles"], res["dias_requeridos"])
+    r2 = res["r2"]
+    r2_ok = r2 is not None and not (isinstance(r2, float) and np.isnan(r2))
+    return ESTADO_OK if r2_ok else ESTADO_NO_CONVERGIO
+
 
 def calcular_tabla_modelo(RES, datos, variable, modelos):
     """Para una variable: por cada grupo (-M/+M), arma las filas Grupo/Modelo/R2/RMSE/MAE con una
@@ -516,12 +547,8 @@ def calcular_tabla_modelo(RES, datos, variable, modelos):
             res = RES[variable][grupo][m]
             r2, rmse, mae = res["r2"], res["rmse"], res.get("mae")
             r2_ok = r2 is not None and not (isinstance(r2, float) and np.isnan(r2))
-            if res.get("insuficiente"):
-                nota = f"Sin suficientes días ({res['dias_disponibles']}/{res['dias_requeridos']})"
-            elif not r2_ok:
-                nota = "No convergió"
-            else:
-                nota = ""
+            estado = estado_de_ajuste(res)
+            nota = "" if estado == ESTADO_OK else estado
             filas.append({
                 "grupo": grupo, "modelo": m,
                 "r2": round(r2, 4) if r2_ok else None,
@@ -672,10 +699,10 @@ def fig_barras_r2_comparacion(RES, datos, variables, modelos):
                 r2 = res["r2"]
                 if res.get("insuficiente"):
                     y_num.append(None); texto_num.append("")
-                    y_nota.append(0); texto_nota.append("Sin días suficientes")
+                    y_nota.append(0); texto_nota.append(ESTADO_SIN_DIAS)
                 elif r2 is None or (isinstance(r2, float) and np.isnan(r2)):
                     y_num.append(None); texto_num.append("")
-                    y_nota.append(0); texto_nota.append("No convergió")
+                    y_nota.append(0); texto_nota.append(ESTADO_NO_CONVERGIO)
                 else:
                     # Etiqueta a 2 decimales (no 3-4 como en las tablas): con 3+ decimales el
                     # texto de -M y +M se toca entre si en subplots angostos de 3 categorias.
@@ -931,10 +958,10 @@ def calcular_banda_confianza(func, popt, pcov, t_eval, n_muestras=400, semilla_m
 
 def badge_r2(r2, insuficiente=False, dias_disponibles=None, dias_requeridos=None):
     if insuficiente:
-        return (f'<span class="badge badge-ambar">Sin suficientes días · {dias_disponibles}/{dias_requeridos} '
+        return (f'<span class="badge badge-ambar">{ESTADO_SIN_DIAS} · {dias_disponibles}/{dias_requeridos} '
                 f'necesarios para este modelo</span>')
     if r2 is None or np.isnan(r2):
-        return '<span class="badge badge-rojo">Sin ajuste</span>'
+        return f'<span class="badge badge-rojo">{ESTADO_NO_CONVERGIO}</span>'
     if r2 >= 0.9:
         return f'<span class="badge badge-verde">Ajuste fuerte · R² {r2:.3f}</span>'
     if r2 >= 0.7:
@@ -1205,7 +1232,7 @@ def advertir_dias_insuficientes(datos):
         "(Exponencial: mínimo 2 días; Logístico y Gompertz: mínimo 3 días). Con un solo día de datos "
         "solo se puede comparar el valor puntual entre grupos, no ajustar una curva.\n\n"
         + "\n".join(lineas) +
-        "\n\nEsas combinaciones se mostrarán como **'Sin suficientes días'** en vez de un R² una vez "
+        f"\n\nEsas combinaciones se mostrarán como **'{ESTADO_SIN_DIAS}'** en vez de un R² una vez "
         "que ajustes los modelos — no es un error, es una limitación real de estos datos hasta que se "
         "agreguen más fechas de muestreo.",
         icon="⚠️",
@@ -1635,12 +1662,7 @@ elif seccion == "Resultados":
         for grupo in DATOS[variable]:
             for nombre_modelo in modelos_a_mostrar:
                 res = RES[variable][grupo][nombre_modelo]
-                if res.get("insuficiente"):
-                    estado = f"Sin suficientes días ({res['dias_disponibles']}/{res['dias_requeridos']})"
-                elif pd.isna(res["r2"]):
-                    estado = "Sin ajuste"
-                else:
-                    estado = "OK"
+                estado = estado_de_ajuste(res)
                 filas.append({"Grupo": grupo, "Modelo": nombre_modelo, "Estado": estado,
                                "R²": round(res["r2"], 4) if not pd.isna(res["r2"]) else np.nan,
                                "RMSE": round(res["rmse"], 4) if not pd.isna(res["rmse"]) else np.nan,
@@ -1757,7 +1779,7 @@ elif seccion == "Resultados esperados":
         for grupo, mejor in mejores.items():
             st.caption(f"{grupo}: " + (f"mejor modelo = **{mejor}**." if mejor
                                         else "ningún modelo convergió con los datos actuales."))
-        if any(f["nota"] == "No convergió" for f in filas_modelo):
+        if any(f["nota"] == ESTADO_NO_CONVERGIO for f in filas_modelo):
             st.caption(f"ℹ️ {NOTA_NO_CONVERGENCIA_K}")
         st.write("")
 
@@ -1841,9 +1863,7 @@ elif seccion == "Estadística":
             for nombre_modelo in modelos_a_mostrar:
                 res = RES[variable][grupo][nombre_modelo]
                 if res["params"] is None:
-                    estado = (f"Sin suficientes días ({res['dias_disponibles']}/{res['dias_requeridos']})"
-                              if res.get("insuficiente") else "Sin ajuste")
-                    filas_ci.append({"Grupo": grupo, "Modelo": nombre_modelo, "Parámetro": estado,
+                    filas_ci.append({"Grupo": grupo, "Modelo": nombre_modelo, "Parámetro": estado_de_ajuste(res),
                                       "Valor": "–", "IC 95% (inferior)": "–", "IC 95% (superior)": "–"})
                     continue
                 nombres_p = MODELOS[nombre_modelo]["nombres_param"]
@@ -2097,9 +2117,7 @@ elif seccion == "Datos de prueba":
                 for grupo in DATOS[variable]:
                     for nombre_modelo in MODELOS:
                         res = RES[variable][grupo][nombre_modelo]
-                        estado = (f"Sin suficientes dias ({res['dias_disponibles']}/{res['dias_requeridos']})"
-                                  if res.get("insuficiente") else ("Sin ajuste" if pd.isna(res["r2"]) else "OK"))
-                        fila = {"Grupo": grupo, "Modelo": nombre_modelo, "Estado": estado,
+                        fila = {"Grupo": grupo, "Modelo": nombre_modelo, "Estado": estado_de_ajuste(res),
                                 "R2": res["r2"], "RMSE": res["rmse"]}
                         if res["params"] is not None:
                             for np_, vp_ in zip(MODELOS[nombre_modelo]["nombres_param"], res["params"]):
@@ -2309,13 +2327,7 @@ elif seccion == "Exportar reporte":
                 for grupo in DATOS[variable]:
                     for nombre_modelo in modelos_a_mostrar:
                         res = RES[variable][grupo][nombre_modelo]
-                        if res.get("insuficiente"):
-                            estado = f"Sin sufic. dias ({res['dias_disponibles']}/{res['dias_requeridos']})"
-                        elif pd.isna(res["r2"]):
-                            estado = "Sin ajuste"
-                        else:
-                            estado = "OK"
-                        fila = [grupo, nombre_modelo, estado,
+                        fila = [grupo, nombre_modelo, estado_de_ajuste(res),
                                 f"{res['r2']:.4f}" if not pd.isna(res['r2']) else "-",
                                 f"{res['rmse']:.4f}" if not pd.isna(res['rmse']) else "-",
                                 f"{res.get('mae'):.4f}" if not pd.isna(res.get('mae')) else "-"]
@@ -2408,7 +2420,7 @@ elif seccion == "Exportar reporte":
                         f"{grupo}: " + (f"mejor modelo = {mejor}." if mejor
                                         else "ningun modelo convergio con los datos actuales.")
                     ), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-                if any(f["nota"] == "No convergió" for f in filas_modelo):
+                if any(f["nota"] == ESTADO_NO_CONVERGIO for f in filas_modelo):
                     hubo_no_convergencia = True
                 pdf.ln(2)
             if hubo_no_convergencia:
