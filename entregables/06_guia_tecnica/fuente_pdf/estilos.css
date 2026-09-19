@@ -1,0 +1,309 @@
+/* Hoja de estilos de la Guia tecnica de usuario - Coffea IA
+   Paleta e identidad tomadas de app/.streamlit/config.toml y del bloque T = dict(...)
+   en app/app.py ("Cuaderno de campo"). Fuentes: sustitutos locales de Windows para
+   Fraunces/Inter/IBM Plex Mono (esas 3 no estan instaladas localmente), ver README
+   de fuente_pdf/ para el detalle. Nada se carga por red. */
+
+:root {
+  --bg: #FAF8F5;
+  --surface: #FFFFFF;
+  --border: #E4DFD6;
+  --border-strong: #D6CFC2;
+  --ink: #201C18;
+  --ink-muted: #6B6459;
+  --accent: #A8432B;
+  --accent-soft: #A8432B1F;
+  --control: #8C8578;
+  --verde: #3F7D45;
+  --verde-soft: #3F7D451A;
+  --ambar: #B8791E;
+  --ambar-soft: #B8791E1A;
+  --rojo: #BF3B3B;
+  --rojo-soft: #BF3B3B1A;
+
+  --f-serif: Georgia, "Cambria", "Times New Roman", serif;
+  --f-sans: "Segoe UI", Calibri, Arial, sans-serif;
+  --f-mono: Consolas, "Courier New", monospace;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; background: var(--bg); }
+body { font-family: var(--f-sans); color: var(--ink); }
+
+/* ---------- Geometria de pagina: A4 horizontal fijo ---------- */
+.pagina {
+  width: 297mm;
+  height: 210mm;
+  position: relative;
+  overflow: hidden;
+  background: var(--bg);
+  page-break-after: always;
+  break-after: page;
+}
+.pagina:last-child { page-break-after: auto; }
+
+/* Patron de puntos muy tenue, igual en toda pagina de contenido */
+.patron-puntos {
+  position: absolute; inset: 0;
+  background-image: radial-gradient(var(--border-strong) 0.55px, transparent 0.55px);
+  background-size: 4.2mm 4.2mm;
+  opacity: 0.55;
+  z-index: 0;
+}
+
+/* ---------- Bandas curvas superior / inferior ---------- */
+.banda { position: absolute; left: 0; width: 100%; z-index: 2; }
+.banda-superior { top: 0; height: 26mm; }
+.banda-inferior { bottom: 0; height: 20mm; }
+.banda svg { display: block; width: 100%; height: 100%; }
+
+.banda-titulo {
+  /* Anclado cerca del borde superior (no centrado en toda la banda): la curva de la
+     banda es mas baja hacia la izquierda, asi que el texto siempre queda sobre la
+     zona solida sin riesgo de cruzar el borde de la ola. */
+  position: absolute; top: 4mm; left: 15mm; height: 9mm;
+  display: flex; align-items: center;
+  z-index: 3; max-width: 220mm;
+}
+.banda-titulo .cap {
+  font-family: var(--f-serif); font-weight: 700; font-size: 15pt; color: #FFF7EE;
+}
+.banda-titulo span.txt {
+  font-family: var(--f-serif); font-weight: 700; font-size: 15pt; letter-spacing: 0.01em;
+  color: #FFF7EE; text-transform: uppercase;
+}
+
+.insignia-pagina {
+  position: absolute; bottom: 4mm; right: 12mm; z-index: 4;
+  width: 12mm; height: 12mm; border-radius: 50%;
+  background: var(--ink); color: #FDF9F2;
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--f-mono); font-weight: 700; font-size: 11pt;
+  box-shadow: 0 1px 3px rgba(32,28,24,0.35);
+}
+
+/* ---------- Contenido general ---------- */
+.contenido {
+  /* Alto explicito (no top+bottom implicito): un alto resuelto por inset se compute mal
+     para los descendientes con "bottom" durante la paginacion de impresion de Chromium
+     (funciona bien en pantalla, pero varios bloques con bottom:Xmm quedaban invisibles
+     en el PDF). height:164mm = 210mm (pagina) - 26mm (top) - 20mm (banda inferior). */
+  position: absolute; top: 26mm; height: 164mm; left: 0; right: 0;
+  padding: 8mm 15mm 6mm 15mm;
+  z-index: 1;
+}
+
+/* ---------- Portada ---------- */
+.portada .contenido {
+  top: 0; height: 210mm; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; text-align: center; padding: 0 25mm;
+}
+.portada .kicker {
+  font-family: var(--f-mono); letter-spacing: 0.22em; text-transform: uppercase;
+  font-size: 9.5pt; color: var(--accent); margin-bottom: 6mm;
+}
+.portada h1 {
+  font-family: var(--f-serif); font-weight: 700; font-size: 34pt; margin: 0 0 4mm 0;
+  color: var(--ink); line-height: 1.15;
+}
+.portada .subt {
+  font-family: var(--f-sans); font-size: 14pt; color: var(--ink-muted); margin-bottom: 10mm;
+}
+.portada .meta-caja {
+  border-top: 1px solid var(--border-strong); border-bottom: 1px solid var(--border-strong);
+  padding: 5mm 0; font-family: var(--f-mono); font-size: 9.5pt; color: var(--ink-muted);
+  display: flex; gap: 10mm;
+}
+.portada .pie-emisor {
+  position: absolute; bottom: 16mm; right: 20mm; text-align: right;
+  font-family: var(--f-sans); font-size: 10pt; color: var(--ink-muted);
+}
+.portada .pie-emisor b { color: var(--ink); font-family: var(--f-serif); font-size: 12pt; }
+
+/* ---------- Divisor de capitulo ----------
+   Todo se posiciona con position:absolute (nada de flex): un layout flex dentro de un
+   documento HTML muy alto (39 paginas apiladas) se comporto de forma distinta entre el
+   render normal y la paginacion de impresion de Chromium, dejando el numero romano y el
+   titulo invisibles en el PDF aunque se veian bien en el navegador. Absolute es robusto
+   en ambos casos porque ya funcionaba correctamente para el icono y el indice. */
+.divisor .contenido {
+  /* Sin position:absolute propio: asi sus hijos position:absolute (icono, bloque de
+     titulo, version-fecha, indice) toman a .pagina como bloque contenedor -- el mismo
+     patron que ya funciona para .insignia-pagina -- en vez de a este wrapper, que
+     resolvia mal "bottom" bajo la paginacion de impresion. */
+  position: static; height: auto; padding: 0;
+}
+.divisor .icono-capitulo {
+  position: absolute; top: 34mm; right: 20mm; width: 30mm; height: 30mm;
+  background: var(--surface); border: 1px solid var(--border-strong); border-radius: 4mm;
+  box-shadow: 0 2mm 4mm rgba(32,28,24,0.12);
+  display: flex; align-items: center; justify-content: center;
+}
+.divisor .titulo-bloque {
+  position: absolute; bottom: 24mm; left: 15mm; right: 20mm; text-align: right;
+}
+.divisor .numero-romano {
+  font-family: var(--f-serif); font-weight: 700; font-size: 30pt; color: var(--accent);
+  text-align: right; display: block;
+}
+.divisor .titulo-capitulo {
+  font-family: var(--f-serif); font-weight: 700; font-size: 24pt; color: var(--ink);
+  text-align: right; max-width: 150mm; margin-left: auto; line-height: 1.15; display: block;
+}
+.divisor .version-fecha {
+  position: absolute; bottom: 24mm; left: 15mm;
+  font-family: var(--f-mono); font-size: 8.5pt; color: var(--ink-muted);
+}
+.divisor .indice-capitulo {
+  position: absolute; left: 15mm; right: 60mm; top: 90mm;
+  border-top: 1px solid var(--border-strong); padding-top: 4mm;
+}
+.divisor .indice-capitulo .fila {
+  display: flex; justify-content: space-between; font-family: var(--f-sans);
+  font-size: 10.5pt; color: var(--ink-muted); padding: 1.6mm 0;
+}
+.divisor .indice-capitulo .fila .num { font-family: var(--f-mono); color: var(--ink); }
+/* Capitulos con muchos subtemas (ej. V con 11) necesitan filas mas compactas para no
+   invadir verticalmente el bloque de titulo anclado abajo. */
+.divisor .indice-capitulo.compacto .fila { font-size: 9.5pt; padding: 0.9mm 0; }
+.divisor .indice-capitulo.compacto .cabecera { margin-bottom: 1mm; }
+.divisor .indice-capitulo .cabecera {
+  display: flex; justify-content: space-between; font-family: var(--f-mono);
+  font-size: 8pt; text-transform: uppercase; letter-spacing: 0.1em; color: var(--accent);
+  margin-bottom: 2mm;
+}
+
+/* ---------- Tabla de contenido general ---------- */
+.toc h2.titulo-seccion { margin-top: 0; }
+.toc .grupo { margin-bottom: 5mm; }
+.toc .grupo-titulo {
+  font-family: var(--f-mono); font-size: 9pt; letter-spacing: 0.12em; text-transform: uppercase;
+  color: var(--accent); margin-bottom: 1.5mm;
+}
+.toc .fila {
+  display: flex; align-items: baseline; font-family: var(--f-sans); font-size: 10.5pt;
+  padding: 1mm 0; border-bottom: 0.3mm dotted var(--border-strong);
+}
+.toc .fila .txt { flex: 1; color: var(--ink); }
+.toc .fila .num { font-family: var(--f-mono); color: var(--ink-muted); padding-left: 3mm; }
+
+/* ---------- Titulos de seccion en pagina de contenido ---------- */
+h2.titulo-seccion {
+  font-family: var(--f-serif); font-weight: 700; font-size: 16pt; color: var(--ink);
+  margin: 0 0 4mm 0;
+}
+h2.titulo-seccion .cap { color: var(--accent); font-size: 1.35em; }
+h3.subtitulo {
+  font-family: var(--f-serif); font-weight: 600; font-size: 12pt; color: var(--accent);
+  margin: 0 0 2mm 0;
+}
+
+/* ---------- Layout de dos columnas ----------
+   La linea divisoria es un pseudo-elemento (no un div manual): asi el grid siempre
+   recibe exactamente 2 hijos .col, sin importar si una pagina se olvida de agregar
+   un divisor -- evita que el 2o .col caiga en un carril angosto por error. */
+.dos-columnas {
+  display: grid; grid-template-columns: 1fr 1fr; column-gap: 6mm; height: 100%; position: relative;
+}
+.dos-columnas::before {
+  content: ""; position: absolute; left: 50%; top: 0; bottom: 0; width: 0.4mm;
+  background: var(--border-strong); transform: translateX(-50%);
+}
+.col { font-size: 10.5pt; line-height: 1.42; text-align: justify; hyphens: auto; overflow: hidden; min-width: 0; }
+.col p { margin: 0 0 2.6mm 0; }
+.col b, .col strong { color: var(--ink); }
+
+/* Columna unica (para paginas donde no aplica el patron a dos columnas) */
+.una-columna { font-size: 10.5pt; line-height: 1.45; }
+
+/* ---------- Pasos numerados ---------- */
+.paso { display: flex; gap: 3mm; margin-bottom: 2.6mm; align-items: baseline; }
+.paso .num-circulo {
+  flex: 0 0 auto; width: 5.2mm; height: 5.2mm; border-radius: 50%; background: var(--accent);
+  color: #FFF7EE; font-family: var(--f-mono); font-size: 8pt; font-weight: 700;
+  display: flex; align-items: center; justify-content: center; transform: translateY(0.3mm);
+}
+.paso .txt { flex: 1; }
+.paso .campo { font-weight: 700; color: var(--ink); }
+
+/* ---------- Recuadro de figura / captura ---------- */
+.figura-marco {
+  border: 1px solid var(--border-strong); border-radius: 1.5mm; background: var(--surface);
+  box-shadow: 0 1.2mm 3mm rgba(32,28,24,0.14); padding: 1.6mm;
+}
+.figura-marco img { display: block; width: 100%; border-radius: 0.8mm; }
+.figura-pie {
+  font-family: var(--f-mono); font-size: 8pt; color: var(--ink-muted); margin-top: 1.6mm;
+  text-align: center;
+}
+
+/* ---------- Recuadros destacados ---------- */
+.recuadro { border-radius: 1.5mm; padding: 2.6mm 3.4mm; margin: 2.6mm 0; font-size: 9.6pt; }
+.recuadro .etiqueta {
+  font-family: var(--f-mono); font-size: 8pt; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.08em; display: flex; align-items: center; gap: 1.6mm; margin-bottom: 1mm;
+}
+.recuadro-nota { background: var(--accent-soft); border-left: 2.4pt solid var(--accent); }
+.recuadro-nota .etiqueta { color: var(--accent); }
+.recuadro-importante { background: var(--rojo-soft); border-left: 2.4pt solid var(--rojo); }
+.recuadro-importante .etiqueta { color: var(--rojo); }
+.recuadro-consejo { background: var(--verde-soft); border-left: 2.4pt solid var(--verde); }
+.recuadro-consejo .etiqueta { color: var(--verde); }
+.recuadro-advertencia { background: var(--ambar-soft); border-left: 2.4pt solid var(--ambar); }
+.recuadro-advertencia .etiqueta { color: var(--ambar); }
+
+/* ---------- Tablas ---------- */
+table.tabla { width: 100%; border-collapse: collapse; font-size: 9.3pt; margin: 2mm 0; }
+table.tabla th {
+  background: var(--ink); color: #FDF9F2; font-family: var(--f-mono); font-weight: 600;
+  font-size: 8pt; text-transform: uppercase; letter-spacing: 0.05em;
+  padding: 1.6mm 2mm; text-align: left;
+}
+table.tabla td { padding: 1.4mm 2mm; border-bottom: 0.25mm solid var(--border); }
+table.tabla tr:nth-child(even) td { background: var(--surface); }
+table.tabla tr:nth-child(odd) td { background: #F4F0E9; }
+
+/* ---------- Callouts numerados sobre capturas (superpuestos en HTML) ---------- */
+.captura-anotada { position: relative; display: inline-block; width: 100%; }
+.captura-anotada img { display: block; width: 100%; border-radius: 0.8mm; }
+.marco-rojo {
+  position: absolute; border: 1.6pt dashed var(--rojo); border-radius: 1mm;
+  box-shadow: 0 0 0 1.6pt rgba(191,59,59,0.08);
+}
+.callout-numero {
+  position: absolute; width: 5.6mm; height: 5.6mm; border-radius: 50%;
+  background: #2E6FA8; color: #FDF9F2; font-family: var(--f-mono); font-weight: 700;
+  font-size: 8.4pt; display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 0.6mm 1.4mm rgba(32,28,24,0.35);
+}
+
+/* ---------- Glosario ---------- */
+.glosario-item { margin-bottom: 2.6mm; }
+.glosario-term {
+  font-family: var(--f-mono); font-weight: 700; font-size: 9.6pt; color: var(--accent);
+  text-transform: uppercase; letter-spacing: 0.03em;
+}
+
+/* ---------- Referencias cruzadas ---------- */
+.ref-cruzada { font-family: var(--f-mono); font-size: 8.6pt; color: var(--ink-muted); }
+a { color: var(--accent); text-decoration: none; }
+
+/* ---------- Tarjeta de referencia rapida ---------- */
+.tarjeta { border: 1px solid var(--border-strong); border-radius: 2mm; padding: 3mm 4mm; margin-bottom: 3mm; background: var(--surface); }
+.tarjeta h4 { font-family: var(--f-serif); font-size: 10.5pt; margin: 0 0 1.4mm 0; color: var(--accent); }
+.tarjeta ul { margin: 0; padding-left: 4mm; font-size: 9pt; }
+.tarjeta li { margin-bottom: 0.8mm; }
+
+/* ---------- Formulas (Anexo B) ---------- */
+.formula-caja {
+  background: var(--surface); border: 1px solid var(--border-strong); border-radius: 1.5mm;
+  padding: 3mm 4mm; margin: 2.4mm 0; text-align: center;
+}
+.formula-caja .expr { font-family: "Cambria Math", var(--f-serif); font-size: 13pt; color: var(--ink); }
+.formula-caja .nombre { font-family: var(--f-mono); font-size: 8pt; color: var(--accent); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 1.6mm; }
+
+/* ---------- Utilidades ---------- */
+.mb-0 { margin-bottom: 0 !important; }
+.muted { color: var(--ink-muted); }
+.center { text-align: center; }
+.small { font-size: 8.6pt; }
