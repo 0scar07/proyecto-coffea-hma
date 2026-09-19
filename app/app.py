@@ -270,16 +270,28 @@ def texto_significancia(p):
     return "ns"
 
 
-def agregar_pie_figura(fig, lineas):
-    """Agrega una o mas lineas de texto como pie de figura, fuera del area de trazado
-    (debajo del eje X), y expande el margen inferior para que no se corten."""
+def agregar_pie_figura(fig, lineas, altura_linea_px=17, espacio_eje_x_px=70):
+    """Agrega una o mas lineas de texto como pie de figura, debajo del título del eje X, y
+    expande el margen inferior para que quepan. Las anotaciones usan yref="paper", que es
+    relativo al ALTO DEL ÁREA DE TRAZADO (no de la figura completa) -- por eso la posición de
+    cada línea se calcula en píxeles reales y se convierte a fracción usando el alto de
+    trazado resultante, en vez de una fracción fija que se desalinea según cuántas líneas
+    tenga el pie o cuánto margen ya tuviera la figura (con muchas líneas, una fracción fija
+    dejaba el texto encimado con el título del eje X)."""
+    margen = fig.layout.margin
+    alto_total = fig.layout.height or 450
+    margen_t = margen.t if margen and margen.t is not None else 70
+    margen_b_actual = margen.b if margen and margen.b is not None else 70
+    margen_b_nuevo = margen_b_actual + espacio_eje_x_px + altura_linea_px * len(lineas) + 12
+    alto_trazado = max(alto_total - margen_t - margen_b_nuevo, 50)
     for i, linea in enumerate(lineas):
+        y_px = espacio_eje_x_px + i * altura_linea_px
         fig.add_annotation(
-            text=linea, xref="paper", yref="paper", x=0, y=-0.22 - i * 0.07,
+            text=linea, xref="paper", yref="paper", x=0, y=-(y_px / alto_trazado),
             showarrow=False, align="left", xanchor="left", yanchor="top",
             font=dict(family=FUENTE_PUBLICACION, size=10.5, color=T["INK_MUTED"]),
         )
-    fig.update_layout(margin=dict(b=50 + 22 * len(lineas)))
+    fig.update_layout(margin=dict(b=margen_b_nuevo))
     return fig
 
 
@@ -690,6 +702,121 @@ def fig_barras_r2_comparacion(RES, datos, variables, modelos):
     # encimen entre si al quedar tan cerca en barras angostas de 3 categorias.
     fig.update_layout(barmode="group", bargap=0.35, bargroupgap=0.2)
     estilo_publicacion(fig, height=460, bottom_margin=80)
+    return fig
+
+
+def _asintota_k_plausible(res, y_max_obs_grupo):
+    """Criterio de plausibilidad de K acordado explícitamente (la app no tenía antes ninguna
+    regla de este tipo): se dibuja la asíntota solo si (1) el modelo convergió, (2) R² >= 0.9
+    y (3) K no supera 3x el máximo observado en ese grupo/variable. Devuelve (dibujar, K, motivo)."""
+    if res.get("insuficiente") or res["params"] is None:
+        return False, None, None
+    r2 = res["r2"]
+    if r2 is None or (isinstance(r2, float) and np.isnan(r2)):
+        return False, None, None
+    K = res["params"][0]
+    if r2 < 0.9:
+        return False, K, f"R²={r2:.3f} < 0.90"
+    if y_max_obs_grupo > 0 and K > 3 * y_max_obs_grupo:
+        return False, K, f"K={K:.1f} supera 3× el máximo observado ({y_max_obs_grupo:.1f})"
+    return True, K, None
+
+
+def fig_curvas_publicacion(datos, RES, variable, modelos, fuente_datos="simulado"):
+    """Curvas de crecimiento estilo publicación: panel (a) = -M, panel (b) = +M, con el mismo
+    eje Y compartido. Puntos = TODAS las réplicas observadas (círculos vacíos, con
+    transparencia), no solo la media. Un color + tipo de línea por modelo (MODELO_ESTILO,
+    paleta colorblind-safe). Los modelos que no convergieron (o sin días suficientes) NO se
+    dibujan -- se anotan en el pie de figura, igual que la asíntota K cuando no es plausible.
+    No cambia el ajuste ni la regla de insuficiente/no convergió: solo lee RES."""
+    grupos = [g for g in ("-M", "+M") if g in datos[variable]]
+    dias_todos = sorted(set().union(*[set(datos[variable][g].keys()) for g in grupos]))
+    t_fino = np.linspace(dias_todos[0], dias_todos[-1], 300)
+
+    todos_los_valores = [v for g in grupos for vals in datos[variable][g].values() for v in vals]
+    y_obs_min, y_obs_max = min(todos_los_valores), max(todos_los_valores)
+    y_max_con_asintotas = y_obs_max
+
+    etiquetas_panel = {"-M": "(a) −M", "+M": "(b) +M"}
+    fig = make_subplots(rows=1, cols=len(grupos), subplot_titles=[etiquetas_panel[g] for g in grupos],
+                         horizontal_spacing=0.07, shared_yaxes=True)
+
+    notas = []
+    leyenda_mostrada = set()
+    for col, grupo in enumerate(grupos, start=1):
+        y_max_obs_grupo = max(v for vals in datos[variable][grupo].values() for v in vals)
+        t_flat, y_flat = flatten_replicas(datos[variable][grupo])
+        fig.add_trace(go.Scatter(
+            x=t_flat, y=y_flat, mode="markers", name="Réplicas observadas",
+            legendgroup="obs", showlegend=("obs" not in leyenda_mostrada),
+            marker=dict(symbol="circle-open", color="#1A1A1A", size=7, opacity=0.55, line=dict(width=1.3)),
+            hovertemplate=f"DAT %{{x}}<br>%{{y:.2f}} {UNIDADES[variable]}<extra></extra>",
+        ), row=1, col=col)
+        leyenda_mostrada.add("obs")
+
+        for modelo in modelos:
+            res = RES[variable][grupo][modelo]
+            estilo = MODELO_ESTILO[modelo]
+            if res.get("insuficiente"):
+                notas.append(f"{modelo} ({grupo}): sin suficientes días de muestreo "
+                              f"({res['dias_disponibles']}/{res['dias_requeridos']}).")
+                continue
+            r2 = res["r2"]
+            r2_ok = r2 is not None and not (isinstance(r2, float) and np.isnan(r2))
+            if res["params"] is None or not r2_ok:
+                notas.append(f"{modelo} ({grupo}): no convergió.")
+                continue
+
+            func = MODELOS[modelo]["func"]
+            y_fino = func(t_fino, *res["params"])
+
+            # Banda de confianza del 95% (Monte Carlo sobre pcov, ya existente en la app):
+            # se dibuja antes que la linea del modelo para que quede debajo.
+            banda_baja, banda_alta = calcular_banda_confianza(func, res["params"], res["pcov"], t_fino)
+            if banda_baja is not None:
+                r, g, b = (int(estilo["color"][1:3], 16), int(estilo["color"][3:5], 16), int(estilo["color"][5:7], 16))
+                fig.add_trace(go.Scatter(x=t_fino, y=banda_alta, mode="lines", line=dict(width=0),
+                                          legendgroup=modelo, showlegend=False, hoverinfo="skip"), row=1, col=col)
+                fig.add_trace(go.Scatter(x=t_fino, y=banda_baja, mode="lines", line=dict(width=0),
+                                          fill="tonexty", fillcolor=f"rgba({r},{g},{b},0.15)",
+                                          legendgroup=modelo, showlegend=False, hoverinfo="skip"), row=1, col=col)
+
+            fig.add_trace(go.Scatter(
+                x=t_fino, y=y_fino, mode="lines", name=f"{modelo} (R²={r2:.3f})",
+                legendgroup=modelo, showlegend=(modelo not in leyenda_mostrada),
+                line=dict(color=estilo["color"], dash=estilo["dash"], width=2.4),
+            ), row=1, col=col)
+            leyenda_mostrada.add(modelo)
+
+            if MODELOS[modelo]["nombres_param"][0] == "K":
+                dibujar_k, K, motivo = _asintota_k_plausible(res, y_max_obs_grupo)
+                if dibujar_k:
+                    fig.add_trace(go.Scatter(
+                        x=[t_fino[0], t_fino[-1]], y=[K, K], mode="lines", showlegend=False,
+                        legendgroup=modelo, line=dict(color=estilo["color"], dash="dot", width=1.1),
+                        hovertemplate=f"K ({modelo}) = {K:.2f} {UNIDADES[variable]}<extra></extra>",
+                    ), row=1, col=col)
+                    y_max_con_asintotas = max(y_max_con_asintotas, K)
+                else:
+                    notas.append(f"{modelo} ({grupo}): asíntota K no se dibuja ({motivo}).")
+
+        fig.update_xaxes(title_text="Día después del trasplante (ddt)", row=1, col=col)
+        if col == 1:
+            fig.update_yaxes(title_text=f"{NOMBRE_VARIABLE[variable]} ({UNIDADES[variable]})", row=1, col=col)
+
+    rango_total = max(y_max_con_asintotas - y_obs_min, 1e-6)
+    fig.update_yaxes(range=[y_obs_min - 0.08 * rango_total, y_max_con_asintotas + 0.12 * rango_total])
+    estilo_publicacion(fig, height=440, right_margin=220)
+
+    pie = [
+        "Círculos = réplicas individuales observadas. Líneas = modelos convergidos (R² en la leyenda).",
+        "Banda sombreada = IC 95% (Monte Carlo). Línea punteada fina = asíntota K, solo cuando R² ≥ 0.90 "
+        "y K ≤ 3× el máximo observado.",
+    ]
+    pie.extend(notas)
+    if fuente_datos == "real":
+        pie.append("Réplicas sintéticas generadas a partir de medias y CV% publicados (Aguirre-Medina et al., 2023).")
+    agregar_pie_figura(fig, pie)
     return fig
 
 
@@ -1332,7 +1459,6 @@ elif seccion == "Resultados":
         box-shadow: 0 6px 16px rgba(32,28,24,0.09); }}
     </style>""", unsafe_allow_html=True)
     RES = st.session_state.resultados
-    COLOR_GRUPO = {"-M": T["CONTROL"], "+M": T["ACCENT"]}
 
     st.caption(f"Mostrando {etiqueta_lote.lower()} · "
                f"{', '.join(NOMBRE_VARIABLE[v] for v in variables_a_mostrar)} · {', '.join(modelos_a_mostrar)}")
@@ -1385,62 +1511,13 @@ elif seccion == "Resultados":
             st.write("")
             continue
 
-        dias_todos = sorted(set(DATOS[variable]["-M"].keys()) | set(DATOS[variable]["+M"].keys()))
-        t_fino = np.linspace(dias_todos[0], dias_todos[-1], 300)
-
-        # Rango de eje Y basado en los datos observados (media +/- DE), no en la curva
-        # ajustada: con pocos puntos, la banda de confianza Monte Carlo de un parametro
-        # mal identificado puede dispararse a valores absurdos y, si se deja que el eje
-        # se autoescale a eso, aplasta la curva real (que sigue siendo razonable).
-        extremos_obs = []
-        for grupo in DATOS[variable]:
-            _, medias_g, sds_g, _ = media_sd_por_dia(DATOS[variable][grupo])
-            extremos_obs.extend((medias_g - sds_g).tolist())
-            extremos_obs.extend((medias_g + sds_g).tolist())
-        y_obs_min, y_obs_max = min(extremos_obs), max(extremos_obs)
-        rango_obs = max(y_obs_max - y_obs_min, 1e-6)
-        rango_y = [y_obs_min - 0.25 * rango_obs, y_obs_max + 0.35 * rango_obs]
-
-        n = len(modelos_a_mostrar)
-        fig = make_subplots(rows=1, cols=n, subplot_titles=modelos_a_mostrar, horizontal_spacing=0.06)
-
-        for i, nombre_modelo in enumerate(modelos_a_mostrar, start=1):
-            func = MODELOS[nombre_modelo]["func"]
-            for grupo in DATOS[variable]:
-                res = RES[variable][grupo][nombre_modelo]
-                color = COLOR_GRUPO[grupo]
-                dias_g, medias_g, sds_g, _ = media_sd_por_dia(DATOS[variable][grupo])
-
-                if res["params"] is not None:
-                    banda_baja, banda_alta = calcular_banda_confianza(func, res["params"], res["pcov"], t_fino)
-                    if banda_baja is not None:
-                        fig.add_trace(go.Scatter(x=t_fino, y=banda_alta, mode="lines", line=dict(width=0),
-                                                  showlegend=False, hoverinfo="skip"), row=1, col=i)
-                        fig.add_trace(go.Scatter(x=t_fino, y=banda_baja, mode="lines", line=dict(width=0),
-                                                  fill="tonexty", fillcolor=f"rgba({int(color[1:3],16)},{int(color[3:5],16)},{int(color[5:7],16)},0.15)",
-                                                  showlegend=False, hoverinfo="skip"), row=1, col=i)
-
-                fig.add_trace(go.Scatter(
-                    x=dias_g, y=medias_g, mode="markers", name=f"{grupo} media±DE", legendgroup=grupo, showlegend=(i == 1),
-                    error_y=dict(type="data", array=sds_g, visible=True, color=color, thickness=1.2),
-                    marker=dict(color=color, size=7, line=dict(width=1, color=color)),
-                    hovertemplate=f"{grupo} · DAT %{{x}}<br>%{{y:.2f}} {UNIDADES[variable]}<extra></extra>",
-                ), row=1, col=i)
-                if res["params"] is not None:
-                    y_fino = func(t_fino, *res["params"])
-                    fig.add_trace(go.Scatter(
-                        x=t_fino, y=y_fino, mode="lines", name=f"{grupo} ajuste", legendgroup=grupo, showlegend=False,
-                        line=dict(color=color, width=2.5), hoverinfo="skip",
-                    ), row=1, col=i)
-            fig.update_xaxes(title_text="DAT (días)", row=1, col=i)
-            fig.update_yaxes(range=rango_y, row=1, col=i)
-            if i == 1:
-                fig.update_yaxes(title_text=f"{NOMBRE_VARIABLE[variable]} ({UNIDADES[variable]})", row=1, col=i)
-
-        fig.update_layout(height=420, legend=dict(orientation="h", yanchor="bottom", y=1.08, x=0))
-        fig.update_annotations(font=dict(family="IBM Plex Mono, monospace", size=12, color=T["INK_MUTED"]))
+        fig = fig_curvas_publicacion(DATOS, RES, variable, modelos_a_mostrar, st.session_state.fuente_datos)
         st.plotly_chart(fig, width='stretch')
-        st.caption("Puntos = media ± desviación estándar de las réplicas. Banda sombreada = intervalo de confianza del 95% de la curva completa.")
+        st.download_button(
+            f"Descargar PNG — Curvas {NOMBRE_VARIABLE[variable]}",
+            data=fig.to_image(format="png", scale=3),
+            file_name=f"curvas_{variable}.png", mime="image/png", key=f"png_curvas_{variable}",
+        )
 
         filas = []
         for grupo in DATOS[variable]:
@@ -2137,30 +2214,17 @@ elif seccion == "Exportar reporte":
                         fila_i += 1
                 pdf.ln(4)
 
-                # Grafica de resultados como imagen (una curva por modelo/grupo, solo si hay al menos un ajuste)
+                # Grafica de curvas (misma figura que usa la seccion Resultados de la app),
+                # solo si hay al menos un ajuste.
                 hay_algun_ajuste = any(
                     RES[variable][g][m]["params"] is not None
                     for g in DATOS[variable] for m in modelos_a_mostrar
                 )
                 if hay_algun_ajuste:
-                    dias_todos_pdf = sorted(set(DATOS[variable]["-M"].keys()) | set(DATOS[variable]["+M"].keys()))
-                    t_fino = np.linspace(dias_todos_pdf[0], dias_todos_pdf[-1], 200)
-                    fig = make_subplots(rows=1, cols=len(modelos_a_mostrar), subplot_titles=modelos_a_mostrar)
-                    for i, nombre_modelo in enumerate(modelos_a_mostrar, start=1):
-                        func = MODELOS[nombre_modelo]["func"]
-                        for grupo in DATOS[variable]:
-                            res = RES[variable][grupo][nombre_modelo]
-                            color = "#9C968C" if grupo == "-M" else "#9A3324"
-                            dias_g, medias_g, sds_g, _ = media_sd_por_dia(DATOS[variable][grupo])
-                            fig.add_trace(go.Scatter(x=dias_g, y=medias_g, mode="markers", name=grupo,
-                                                      marker=dict(color=color, size=6),
-                                                      showlegend=(i == 1)), row=1, col=i)
-                            if res["params"] is not None:
-                                fig.add_trace(go.Scatter(x=t_fino, y=func(t_fino, *res["params"]), mode="lines",
-                                                          line=dict(color=color), showlegend=False), row=1, col=i)
-                    fig.update_layout(height=280, width=900, paper_bgcolor="white", plot_bgcolor="white",
-                                       margin=dict(l=30, r=10, t=30, b=30))
-                    insertar_imagen_png(pdf, fig.to_image(format="png", scale=3))
+                    fig_curvas_pdf = fig_curvas_publicacion(DATOS, RES, variable, modelos_a_mostrar,
+                                                             st.session_state.fuente_datos)
+                    fig_curvas_pdf.update_layout(paper_bgcolor="white", plot_bgcolor="white", width=1000, height=480)
+                    insertar_imagen_png(pdf, fig_curvas_pdf.to_image(format="png", scale=3))
                 else:
                     pdf.set_font("Helvetica", "I", 9)
                     pdf.set_text_color(*PDF_MUTED)
