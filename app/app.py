@@ -27,7 +27,7 @@ from scipy.optimize import curve_fit
 from scipy.stats import t as t_dist, ttest_ind
 from fpdf import FPDF
 from fpdf.enums import XPos, YPos
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 
 st.set_page_config(page_title="Coffea arabica · Modelos de crecimiento", page_icon="⸙", layout="wide")
 
@@ -196,35 +196,55 @@ pio.templates.default = "cuaderno"
 
 # ==============================================================================
 # ESTILO DE PUBLICACIÓN — helper único aplicado a las gráficas exportables
-# (pantalla, PNG y PDF). El template "cuaderno" de arriba define look-and-feel
-# del dashboard interactivo, pero sus márgenes (l=10,r=10,b=10) asumen el
-# auto-margin del navegador y no funcionan al exportar con kaleido (títulos y
-# etiquetas se cortan o se encima). Esta función fija márgenes explícitos y
-# saca la leyenda del área del título para que nunca se tapen entre sí.
+# (pantalla, PNG y PDF).
+#
+# PRINCIPIO DE DISEÑO: la figura y su texto son cosas separadas.
+#   - La figura de Plotly (estilo_publicacion) contiene SOLO paneles, ejes, leyenda y
+#     etiquetas de panel. Nunca lleva pie de figura incrustado como anotación.
+#   - El pie de figura (construir_pie) se muestra aparte: con st.caption/st.markdown
+#     debajo de la figura en la app (mostrar_pie_streamlit), como texto debajo de la
+#     imagen en el PDF (pie_a_lineas_texto + multi_cell), y compuesto con la imagen final
+#     en los PNG descargables (componer_png_con_pie, vía PIL).
 # ==============================================================================
 FUENTE_PUBLICACION = "Arial, Helvetica, sans-serif"
 
 
-def estilo_publicacion(fig, height=420, right_margin=190, top_margin=70, bottom_margin=70, left_margin=70):
-    """Plantilla visual única para toda gráfica exportable: fondo blanco, marco
-    negro fino con ticks hacia afuera, cuadrícula tenue solo en Y, leyenda fuera
-    del área de trazado (a la derecha), fuente y tamaños consistentes. No toca
-    datos ni trazos, solo layout/ejes -- se llama al final de cada fig_*()."""
+def estilo_publicacion(fig, width=None, height=420, left_margin=70, top_margin=60,
+                        espacio_eje_x_px=38, espacio_leyenda_px=34):
+    """Plantilla visual única para toda gráfica exportable: fondo blanco, marco negro
+    fino con ticks hacia afuera, cuadrícula tenue solo en Y, leyenda en UNA fila
+    horizontal centrada debajo de los paneles (no a la derecha: con el pie de figura ya
+    afuera, no hace falta reservar una columna lateral ancha), fuente y tamaños
+    consistentes. No toca datos ni trazos, solo layout/ejes -- se llama al final de cada
+    fig_*(), antes de construir_pie()."""
     # Si la figura no trae titulo propio (varias no lo usan a proposito, para no
     # chocar con subplot_titles), hay que fijar text="" explicitamente: si se deja
     # sin definir, Plotly.js renderiza el titulo como el texto literal "undefined".
     titulo_actual = fig.layout.title.text if fig.layout.title is not None else None
-    fig.update_layout(
+
+    # Margen inferior fijo: solo tiene que alcanzar para el título del eje X y UNA fila
+    # de leyenda (ya no depende de cuántas notas tenga un pie, porque el pie ya no vive
+    # dentro de la figura). La posición de la leyenda se calcula en píxeles reales y se
+    # convierte a fracción según el alto real del área de trazado (yref="paper" es
+    # relativo a esa área, no al lienzo completo).
+    margen_b = espacio_eje_x_px + espacio_leyenda_px + 14
+    alto_trazado = max(height - top_margin - margen_b, 50)
+    y_leyenda = -(espacio_eje_x_px + espacio_leyenda_px / 2) / alto_trazado
+
+    layout_kwargs = dict(
         font=dict(family=FUENTE_PUBLICACION, size=13, color="#1A1A1A"),
         paper_bgcolor="white", plot_bgcolor="white",
         title=dict(text=titulo_actual or "", font=dict(family=FUENTE_PUBLICACION, size=16, color="#1A1A1A"),
                     x=0.01, xanchor="left"),
-        legend=dict(orientation="v", yanchor="middle", y=0.5, xanchor="left", x=1.02,
+        legend=dict(orientation="h", xanchor="center", x=0.5, yanchor="middle", y=y_leyenda,
                     bgcolor="rgba(255,255,255,0)", bordercolor="rgba(0,0,0,0)",
                     font=dict(family=FUENTE_PUBLICACION, size=12)),
-        margin=dict(l=left_margin, r=right_margin, t=top_margin, b=bottom_margin),
+        margin=dict(l=left_margin, r=20, t=top_margin, b=margen_b),
         height=height,
     )
+    if width is not None:
+        layout_kwargs["width"] = width
+    fig.update_layout(**layout_kwargs)
     fig.update_xaxes(
         showgrid=False, zeroline=False, showline=True, linewidth=1.3, linecolor="black", mirror=True,
         ticks="outside", tickwidth=1.2, ticklen=5,
@@ -234,13 +254,116 @@ def estilo_publicacion(fig, height=420, right_margin=190, top_margin=70, bottom_
     )
     fig.update_yaxes(
         showgrid=True, gridcolor="rgba(0,0,0,0.10)", gridwidth=0.6, zeroline=False, showline=True,
-        linewidth=1.3, linecolor="black", mirror=True, ticks="outside", tickwidth=1.2, ticklen=5,
+        linewidth=1.3, linecolor="black", mirror=True, ticks="outside", tickwidth=1.2, ticklen=5, nticks=6,
         tickfont=dict(family=FUENTE_PUBLICACION, size=12, color="#1A1A1A"),
         title_font=dict(family=FUENTE_PUBLICACION, size=14, color="#1A1A1A"),
         automargin=True, title_standoff=14,
     )
-    fig.update_annotations(font=dict(family=FUENTE_PUBLICACION, size=13, color="#1A1A1A"))
     return fig
+
+
+def alinear_titulos_panel_izquierda(fig, n_paneles, tam_fuente=13):
+    """Los subplot_titles de Plotly (usados para las etiquetas "(a) −M"/"(b) +M", etc.) se
+    centran por defecto; el diseño pide que vayan arriba a la IZQUIERDA de cada panel, no
+    centradas. Reposiciona las primeras `n_paneles` anotaciones (que son exactamente los
+    subplot_titles, en el mismo orden en que se crearon) al borde izquierdo del dominio de
+    su propio eje X."""
+    for i in range(n_paneles):
+        ann = fig.layout.annotations[i]
+        nombre_eje = "xaxis" if i == 0 else f"xaxis{i + 1}"
+        eje = fig.layout[nombre_eje]
+        x0 = eje.domain[0] if eje.domain else 0
+        ann.update(x=x0, xanchor="left", font=dict(size=tam_fuente, family=FUENTE_PUBLICACION, color="#1A1A1A"))
+    return fig
+
+
+def construir_pie(descripcion, notas=None, extra=None):
+    """Estructura común del pie de figura: una línea de descripción + una lista corta de
+    notas (una viñeta por modelo que no dibujó asíntota/banda o que no convergió) + una
+    nota final opcional (ej. réplicas sintéticas). Nunca se agrega como anotación dentro
+    de la figura de Plotly -- se usa igual en mostrar_pie_streamlit, pie_a_lineas_texto y
+    componer_png_con_pie."""
+    return {"descripcion": descripcion, "notas": list(notas or []), "extra": extra}
+
+
+def pie_a_lineas_texto(pie):
+    """Aplana el pie a líneas de texto plano, para el PDF y los PNG compuestos."""
+    lineas = [pie["descripcion"]]
+    if pie["notas"]:
+        lineas.append("Notas:")
+        lineas.extend(f"• {n}" for n in pie["notas"])
+    if pie["extra"]:
+        lineas.append(pie["extra"])
+    return lineas
+
+
+def mostrar_pie_streamlit(pie):
+    """Muestra el pie DEBAJO de la figura en la app, con st.caption/st.markdown -- nunca
+    como anotación de Plotly (principio de diseño: figura y texto son cosas separadas)."""
+    st.caption(pie["descripcion"])
+    if pie["notas"]:
+        st.markdown("**Notas:**\n" + "\n".join(f"- {n}" for n in pie["notas"]))
+    if pie["extra"]:
+        st.caption(pie["extra"])
+
+
+_FUENTE_PIE_PNG_CACHE = {}
+
+
+def _fuente_pie_png(tam_px):
+    """Fuente TTF real para componer el pie en los PNG descargables (el bitmap por
+    defecto de PIL es ilegible a cualquier tamaño). Reutiliza la DejaVu Sans que ya trae
+    matplotlib -- ya es dependencia de la app, no se agrega ninguna nueva."""
+    if tam_px not in _FUENTE_PIE_PNG_CACHE:
+        import matplotlib.font_manager as fm
+        ruta = fm.findfont("DejaVu Sans")
+        _FUENTE_PIE_PNG_CACHE[tam_px] = ImageFont.truetype(ruta, tam_px)
+    return _FUENTE_PIE_PNG_CACHE[tam_px]
+
+
+def componer_png_con_pie(png_bytes, pie, scale=3):
+    """Compone el PNG final para descarga: la figura de Plotly (limpia, sin pie
+    incrustado) arriba, y el pie como una franja blanca debajo, con texto envuelto a
+    líneas, alineado a la izquierda, fuente >= 11pt (proporcional a `scale`, igual que el
+    resto de la figura, para que no quede diminuta en la imagen de alta resolución)."""
+    img = Image.open(io.BytesIO(png_bytes)).convert("RGB")
+    ancho = img.width
+    tam_fuente = max(int(15 * scale), 14)
+    interlineado = int(tam_fuente * 1.5)
+    margen = int(14 * scale)
+    fuente = _fuente_pie_png(tam_fuente)
+
+    draw_tmp = ImageDraw.Draw(img)
+    ancho_max_texto = ancho - 2 * margen
+
+    def envolver(texto):
+        palabras = texto.split(" ")
+        actual, salida = "", []
+        for palabra in palabras:
+            prueba = (actual + " " + palabra).strip()
+            if not actual or draw_tmp.textlength(prueba, font=fuente) <= ancho_max_texto:
+                actual = prueba
+            else:
+                salida.append(actual)
+                actual = palabra
+        if actual:
+            salida.append(actual)
+        return salida or [""]
+
+    lineas_fisicas = [fisica for logica in pie_a_lineas_texto(pie) for fisica in envolver(logica)]
+
+    alto_pie = margen * 2 + interlineado * len(lineas_fisicas)
+    lienzo = Image.new("RGB", (ancho, img.height + alto_pie), "white")
+    lienzo.paste(img, (0, 0))
+    draw = ImageDraw.Draw(lienzo)
+    y = img.height + margen
+    for linea in lineas_fisicas:
+        draw.text((margen, y), linea, font=fuente, fill=(60, 56, 50))
+        y += interlineado
+
+    buf = io.BytesIO()
+    lienzo.save(buf, format="PNG")
+    return buf.getvalue()
 
 
 def formatear_p(p):
@@ -640,17 +763,17 @@ def fig_barras_variable(datos, variable, fuente_datos="simulado"):
     )
     if y_max_con_error > 0:
         fig.update_yaxes(range=[0, y_max_con_error * 1.25])
-    estilo_publicacion(fig, height=440)
+    estilo_publicacion(fig, width=900, height=480)
 
     n_reps_txt = "/".join(str(n) for n in sorted(n_replicas_vistas)) if n_replicas_vistas else "?"
-    pie = [
-        f"{NOMBRE_VARIABLE[variable]} ({UNIDADES[variable]}), media ± DE, n = {n_reps_txt} réplicas por día y grupo.",
-        "Significancia (prueba t de Welch, −M vs +M): ns = p ≥ 0.05 · * p < 0.05 · ** p < 0.01 · *** p < 0.001.",
-    ]
-    if fuente_datos == "real":
-        pie.append("Réplicas sintéticas generadas a partir de medias y CV% publicados (Aguirre-Medina et al., 2023).")
-    agregar_pie_figura(fig, pie)
-    return fig
+    descripcion = (
+        f"{NOMBRE_VARIABLE[variable]} ({UNIDADES[variable]}), media ± DE, n = {n_reps_txt} réplicas por día y "
+        "grupo. Significancia (prueba t de Welch, −M vs +M): ns = p ≥ 0.05 · * p < 0.05 · ** p < 0.01 · "
+        "*** p < 0.001."
+    )
+    extra = ("Réplicas sintéticas generadas a partir de medias y CV% publicados (Aguirre-Medina et al., 2023)."
+             if fuente_datos == "real" else None)
+    return fig, construir_pie(descripcion, extra=extra)
 
 
 def fig_barras_resumen_2x2(datos, variables, fuente_datos="simulado"):
@@ -663,10 +786,11 @@ def fig_barras_resumen_2x2(datos, variables, fuente_datos="simulado"):
     fig = make_subplots(
         rows=2, cols=cols_n,
         subplot_titles=[f"({letras[i]}) {NOMBRE_VARIABLE[v]}" for i, v in enumerate(vars_incluidas)],
-        horizontal_spacing=0.18, vertical_spacing=0.18,
+        horizontal_spacing=0.15, vertical_spacing=0.22,
     )
     for idx, variable in enumerate(vars_incluidas):
         fila, col = idx // cols_n + 1, idx % cols_n + 1
+        dias_variable = sorted(set().union(*(datos[variable][g].keys() for g in datos[variable])))
         for grupo in ("-M", "+M"):
             if grupo not in datos[variable]:
                 continue
@@ -679,15 +803,19 @@ def fig_barras_resumen_2x2(datos, variables, fuente_datos="simulado"):
                 marker=dict(color=color, line=dict(color="black", width=1),
                             pattern=dict(shape=PATRON_GRUPO[grupo], fillmode="overlay", fgcolor="#1A1A1A", size=4, solidity=0.3)),
             ), row=fila, col=col)
-        fig.update_xaxes(title_text="Día (ddt)", row=fila, col=col)
+        fig.update_xaxes(title_text="Día (ddt)", tickvals=[str(int(d)) for d in dias_variable], row=fila, col=col)
         fig.update_yaxes(title_text=UNIDADES[variable], row=fila, col=col)
     fig.update_layout(barmode="group")
-    estilo_publicacion(fig, height=680, right_margin=170)
-    pie = ["Media ± DE por día y grupo. Ejes Y independientes por panel (unidad propia de cada variable)."]
-    if fuente_datos == "real":
-        pie.append("Réplicas sintéticas generadas a partir de medias y CV% publicados (Aguirre-Medina et al., 2023).")
-    agregar_pie_figura(fig, pie)
-    return fig
+    estilo_publicacion(fig, width=1200, height=900, top_margin=70)
+    alinear_titulos_panel_izquierda(fig, len(vars_incluidas))
+
+    extra = ("Réplicas sintéticas generadas a partir de medias y CV% publicados (Aguirre-Medina et al., 2023)."
+             if fuente_datos == "real" else None)
+    pie = construir_pie(
+        "Media ± DE por día y grupo. Ejes Y independientes por panel (unidad propia de cada variable).",
+        extra=extra,
+    )
+    return fig, pie
 
 
 def fig_barras_r2_comparacion(RES, datos, variables, modelos):
@@ -745,8 +873,15 @@ def fig_barras_r2_comparacion(RES, datos, variables, modelos):
     # Sin título interno: el encabezado "### Comparación de R² por modelo" ya lo pone la
     # sección que llama a esta función -- evita que título y subplot_titles se encimen.
     fig.update_layout(barmode="group", bargap=0.4, bargroupgap=0.3)
-    estilo_publicacion(fig, height=460 if filas_n == 1 else 460 * filas_n, right_margin=190)
-    return fig
+    estilo_publicacion(fig, width=1200, height=460 if filas_n == 1 else 460 * filas_n, top_margin=60)
+    alinear_titulos_panel_izquierda(fig, len(variables))
+
+    pie = construir_pie(
+        "R² de cada modelo (Exponencial, Logístico, Gompertz) por variable y grupo. Eje Y fijo en 0-1.15: "
+        "las barras siempre parten de 0.",
+        notas=["Barras vacías con etiqueta vertical = modelo no convergió o sin días suficientes."],
+    )
+    return fig, pie
 
 
 def _asintota_k_plausible(res, y_max_obs_grupo, dia_min, dia_max):
@@ -845,12 +980,13 @@ def fig_curvas_publicacion(datos, RES, variable, modelos, fuente_datos="simulado
             # gigante clippeada por Plotly termina pintando un rectangulo solido que oculta
             # los datos en vez de comunicar incertidumbre.
             banda_baja, banda_alta = calcular_banda_confianza(func, res["params"], res["pcov"], t_fino)
-            dibujar_banda, motivo_banda = False, None
+            dibujar_banda, motivo_banda_propio = False, None
+            k_causa_banda = tiene_k and not dibujar_k
             if banda_baja is not None:
-                if tiene_k and not dibujar_k:
-                    motivo_banda = f"ajuste inestable ({motivo_k})"
+                if k_causa_banda:
+                    pass  # se anota una sola vez junto con la asíntota, misma causa (ver abajo)
                 elif np.max(banda_alta) > 3 * y_top_cap or np.min(banda_baja) < 3 * y_bottom_cap - 2 * rango_total:
-                    motivo_banda = "la incertidumbre del ajuste excede varias veces el rango visible"
+                    motivo_banda_propio = "la incertidumbre del ajuste excede varias veces el rango visible"
                 else:
                     dibujar_banda = True
             if dibujar_banda:
@@ -865,8 +1001,8 @@ def fig_curvas_publicacion(datos, RES, variable, modelos, fuente_datos="simulado
                 fig.add_trace(go.Scatter(x=t_fino, y=banda_baja_recortada, mode="lines", line=dict(width=0),
                                           fill="tonexty", fillcolor=f"rgba({r},{g},{b},0.15)",
                                           legendgroup=modelo, showlegend=False, hoverinfo="skip"), row=1, col=col)
-            elif motivo_banda is not None:
-                notas.append(f"{modelo} ({grupo}): banda de confianza no se dibuja ({motivo_banda}).")
+            elif motivo_banda_propio is not None:
+                notas.append(f"{modelo} ({grupo}): banda de confianza no se dibuja ({motivo_banda_propio}).")
 
             fig.add_trace(go.Scatter(
                 x=t_fino, y=y_fino, mode="lines", name=f"{modelo} (R²={r2:.3f})",
@@ -884,10 +1020,14 @@ def fig_curvas_publicacion(datos, RES, variable, modelos, fuente_datos="simulado
                         legendgroup=modelo, line=dict(color=estilo["color"], dash="dot", width=1.1),
                         hovertemplate=f"K ({modelo}) = {K:.2f} {UNIDADES[variable]}<extra></extra>",
                     ), row=1, col=col)
+                elif banda_baja is not None:
+                    # Una sola viñeta: la asíntota Y la banda comparten la misma causa (K implausible).
+                    notas.append(f"{modelo} ({grupo}): ni la asíntota K ni la banda de confianza se "
+                                  f"dibujan ({motivo_k}).")
                 else:
                     notas.append(f"{modelo} ({grupo}): asíntota K no se dibuja ({motivo_k}).")
 
-        fig.update_xaxes(title_text="Día después del trasplante (ddt)", row=1, col=col)
+        fig.update_xaxes(title_text="Día después del trasplante (ddt)", tickvals=dias_todos, row=1, col=col)
         if col == 1:
             fig.update_yaxes(title_text=f"{NOMBRE_VARIABLE[variable]} ({UNIDADES[variable]})", row=1, col=col)
 
@@ -896,21 +1036,17 @@ def fig_curvas_publicacion(datos, RES, variable, modelos, fuente_datos="simulado
     # puede dominar la escala del panel. Si una K dibujada supera este techo, su linea queda
     # fuera de vista (no se agranda el eje para acomodarla).
     fig.update_yaxes(range=[y_bottom_cap, y_top_cap])
-    # height=500 (no 440): con 4 entradas de leyenda (replicas + 3 modelos) kaleido a veces
-    # corta la ultima entrada si el lienzo queda muy justo -- se confirmo comparando renders.
-    estilo_publicacion(fig, height=500, right_margin=220)
+    # Tamaño fijo 1200x520 (dos paneles): eje Y compartido, misma altura en (a) y (b).
+    estilo_publicacion(fig, width=1200, height=520, top_margin=55)
+    alinear_titulos_panel_izquierda(fig, len(grupos))
 
-    pie = [
-        "Círculos = réplicas individuales observadas. Líneas = modelos convergidos (R² en la leyenda).",
-        "Eje Y limitado a ~1.25× el máximo observado.",
-        "Asíntota K (línea punteada fina): solo si el modelo convergió, R² ≥ 0.90,",
-        "K ≤ 1.5× el máximo observado, y el punto de inflexión cae dentro de los días observados.",
-    ]
-    pie.extend(notas)
-    if fuente_datos == "real":
-        pie.append("Réplicas sintéticas generadas a partir de medias y CV% publicados (Aguirre-Medina et al., 2023).")
-    agregar_pie_figura(fig, pie)
-    return fig
+    descripcion = ("Círculos = réplicas individuales observadas. Líneas = modelos convergidos (R² en la "
+                   "leyenda). Eje Y limitado a ~1.25× el máximo observado. Asíntota K (línea punteada fina): "
+                   "solo si el modelo convergió, R² ≥ 0.90, K ≤ 1.5× el máximo observado, y el punto de "
+                   "inflexión cae dentro de los días observados.")
+    extra = ("Réplicas sintéticas generadas a partir de medias y CV% publicados (Aguirre-Medina et al., 2023)."
+             if fuente_datos == "real" else None)
+    return fig, construir_pie(descripcion, notas=notas, extra=extra)
 
 
 def calcular_agr_rgr(modelo, params, t):
@@ -976,22 +1112,27 @@ def fig_tasas_crecimiento(datos, RES, variable, modelos, fuente_datos="simulado"
         if col == 1:
             fig.update_yaxes(title_text=f"AGR ({UNIDADES[variable]}/día)", row=1, col=col)
             fig.update_yaxes(title_text="RGR (día⁻¹)", row=2, col=col)
-        fig.update_xaxes(title_text="Día después del trasplante (ddt)", row=2, col=col)
+        # shared_xaxes=True (arriba) oculta las etiquetas numericas de la fila de AGR por
+        # defecto, dejando solo las marcas sin numero -- se fuerza showticklabels=True para
+        # que las 4 fechas (28/56/84/112) se vean en las 4 filas, no solo en la de abajo.
+        fig.update_xaxes(tickvals=dias_todos, showticklabels=True, row=1, col=col)
+        fig.update_xaxes(title_text="Día después del trasplante (ddt)", tickvals=dias_todos,
+                          showticklabels=True, row=2, col=col)
 
-    estilo_publicacion(fig, height=560, right_margin=230)
-    pie = [
-        "Tasas calculadas analíticamente a partir de los parámetros ya ajustados del modelo con "
-        "mejor R² en cada grupo (sin reajustar).",
-        "AGR = dP/dt; RGR = (1/P)·dP/dt.",
-    ]
-    pie.extend(f"Modelo usado en {g}: {mejores[g]} (mejor R² entre los convergidos)." for g in grupos_validos)
+    # 1200 de ancho igual que las curvas; el alto crece proporcionalmente porque aquí hay
+    # 2 FILAS de paneles (AGR arriba, RGR abajo) en vez de 1.
+    estilo_publicacion(fig, width=1200, height=860, top_margin=55)
+    alinear_titulos_panel_izquierda(fig, len(titulos))
+
+    notas = [f"Modelo usado en {g}: {mejores[g]} (mejor R² entre los convergidos)." for g in grupos_validos]
     if len(grupos_validos) < len(grupos):
-        pie.append(f"Sin tasas para {', '.join(g for g in grupos if g not in grupos_validos)}: "
-                   "ningún modelo convergió en ese grupo.")
-    if fuente_datos == "real":
-        pie.append("Réplicas sintéticas generadas a partir de medias y CV% publicados (Aguirre-Medina et al., 2023).")
-    agregar_pie_figura(fig, pie)
-    return fig, None
+        notas.append(f"Sin tasas para {', '.join(g for g in grupos if g not in grupos_validos)}: "
+                     "ningún modelo convergió en ese grupo.")
+    extra = ("Réplicas sintéticas generadas a partir de medias y CV% publicados (Aguirre-Medina et al., 2023)."
+             if fuente_datos == "real" else None)
+    descripcion = ("Tasas calculadas analíticamente a partir de los parámetros ya ajustados del modelo con "
+                   "mejor R² en cada grupo (sin reajustar). AGR = dP/dt; RGR = (1/P)·dP/dt.")
+    return fig, construir_pie(descripcion, notas=notas, extra=extra)
 
 
 def calcular_banda_confianza(func, popt, pcov, t_eval, n_muestras=400, semilla_mc=7):
@@ -1685,11 +1826,12 @@ elif seccion == "Resultados":
             st.write("")
             continue
 
-        fig = fig_curvas_publicacion(DATOS, RES, variable, modelos_a_mostrar, st.session_state.fuente_datos)
+        fig, pie = fig_curvas_publicacion(DATOS, RES, variable, modelos_a_mostrar, st.session_state.fuente_datos)
         st.plotly_chart(fig, width='stretch')
+        mostrar_pie_streamlit(pie)
         st.download_button(
             f"Descargar PNG — Curvas {NOMBRE_VARIABLE[variable]}",
-            data=fig.to_image(format="png", scale=3),
+            data=componer_png_con_pie(fig.to_image(format="png", scale=3), pie),
             file_name=f"curvas_{variable}.png", mime="image/png", key=f"png_curvas_{variable}",
         )
 
@@ -1698,15 +1840,16 @@ elif seccion == "Resultados":
                 "Opcional: AGR (dP/dt) y RGR ((1/P)·dP/dt) del modelo con mejor R² en cada grupo, "
                 "calculadas analíticamente a partir de los parámetros ya ajustados (sin reajustar)."
             )
-            fig_tasas, motivo_sin_tasas = fig_tasas_crecimiento(
+            fig_tasas, pie_tasas_o_motivo = fig_tasas_crecimiento(
                 DATOS, RES, variable, modelos_a_mostrar, st.session_state.fuente_datos)
             if fig_tasas is None:
-                st.info(motivo_sin_tasas)
+                st.info(pie_tasas_o_motivo)
             else:
                 st.plotly_chart(fig_tasas, width='stretch')
+                mostrar_pie_streamlit(pie_tasas_o_motivo)
                 st.download_button(
                     f"Descargar PNG — Tasas {NOMBRE_VARIABLE[variable]}",
-                    data=fig_tasas.to_image(format="png", scale=3),
+                    data=componer_png_con_pie(fig_tasas.to_image(format="png", scale=3), pie_tasas_o_motivo),
                     file_name=f"tasas_{variable}.png", mime="image/png", key=f"png_tasas_{variable}",
                 )
 
@@ -1747,11 +1890,12 @@ elif seccion == "Gráficas de barras":
     st.write("")
 
     for variable in variables_a_mostrar:
-        fig_var = fig_barras_variable(DATOS, variable, st.session_state.fuente_datos)
+        fig_var, pie_var = fig_barras_variable(DATOS, variable, st.session_state.fuente_datos)
         st.plotly_chart(fig_var, width='stretch')
+        mostrar_pie_streamlit(pie_var)
         st.download_button(
             f"Descargar PNG — {NOMBRE_VARIABLE[variable]}",
-            data=fig_var.to_image(format="png", scale=3),
+            data=componer_png_con_pie(fig_var.to_image(format="png", scale=3), pie_var),
             file_name=f"barras_{variable}.png", mime="image/png", key=f"png_barras_{variable}",
         )
         st.write("")
@@ -1759,26 +1903,23 @@ elif seccion == "Gráficas de barras":
     if len(variables_a_mostrar) >= 2:
         st.markdown('<hr class="rule">', unsafe_allow_html=True)
         st.markdown("### Resumen (a)–(d)")
-        st.markdown("Las mismas 4 variables en una sola figura, con eje Y propio por panel y una leyenda única.")
-        fig_resumen = fig_barras_resumen_2x2(DATOS, variables_a_mostrar, st.session_state.fuente_datos)
+        fig_resumen, pie_resumen = fig_barras_resumen_2x2(DATOS, variables_a_mostrar, st.session_state.fuente_datos)
         st.plotly_chart(fig_resumen, width='stretch')
+        mostrar_pie_streamlit(pie_resumen)
         st.download_button(
             "Descargar PNG — Resumen (a)–(d)",
-            data=fig_resumen.to_image(format="png", scale=3),
+            data=componer_png_con_pie(fig_resumen.to_image(format="png", scale=3), pie_resumen),
             file_name="barras_resumen.png", mime="image/png", key="png_barras_resumen",
         )
 
     st.markdown('<hr class="rule">', unsafe_allow_html=True)
     st.markdown("### Comparación de R² por modelo")
-    st.markdown(
-        "R² de Exponencial, Logístico y Gompertz por variable y grupo. Donde un modelo no convergió "
-        "o no tuvo suficientes días de muestreo, la barra se muestra vacía con la etiqueta correspondiente."
-    )
-    fig_r2 = fig_barras_r2_comparacion(RES, DATOS, variables_a_mostrar, modelos_a_mostrar)
+    fig_r2, pie_r2 = fig_barras_r2_comparacion(RES, DATOS, variables_a_mostrar, modelos_a_mostrar)
     st.plotly_chart(fig_r2, width='stretch')
+    mostrar_pie_streamlit(pie_r2)
     st.download_button(
         "Descargar PNG — Comparación de R²",
-        data=fig_r2.to_image(format="png", scale=3),
+        data=componer_png_con_pie(fig_r2.to_image(format="png", scale=3), pie_r2),
         file_name="barras_r2_comparacion.png", mime="image/png", key="png_barras_r2",
     )
     st.caption("Estas gráficas también se incluyen en el reporte PDF (sección Exportar reporte).")
@@ -1949,7 +2090,8 @@ elif seccion == "Residuos":
     for variable in variables_a_mostrar:
         st.markdown(f"### {NOMBRE_VARIABLE[variable]}")
         n = len(modelos_a_mostrar)
-        fig = make_subplots(rows=1, cols=n, subplot_titles=modelos_a_mostrar, horizontal_spacing=0.06)
+        dias_variable = sorted(set().union(*(DATOS[variable][g].keys() for g in DATOS[variable])))
+        fig = make_subplots(rows=1, cols=n, subplot_titles=modelos_a_mostrar, horizontal_spacing=0.08)
         for i, nombre_modelo in enumerate(modelos_a_mostrar, start=1):
             for grupo in DATOS[variable]:
                 res = RES[variable][grupo][nombre_modelo]
@@ -1960,11 +2102,12 @@ elif seccion == "Residuos":
                                           legendgroup=grupo, showlegend=(i == 1),
                                           marker=dict(color=color, size=6, opacity=0.7)), row=1, col=i)
             fig.add_hline(y=0, line=dict(color=T["INK_MUTED"], dash="dash", width=1), row=1, col=i)
-            fig.update_xaxes(title_text="DAT (días)", row=1, col=i)
+            fig.update_xaxes(title_text="DAT (días)", tickvals=dias_variable, row=1, col=i)
             if i == 1:
                 fig.update_yaxes(title_text=f"Residuo ({UNIDADES[variable]})", row=1, col=i)
         # Sin título interno: el encabezado "### {variable}" ya lo pone esta sección.
-        estilo_publicacion(fig, height=380)
+        estilo_publicacion(fig, width=1200, height=420, top_margin=55)
+        alinear_titulos_panel_izquierda(fig, n)
         st.plotly_chart(fig, width='stretch')
 
         with st.container(border=True):
@@ -2289,6 +2432,25 @@ elif seccion == "Exportar reporte":
         pdf.image(ruta_img, w=ancho_mm)
         pdf.ln(5)
 
+    def insertar_pie_pdf(pdf, pie):
+        """Pie de figura como texto debajo de la imagen (principio de diseño: la figura de
+        Plotly no lleva pie incrustado -- ver construir_pie/mostrar_pie_streamlit)."""
+        pdf.set_font("Helvetica", "", 9)
+        pdf.set_text_color(*PDF_MUTED)
+        pdf.multi_cell(0, 5, limpiar_texto(pie["descripcion"]), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        if pie["notas"]:
+            pdf.set_font("Helvetica", "B", 9)
+            pdf.cell(0, 5, limpiar_texto("Notas:"), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+            pdf.set_font("Helvetica", "", 9)
+            for nota in pie["notas"]:
+                pdf.set_x(14)
+                pdf.multi_cell(0, 5, limpiar_texto(f"- {nota}"), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        if pie["extra"]:
+            pdf.set_font("Helvetica", "I", 8.5)
+            pdf.multi_cell(0, 5, limpiar_texto(pie["extra"]), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        pdf.set_text_color(*PDF_INK)
+        pdf.ln(3)
+
     def tabla_pdf(pdf, encabezados, anchos, filas):
         pdf.set_font("Helvetica", "B", 9)
         pdf.set_fill_color(*PDF_HEADER_BG)
@@ -2398,10 +2560,11 @@ elif seccion == "Exportar reporte":
                     for g in DATOS[variable] for m in modelos_a_mostrar
                 )
                 if hay_algun_ajuste:
-                    fig_curvas_pdf = fig_curvas_publicacion(DATOS, RES, variable, modelos_a_mostrar,
-                                                             st.session_state.fuente_datos)
-                    fig_curvas_pdf.update_layout(paper_bgcolor="white", plot_bgcolor="white", width=1000, height=480)
+                    fig_curvas_pdf, pie_curvas_pdf = fig_curvas_publicacion(
+                        DATOS, RES, variable, modelos_a_mostrar, st.session_state.fuente_datos)
+                    fig_curvas_pdf.update_layout(paper_bgcolor="white", plot_bgcolor="white")
                     insertar_imagen_png(pdf, fig_curvas_pdf.to_image(format="png", scale=3))
+                    insertar_pie_pdf(pdf, pie_curvas_pdf)
                 else:
                     pdf.set_font("Helvetica", "I", 9)
                     pdf.set_text_color(*PDF_MUTED)
@@ -2417,25 +2580,29 @@ elif seccion == "Exportar reporte":
             for variable in variables_a_mostrar:
                 asegurar_espacio(pdf, 100)
                 subtitulo_variable(pdf, NOMBRE_VARIABLE[variable])
-                fig_barra_pdf = fig_barras_variable(DATOS, variable, st.session_state.fuente_datos)
-                fig_barra_pdf.update_layout(paper_bgcolor="white", plot_bgcolor="white", width=900, height=460)
+                fig_barra_pdf, pie_barra_pdf = fig_barras_variable(DATOS, variable, st.session_state.fuente_datos)
+                fig_barra_pdf.update_layout(paper_bgcolor="white", plot_bgcolor="white")
                 insertar_imagen_png(pdf, fig_barra_pdf.to_image(format="png", scale=3))
+                insertar_pie_pdf(pdf, pie_barra_pdf)
 
             if len(variables_a_mostrar) >= 2:
                 asegurar_espacio(pdf, 110)
                 subtitulo_variable(pdf, "Resumen (a)-(d)")
-                fig_resumen_pdf = fig_barras_resumen_2x2(DATOS, variables_a_mostrar, st.session_state.fuente_datos)
-                fig_resumen_pdf.update_layout(paper_bgcolor="white", plot_bgcolor="white", width=1000, height=720)
+                fig_resumen_pdf, pie_resumen_pdf = fig_barras_resumen_2x2(
+                    DATOS, variables_a_mostrar, st.session_state.fuente_datos)
+                fig_resumen_pdf.update_layout(paper_bgcolor="white", plot_bgcolor="white")
                 insertar_imagen_png(pdf, fig_resumen_pdf.to_image(format="png", scale=3))
+                insertar_pie_pdf(pdf, pie_resumen_pdf)
 
             asegurar_espacio(pdf, 100)
             subtitulo_variable(pdf, "Comparacion de R2 por modelo")
-            fig_r2_pdf = fig_barras_r2_comparacion(RES, DATOS, variables_a_mostrar, modelos_a_mostrar)
+            fig_r2_pdf, pie_r2_pdf = fig_barras_r2_comparacion(RES, DATOS, variables_a_mostrar, modelos_a_mostrar)
             # No se fuerza "height": la propia figura calcula su alto segun 1 o 2 filas de
             # subplots (cuadricula 2x2 cuando hay 4 variables), y forzar un alto fijo aqui
             # volvia a aplastar la segunda fila como antes de la Tarea 3.
-            fig_r2_pdf.update_layout(paper_bgcolor="white", plot_bgcolor="white", width=1000)
+            fig_r2_pdf.update_layout(paper_bgcolor="white", plot_bgcolor="white")
             insertar_imagen_png(pdf, fig_r2_pdf.to_image(format="png", scale=3))
+            insertar_pie_pdf(pdf, pie_r2_pdf)
 
             # --- Tasas de crecimiento (AGR y RGR) -- mismas figuras que el expander opcional
             # de la seccion Resultados en la app, del modelo con mejor R2 en cada grupo. ---
@@ -2452,17 +2619,18 @@ elif seccion == "Exportar reporte":
             for variable in variables_a_mostrar:
                 asegurar_espacio(pdf, 100)
                 subtitulo_variable(pdf, NOMBRE_VARIABLE[variable])
-                fig_tasas_pdf, motivo_sin_tasas = fig_tasas_crecimiento(
+                fig_tasas_pdf, pie_tasas_pdf_o_motivo = fig_tasas_crecimiento(
                     DATOS, RES, variable, modelos_a_mostrar, st.session_state.fuente_datos)
                 if fig_tasas_pdf is None:
                     pdf.set_font("Helvetica", "I", 9)
                     pdf.set_text_color(*PDF_MUTED)
-                    pdf.multi_cell(0, 5.5, limpiar_texto(motivo_sin_tasas), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+                    pdf.multi_cell(0, 5.5, limpiar_texto(pie_tasas_pdf_o_motivo), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
                     pdf.set_text_color(*PDF_INK)
                     pdf.ln(3)
                 else:
-                    fig_tasas_pdf.update_layout(paper_bgcolor="white", plot_bgcolor="white", width=1000)
+                    fig_tasas_pdf.update_layout(paper_bgcolor="white", plot_bgcolor="white")
                     insertar_imagen_png(pdf, fig_tasas_pdf.to_image(format="png", scale=3))
+                    insertar_pie_pdf(pdf, pie_tasas_pdf_o_motivo)
 
             # --- Resultados esperados (modelo que mejor describe cada variable + efecto +M vs -M) ---
             pdf.add_page()
