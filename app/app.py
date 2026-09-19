@@ -546,27 +546,103 @@ def texto_interpretativo_efecto(variable, fila):
             f"{abs(inc):.1f}% ({formatear_p(fila['p'])}, {signif}).")
 
 
-def fig_barras_variable(datos, variable):
-    """Barras agrupadas -M vs +M por día: altura de barra = media de réplicas, con barras de error
-    = desviación estándar. Independiente de las curvas de crecimiento ya existentes."""
+def fig_barras_variable(datos, variable, fuente_datos="simulado"):
+    """Barras agrupadas -M vs +M por día: altura de barra = media de réplicas, con barras de
+    error = desviación estándar, patrón de trama por grupo (redundante con el color, para que
+    se distingan también en blanco y negro) y marcas de significancia (ns/*/**/***) sobre cada
+    día -- reutilizando prueba_t_independiente ya existente, sin recalcular nada nuevo.
+    Independiente de las curvas de crecimiento ya existentes."""
+    dias_comunes = sorted(set(datos[variable].get("-M", {})) | set(datos[variable].get("+M", {})))
     fig = go.Figure()
+    n_replicas_vistas = set()
+    y_max_con_error = 0.0
     for grupo in ("-M", "+M"):
         if grupo not in datos[variable]:
             continue
         color = T["CONTROL"] if grupo == "-M" else T["ACCENT"]
-        dias, medias, sds, _ = media_sd_por_dia(datos[variable][grupo])
+        dias, medias, sds, ns = media_sd_por_dia(datos[variable][grupo])
+        n_replicas_vistas.update(int(n) for n in ns)
+        if len(medias):
+            y_max_con_error = max(y_max_con_error, float(np.max(medias + sds)))
         fig.add_trace(go.Bar(
             x=[str(int(d)) for d in dias], y=medias, name=grupo,
-            error_y=dict(type="data", array=sds, visible=True, color=T["INK_MUTED"], thickness=1.3, width=4),
-            marker_color=color,
+            error_y=dict(type="data", array=sds, visible=True, color="#1A1A1A", thickness=1.3, width=5),
+            marker=dict(color=color, line=dict(color="black", width=1),
+                        pattern=dict(shape=PATRON_GRUPO[grupo], fillmode="overlay", fgcolor="#1A1A1A", size=5, solidity=0.3)),
         ))
+
+    # Marcas de significancia sobre cada día con réplicas en ambos grupos: se anota el
+    # resultado de la prueba t de Welch ya implementada (prueba_t_independiente), no se
+    # calcula una prueba nueva ni se decide un umbral distinto al que ya usa la app (p<0.05).
+    if "-M" in datos[variable] and "+M" in datos[variable]:
+        y_rango = y_max_con_error if y_max_con_error > 0 else 1.0
+        for dia in dias_comunes:
+            resultado_t = prueba_t_independiente(datos, variable, dia)
+            if resultado_t is None:
+                continue
+            y_top = max(resultado_t["media_control"] + resultado_t["sd_control"],
+                        resultado_t["media_tratado"] + resultado_t["sd_tratado"])
+            fig.add_annotation(
+                x=str(int(dia)), y=y_top + 0.045 * y_rango, text=texto_significancia(resultado_t["p"]),
+                showarrow=False, yanchor="bottom",
+                font=dict(family=FUENTE_PUBLICACION, size=13, color="#1A1A1A"),
+            )
+
     fig.update_layout(
         barmode="group",
         title=f"{NOMBRE_VARIABLE[variable]} por día — media ± DE",
         xaxis_title="Día después del trasplante (ddt)",
         yaxis_title=f"{NOMBRE_VARIABLE[variable]} ({UNIDADES[variable]})",
     )
-    estilo_publicacion(fig, height=420)
+    if y_max_con_error > 0:
+        fig.update_yaxes(range=[0, y_max_con_error * 1.25])
+    estilo_publicacion(fig, height=440)
+
+    n_reps_txt = "/".join(str(n) for n in sorted(n_replicas_vistas)) if n_replicas_vistas else "?"
+    pie = [
+        f"{NOMBRE_VARIABLE[variable]} ({UNIDADES[variable]}), media ± DE, n = {n_reps_txt} réplicas por día y grupo.",
+        "Significancia (prueba t de Welch, −M vs +M): ns = p ≥ 0.05 · * p < 0.05 · ** p < 0.01 · *** p < 0.001.",
+    ]
+    if fuente_datos == "real":
+        pie.append("Réplicas sintéticas generadas a partir de medias y CV% publicados (Aguirre-Medina et al., 2023).")
+    agregar_pie_figura(fig, pie)
+    return fig
+
+
+def fig_barras_resumen_2x2(datos, variables, fuente_datos="simulado"):
+    """Figura resumen 2x2 con hasta 4 variables, etiquetas (a)-(d), ejes Y independientes por
+    panel (cada variable tiene su propia unidad) y una sola leyenda. Complementa -- no
+    reemplaza -- las figuras individuales por variable."""
+    letras = ["a", "b", "c", "d"]
+    vars_incluidas = variables[:4]
+    cols_n = 2
+    fig = make_subplots(
+        rows=2, cols=cols_n,
+        subplot_titles=[f"({letras[i]}) {NOMBRE_VARIABLE[v]}" for i, v in enumerate(vars_incluidas)],
+        horizontal_spacing=0.18, vertical_spacing=0.18,
+    )
+    for idx, variable in enumerate(vars_incluidas):
+        fila, col = idx // cols_n + 1, idx % cols_n + 1
+        for grupo in ("-M", "+M"):
+            if grupo not in datos[variable]:
+                continue
+            color = T["CONTROL"] if grupo == "-M" else T["ACCENT"]
+            dias, medias, sds, _ = media_sd_por_dia(datos[variable][grupo])
+            fig.add_trace(go.Bar(
+                x=[str(int(d)) for d in dias], y=medias, name=grupo, legendgroup=grupo,
+                showlegend=(idx == 0),
+                error_y=dict(type="data", array=sds, visible=True, color="#1A1A1A", thickness=1.1, width=4),
+                marker=dict(color=color, line=dict(color="black", width=1),
+                            pattern=dict(shape=PATRON_GRUPO[grupo], fillmode="overlay", fgcolor="#1A1A1A", size=4, solidity=0.3)),
+            ), row=fila, col=col)
+        fig.update_xaxes(title_text="Día (ddt)", row=fila, col=col)
+        fig.update_yaxes(title_text=UNIDADES[variable], row=fila, col=col)
+    fig.update_layout(barmode="group")
+    estilo_publicacion(fig, height=680, right_margin=170)
+    pie = ["Media ± DE por día y grupo. Ejes Y independientes por panel (unidad propia de cada variable)."]
+    if fuente_datos == "real":
+        pie.append("Réplicas sintéticas generadas a partir de medias y CV% publicados (Aguirre-Medina et al., 2023).")
+    agregar_pie_figura(fig, pie)
     return fig
 
 
@@ -1408,7 +1484,7 @@ elif seccion == "Gráficas de barras":
     st.write("")
 
     for variable in variables_a_mostrar:
-        fig_var = fig_barras_variable(DATOS, variable)
+        fig_var = fig_barras_variable(DATOS, variable, st.session_state.fuente_datos)
         st.plotly_chart(fig_var, width='stretch')
         st.download_button(
             f"Descargar PNG — {NOMBRE_VARIABLE[variable]}",
@@ -1416,6 +1492,18 @@ elif seccion == "Gráficas de barras":
             file_name=f"barras_{variable}.png", mime="image/png", key=f"png_barras_{variable}",
         )
         st.write("")
+
+    if len(variables_a_mostrar) >= 2:
+        st.markdown('<hr class="rule">', unsafe_allow_html=True)
+        st.markdown("### Resumen (a)–(d)")
+        st.markdown("Las mismas 4 variables en una sola figura, con eje Y propio por panel y una leyenda única.")
+        fig_resumen = fig_barras_resumen_2x2(DATOS, variables_a_mostrar, st.session_state.fuente_datos)
+        st.plotly_chart(fig_resumen, width='stretch')
+        st.download_button(
+            "Descargar PNG — Resumen (a)–(d)",
+            data=fig_resumen.to_image(format="png", scale=3),
+            file_name="barras_resumen.png", mime="image/png", key="png_barras_resumen",
+        )
 
     st.markdown('<hr class="rule">', unsafe_allow_html=True)
     st.markdown("### Comparación de R² por modelo")
@@ -2086,16 +2174,23 @@ elif seccion == "Exportar reporte":
             pdf.add_page()
             titulo_seccion(pdf, "Graficas de barras")
             for variable in variables_a_mostrar:
-                asegurar_espacio(pdf, 90)
+                asegurar_espacio(pdf, 100)
                 subtitulo_variable(pdf, NOMBRE_VARIABLE[variable])
-                fig_barra_pdf = fig_barras_variable(DATOS, variable)
-                fig_barra_pdf.update_layout(paper_bgcolor="white", plot_bgcolor="white", width=900, height=340)
+                fig_barra_pdf = fig_barras_variable(DATOS, variable, st.session_state.fuente_datos)
+                fig_barra_pdf.update_layout(paper_bgcolor="white", plot_bgcolor="white", width=900, height=460)
                 insertar_imagen_png(pdf, fig_barra_pdf.to_image(format="png", scale=3))
 
-            asegurar_espacio(pdf, 90)
+            if len(variables_a_mostrar) >= 2:
+                asegurar_espacio(pdf, 110)
+                subtitulo_variable(pdf, "Resumen (a)-(d)")
+                fig_resumen_pdf = fig_barras_resumen_2x2(DATOS, variables_a_mostrar, st.session_state.fuente_datos)
+                fig_resumen_pdf.update_layout(paper_bgcolor="white", plot_bgcolor="white", width=1000, height=720)
+                insertar_imagen_png(pdf, fig_resumen_pdf.to_image(format="png", scale=3))
+
+            asegurar_espacio(pdf, 100)
             subtitulo_variable(pdf, "Comparacion de R2 por modelo")
             fig_r2_pdf = fig_barras_r2_comparacion(RES, DATOS, variables_a_mostrar, modelos_a_mostrar)
-            fig_r2_pdf.update_layout(paper_bgcolor="white", plot_bgcolor="white", width=1000, height=340)
+            fig_r2_pdf.update_layout(paper_bgcolor="white", plot_bgcolor="white", width=1000, height=480)
             insertar_imagen_png(pdf, fig_r2_pdf.to_image(format="png", scale=3))
 
             # --- Resultados esperados (modelo que mejor describe cada variable + efecto +M vs -M) ---
