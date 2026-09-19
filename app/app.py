@@ -2353,7 +2353,7 @@ elif seccion == "Exportar reporte":
     def limpiar_texto(s):
         reemplazos = {
             "−": "-", "·": "-", "→": "->", "²": "2", "±": "+/-", "–": "-", "—": "-",
-            "‘": "'", "’": "'", "“": '"', "”": '"',
+            "‘": "'", "’": "'", "“": '"', "”": '"', "≥": ">=", "≤": "<=",
         }
         for a, b in reemplazos.items():
             s = s.replace(a, b)
