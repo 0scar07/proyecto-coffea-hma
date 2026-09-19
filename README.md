@@ -203,10 +203,11 @@ proyecto-coffea-hma/
 │   └── datos_reales_coffea_2023.xlsx   # datos del Cuadro 2 de Aguirre-Medina et al. (2023)
 ├── scripts/
 │   └── validacion_cruzada_real.py      # validación cruzada (hold-out) sobre los datos reales
-└── docs/
-    ├── screenshots/             # capturas de la app usadas en este README
-    ├── figuras/                 # gráficas individuales exportadas en PNG
-    └── reportes/                # PDF de ejemplo generado por la app
+├── docs/
+│   ├── screenshots/             # capturas de la app usadas en este README
+│   ├── figuras/                 # gráficas individuales exportadas en PNG
+│   └── reportes/                # PDF de ejemplo generado por la app
+└── entregables/                 # borradores y plantillas de gestión/difusión (ver entregables/README.md)
 ```
 
 ## Cómo usarla
