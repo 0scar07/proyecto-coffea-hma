@@ -820,6 +820,86 @@ def fig_curvas_publicacion(datos, RES, variable, modelos, fuente_datos="simulado
     return fig
 
 
+def calcular_agr_rgr(modelo, params, t):
+    """AGR (dP/dt) y RGR ((1/P)·dP/dt), calculados analíticamente a partir de las derivadas
+    cerradas de cada modelo y de los parámetros que YA ajustó curve_fit -- no se reajusta ni
+    se modifica el ajuste, solo se evalúan formulas conocidas en esos parámetros:
+      Exponencial P=P0·e^(rt)      -> dP/dt = r·P            -> RGR = r (constante)
+      Logístico  P=K/(1+e^-k(t-Ti)) -> dP/dt = k·P·(1-P/K)   -> RGR = k·(1-P/K)
+      Gompertz   P=K·e^(-e^-k(t-Ti)) -> dP/dt = k·P·ln(K/P)  -> RGR = k·ln(K/P)
+    """
+    if modelo == "Exponencial":
+        P0, r = params
+        P = P0 * np.exp(r * t)
+        rgr = np.full_like(t, r, dtype=float)
+        agr = r * P
+    elif modelo == "Logístico":
+        K, k, Ti = params
+        P = K / (1 + np.exp(-k * (t - Ti)))
+        rgr = k * (1 - P / K)
+        agr = P * rgr
+    elif modelo == "Gompertz":
+        K, k, Ti = params
+        P = K * np.exp(-np.exp(-k * (t - Ti)))
+        with np.errstate(divide="ignore", invalid="ignore"):
+            rgr = k * np.log(K / P)
+        agr = P * rgr
+    else:
+        raise ValueError(f"Modelo desconocido: {modelo}")
+    return agr, rgr
+
+
+def fig_tasas_crecimiento(datos, RES, variable, modelos, fuente_datos="simulado"):
+    """AGR y RGR (Tarea 5, opcional) del modelo con MEJOR R² en cada grupo -- reutiliza
+    calcular_tabla_modelo para decidir cuál es el mejor, sin duplicar ese criterio. Devuelve
+    (fig, None) o (None, motivo) si ningún grupo tiene un modelo convergido."""
+    grupos = [g for g in ("-M", "+M") if g in datos[variable]]
+    _, mejores = calcular_tabla_modelo(RES, datos, variable, modelos)
+    grupos_validos = [g for g in grupos if mejores.get(g)]
+    if not grupos_validos:
+        return None, "Ningún modelo convergió en ningún grupo: no hay tasas de crecimiento que calcular."
+
+    dias_todos = sorted(set().union(*[set(datos[variable][g].keys()) for g in grupos]))
+    t_fino = np.linspace(dias_todos[0], dias_todos[-1], 300)
+    etiqueta_agr = {"-M": "(c) AGR −M", "+M": "(d) AGR +M"}
+    etiqueta_rgr = {"-M": "(e) RGR −M", "+M": "(f) RGR +M"}
+    titulos = [etiqueta_agr[g] for g in grupos_validos] + [etiqueta_rgr[g] for g in grupos_validos]
+    fig = make_subplots(rows=2, cols=len(grupos_validos), subplot_titles=titulos,
+                         horizontal_spacing=0.09, vertical_spacing=0.2, shared_xaxes=True)
+
+    for col, grupo in enumerate(grupos_validos, start=1):
+        modelo = mejores[grupo]
+        estilo = MODELO_ESTILO[modelo]
+        res = RES[variable][grupo][modelo]
+        agr, rgr = calcular_agr_rgr(modelo, res["params"], t_fino)
+        fig.add_trace(go.Scatter(x=t_fino, y=agr, mode="lines", name=f"{grupo}: {modelo} (mejor R²)",
+                                  legendgroup=f"{grupo}-{modelo}", showlegend=True,
+                                  line=dict(color=estilo["color"], dash=estilo["dash"], width=2.2)),
+                      row=1, col=col)
+        fig.add_trace(go.Scatter(x=t_fino, y=rgr, mode="lines", showlegend=False,
+                                  legendgroup=f"{grupo}-{modelo}",
+                                  line=dict(color=estilo["color"], dash=estilo["dash"], width=2.2)),
+                      row=2, col=col)
+        if col == 1:
+            fig.update_yaxes(title_text=f"AGR ({UNIDADES[variable]}/día)", row=1, col=col)
+            fig.update_yaxes(title_text="RGR (día⁻¹)", row=2, col=col)
+        fig.update_xaxes(title_text="Día después del trasplante (ddt)", row=2, col=col)
+
+    estilo_publicacion(fig, height=560, right_margin=230)
+    pie = [
+        "Tasas calculadas analíticamente a partir de los parámetros ya ajustados del modelo con "
+        "mejor R² en cada grupo (sin reajustar).",
+        "AGR = dP/dt; RGR = (1/P)·dP/dt.",
+    ]
+    if len(grupos_validos) < len(grupos):
+        pie.append(f"Sin tasas para {', '.join(g for g in grupos if g not in grupos_validos)}: "
+                   "ningún modelo convergió en ese grupo.")
+    if fuente_datos == "real":
+        pie.append("Réplicas sintéticas generadas a partir de medias y CV% publicados (Aguirre-Medina et al., 2023).")
+    agregar_pie_figura(fig, pie)
+    return fig, None
+
+
 def calcular_banda_confianza(func, popt, pcov, t_eval, n_muestras=400, semilla_mc=7):
     if popt is None or pcov is None or np.any(np.isnan(pcov)):
         return None, None
@@ -1518,6 +1598,23 @@ elif seccion == "Resultados":
             data=fig.to_image(format="png", scale=3),
             file_name=f"curvas_{variable}.png", mime="image/png", key=f"png_curvas_{variable}",
         )
+
+        with st.expander(f"Tasas de crecimiento (AGR/RGR) — {NOMBRE_VARIABLE[variable]}"):
+            st.caption(
+                "Opcional: AGR (dP/dt) y RGR ((1/P)·dP/dt) del modelo con mejor R² en cada grupo, "
+                "calculadas analíticamente a partir de los parámetros ya ajustados (sin reajustar)."
+            )
+            fig_tasas, motivo_sin_tasas = fig_tasas_crecimiento(
+                DATOS, RES, variable, modelos_a_mostrar, st.session_state.fuente_datos)
+            if fig_tasas is None:
+                st.info(motivo_sin_tasas)
+            else:
+                st.plotly_chart(fig_tasas, width='stretch')
+                st.download_button(
+                    f"Descargar PNG — Tasas {NOMBRE_VARIABLE[variable]}",
+                    data=fig_tasas.to_image(format="png", scale=3),
+                    file_name=f"tasas_{variable}.png", mime="image/png", key=f"png_tasas_{variable}",
+                )
 
         filas = []
         for grupo in DATOS[variable]:
