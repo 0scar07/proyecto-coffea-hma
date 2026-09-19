@@ -48,9 +48,30 @@ badges de bondad de ajuste (R²) por grupo y modelo
 del paper, la app ajusta curvas completas para −M y +M en cada variable
 (cuando un dataset tiene menos días de los que un modelo necesita, la app
 avisa de inmediato y muestra una comparación directa en vez de forzar un
-ajuste sin sentido)
+ajuste sin sentido). Las curvas muestran círculos de réplicas individuales,
+banda de confianza del 95% y asíntota K solo cuando es estadísticamente
+plausible (R² ≥ 0.90, K acotada y punto de inflexión dentro de los días
+observados)
 
 ![Resultados con datos reales](docs/screenshots/resultados_datos_reales.png)
+
+**Gráficas de barras** — barras agrupadas −M vs +M por variable y día, con
+patrón de trama además de color, marcas de significancia (prueba t de
+Welch) y una comparación de R² por modelo en cuadrícula 2×2
+
+![Gráficas de barras](docs/screenshots/barras.png)
+
+**Resultados esperados** — tabla del modelo con mejor ajuste por variable y
+grupo, y el efecto de la inoculación (+M vs −M) con prueba t, generadas
+automáticamente a partir de los datos cargados
+
+![Resultados esperados](docs/screenshots/resultados_esperados.png)
+
+**Tasas de crecimiento (AGR/RGR)** — opcional, dentro de Resultados: tasa
+de crecimiento absoluta y relativa del modelo con mejor R² en cada grupo,
+calculadas analíticamente a partir de los parámetros ya ajustados
+
+![Tasas de crecimiento](docs/screenshots/tasas.png)
 
 ## Qué resuelve
 
@@ -126,7 +147,8 @@ proyecto-coffea-hma/
 │   ├── datos_reales_coffea_2023.xlsx
 │   └── validacion_cruzada_real.py   # script de validación cruzada sobre los datos reales
 └── docs/
-    └── screenshots/             # capturas usadas en este README
+    └── screenshots/             # capturas de la app usadas en este README
+        └── figuras/             # gráficas individuales exportadas (PNG) y un PDF de ejemplo
 ```
 
 ## Desplegar en Streamlit Cloud
