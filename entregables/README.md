@@ -21,6 +21,8 @@ La lista de productos y sus indicadores/beneficiarios provienen de la tabla de R
 
 La guía técnica del producto 9 ahora también existe en PDF: [`06_guia_tecnica/guia_tecnica_usuario.pdf`](06_guia_tecnica/guia_tecnica_usuario.pdf).
 
+El código documentado del producto 4 ahora también existe como página HTML navegable: [`docs/documentacion/index.html`](../docs/documentacion/index.html).
+
 ## Notas transversales a todos los documentos
 
 - Todas las cifras de resultados (R², RMSE, MAE, medias, incrementos %, valores t y p) se recalcularon directamente sobre `datos_reales/datos_reales_coffea_2023.xlsx` con las funciones reales de `app/app.py` el 2026-09-19 — no se copiaron de memoria ni se estimaron.
