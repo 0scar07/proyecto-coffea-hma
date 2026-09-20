@@ -206,9 +206,12 @@ proyecto-coffea-hma/
 ├── docs/
 │   ├── screenshots/             # capturas de la app usadas en este README
 │   ├── figuras/                 # gráficas individuales exportadas en PNG
-│   └── reportes/                # PDF de ejemplo generado por la app
+│   ├── reportes/                # PDF de ejemplo generado por la app
+│   └── documentacion/           # documentación técnica del código (ver enlace más abajo)
 └── entregables/                 # borradores y plantillas de gestión/difusión (ver entregables/README.md)
 ```
+
+Documentación técnica del código, navegable en el navegador: [docs/documentacion/index.html](docs/documentacion/index.html).
 
 ## Cómo usarla
 
