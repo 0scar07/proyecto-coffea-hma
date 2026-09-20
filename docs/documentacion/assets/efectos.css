@@ -1,0 +1,143 @@
+/* Documentacion tecnica de Coffea IA -- EFECTOS (etapa c).
+   Se carga DESPUES de styles.css y solo agrega transiciones/animaciones sobre el
+   mismo HTML y las mismas clases; si este archivo no carga (o se quita el <link>),
+   la pagina generada por la etapa (b) -- styles.css + app.js -- sigue funcionando
+   completa, solo que sin movimiento: todo aparece ya asentado en su estado final.
+
+   Reglas tecnicas seguidas: solo se anima transform y opacity (salvo casos puntuales
+   de color/stroke ya declarados aqui, nunca layout/width/height de golpe); duraciones
+   200-600ms con curvas definidas como variables CSS; sin librerias externas. */
+
+:root {
+  --ease-standard: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in: cubic-bezier(0.4, 0, 1, 1);
+  --ease-out: cubic-bezier(0, 0, 0.2, 1);
+  --dur-fast: 200ms; --dur-base: 320ms; --dur-slow: 500ms; --dur-slower: 600ms;
+}
+@media (prefers-reduced-motion: reduce) {
+  :root { --dur-fast: 1ms; --dur-base: 1ms; --dur-slow: 1ms; --dur-slower: 1ms; }
+}
+:root[data-motion="reduced"] { --dur-fast: 1ms; --dur-base: 1ms; --dur-slow: 1ms; --dur-slower: 1ms; }
+
+/* Transiciones de color al cambiar de tema */
+body { transition: background-color var(--dur-base) var(--ease-standard), color var(--dur-base) var(--ease-standard); }
+.barra-lateral { transition: transform var(--dur-base) var(--ease-standard), background-color var(--dur-base); }
+.fondo-oscurecido { transition: opacity var(--dur-base) var(--ease-standard); }
+.boton-icono { transition: background-color var(--dur-fast) var(--ease-standard), transform var(--dur-fast) var(--ease-standard); }
+.boton-icono:active { transform: scale(0.94); }
+.barra-progreso .relleno { transition: width var(--dur-fast) var(--ease-out); }
+
+/* Indicador "apartado X de N": aparece brevemente al desplazar, se desvanece solo */
+.indicador-apartado { opacity: 0; transition: opacity var(--dur-base) var(--ease-standard); }
+.mostrar-indicador .indicador-apartado { opacity: 1; }
+
+/* 3. Indicador deslizante en el menu lateral */
+.indicador-activo-nav { transition: transform var(--dur-base) var(--ease-standard), height var(--dur-fast); }
+.enlace-nav { transition: color var(--dur-fast) var(--ease-standard); }
+
+/* 2. Subrayado del titulo: se dibuja de izquierda a derecha al activarse el apartado */
+.apartado h1::after { transform: scaleX(0); transform-origin: left; will-change: transform; }
+.js .apartado.activo h1::after {
+  animation: dibujar-subrayado var(--dur-slower) var(--ease-standard) forwards;
+}
+@keyframes dibujar-subrayado { to { transform: scaleX(1); } }
+
+/* Entrada escalonada: parrafos, tarjetas, tablas y bloques de codigo en cascada */
+.js .apartado.activo > * {
+  opacity: 0; transform: translateY(10px);
+  animation: entrada-cascada var(--dur-base) var(--ease-out) forwards;
+}
+.js .apartado.activo > *:nth-child(1) { animation-delay: 60ms; }
+.js .apartado.activo > *:nth-child(2) { animation-delay: 120ms; }
+.js .apartado.activo > *:nth-child(3) { animation-delay: 180ms; }
+.js .apartado.activo > *:nth-child(4) { animation-delay: 240ms; }
+.js .apartado.activo > *:nth-child(5) { animation-delay: 300ms; }
+.js .apartado.activo > *:nth-child(n+6) { animation-delay: 360ms; }
+@keyframes entrada-cascada { to { opacity: 1; transform: translateY(0); } }
+
+/* Filas de tabla en cascada */
+.js table.entrando tbody tr {
+  opacity: 0; transform: translateY(6px);
+  animation: entrada-fila var(--dur-fast) var(--ease-out) forwards;
+}
+@keyframes entrada-fila { to { opacity: 1; transform: translateY(0); } }
+
+/* 1. Transicion entre apartados (respaldo sin View Transitions API) */
+.apartado.saliendo-adelante { animation: salir-izq var(--dur-base) var(--ease-in) forwards; }
+.apartado.saliendo-atras { animation: salir-der var(--dur-base) var(--ease-in) forwards; }
+.apartado.entrando-adelante { animation: entrar-der var(--dur-base) var(--ease-out) forwards; }
+.apartado.entrando-atras { animation: entrar-izq var(--dur-base) var(--ease-out) forwards; }
+@keyframes salir-izq { to { opacity: 0; transform: translateX(-16px); } }
+@keyframes salir-der { to { opacity: 0; transform: translateX(16px); } }
+@keyframes entrar-der { from { opacity: 0; transform: translateX(16px); } to { opacity: 1; transform: translateX(0); } }
+@keyframes entrar-izq { from { opacity: 0; transform: translateX(-16px); } to { opacity: 1; transform: translateX(0); } }
+::view-transition-old(apartado), ::view-transition-new(apartado) { animation-duration: var(--dur-base); }
+
+/* 9. Tarjetas con elevacion y ligera inclinacion (solo con cursor) */
+.tarjeta {
+  transition: transform var(--dur-fast) var(--ease-standard), box-shadow var(--dur-fast) var(--ease-standard),
+    background-color var(--dur-base), border-color var(--dur-base);
+}
+@media (hover: hover) and (pointer: fine) {
+  .tarjeta:hover { transform: translateY(-3px) rotate(-0.15deg); box-shadow: var(--shadow-md); }
+}
+
+/* 7. Bloques de codigo: resaltado de linea al pasar el cursor, boton copiar animado */
+.bloque-codigo .linea { transition: background-color var(--dur-fast); }
+.boton-copiar { transition: background-color var(--dur-fast), color var(--dur-fast); }
+
+/* 8. Pestañas: linea inferior deslizante, cruce entre paneles */
+.indicador-tab { transition: transform var(--dur-base) var(--ease-standard), width var(--dur-base) var(--ease-standard); }
+.panel-tab.activo { animation: cruce-tab var(--dur-fast) var(--ease-out); }
+@keyframes cruce-tab { from { opacity: 0; } to { opacity: 1; } }
+
+/* 8. Plegables: flecha rotatoria y aparicion suave del contenido */
+.plegable summary .flecha { transition: transform var(--dur-fast) var(--ease-standard); }
+.plegable .contenido-plegable { animation: abrir-plegable var(--dur-fast) var(--ease-out); }
+@keyframes abrir-plegable { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
+
+/* 6. Formulas: revelado suave la primera vez que aparecen */
+.formula-caja { opacity: 0; transform: scale(0.98); }
+.js .apartado.activo .formula-caja { animation: revelar-formula var(--dur-base) var(--ease-out) forwards; animation-delay: 150ms; }
+.no-js .formula-caja, .imprimir .formula-caja { opacity: 1; transform: none; }
+@keyframes revelar-formula { to { opacity: 1; transform: scale(1); } }
+
+/* 5. Diagrama: las flechas se dibujan siguiendo el flujo; resaltado con transicion */
+.diagrama-svg .caja-nodo {
+  transition: fill var(--dur-fast) var(--ease-standard), stroke var(--dur-fast) var(--ease-standard), opacity var(--dur-fast);
+}
+.diagrama-svg .grupo-nodo { transition: opacity var(--dur-fast) var(--ease-standard); }
+.diagrama-svg .flecha-flujo { stroke-dasharray: 400; stroke-dashoffset: 400; }
+.js .diagrama-svg.dibujado .flecha-flujo { animation: dibujar-flecha var(--dur-slower) var(--ease-standard) forwards; }
+.no-js .diagrama-svg .flecha-flujo, .imprimir .diagrama-svg .flecha-flujo { stroke-dashoffset: 0; }
+@keyframes dibujar-flecha { to { stroke-dashoffset: 0; } }
+
+/* Resaltado temporal de una entrada de funcion (al hacer clic en el diagrama) */
+.funcion-entrada { transition: border-color var(--dur-base), box-shadow var(--dur-base); }
+
+/* Botones: leve elevacion al pasar el cursor */
+.boton { transition: transform var(--dur-fast) var(--ease-standard), box-shadow var(--dur-fast); }
+.boton:hover { transform: translateY(-1px); }
+
+.nav-apartado a { transition: background-color var(--dur-fast); }
+.saltar-enlace { transition: top var(--dur-fast) var(--ease-standard); }
+
+/* 10. Reduce motion: sin traslados/dibujados, solo desvanecidos breves o cambios instantaneos */
+@media (prefers-reduced-motion: reduce) {
+  .apartado h1::after { transition: none; animation: none !important; transform: scaleX(1); }
+  .js .apartado.activo > * { animation: desvanecer-simple var(--dur-fast) linear forwards; transform: none; }
+  .diagrama-svg .flecha-flujo { stroke-dashoffset: 0 !important; animation: none !important; }
+  .apartado.saliendo-adelante, .apartado.saliendo-atras, .apartado.entrando-adelante, .apartado.entrando-atras {
+    animation: desvanecer-simple var(--dur-fast) linear forwards;
+  }
+  .tarjeta:hover { transform: none; }
+}
+@keyframes desvanecer-simple { from { opacity: 0; } to { opacity: 1; } }
+:root[data-motion="reduced"] .apartado h1::after { animation: none !important; transform: scaleX(1); }
+:root[data-motion="reduced"] .js .apartado.activo > * { animation: desvanecer-simple var(--dur-fast) linear forwards !important; transform: none !important; }
+:root[data-motion="reduced"] .diagrama-svg .flecha-flujo { stroke-dashoffset: 0 !important; animation: none !important; }
+:root[data-motion="reduced"] .tarjeta:hover { transform: none !important; }
+
+@media print {
+  .apartado, .apartado h1::after { animation: none !important; }
+}
