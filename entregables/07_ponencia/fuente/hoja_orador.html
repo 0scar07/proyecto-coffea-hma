@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Hoja del orador — Coffea IA</title>
+<style>
+  @page { size: A4 portrait; margin: 14mm; }
+  * { box-sizing: border-box; }
+  body {
+    font-family: Calibri, "Segoe UI", sans-serif;
+    color: #201C18;
+    margin: 0;
+    font-size: 12.5pt;
+  }
+  h1 {
+    font-family: Georgia, serif;
+    color: #A8432B;
+    font-size: 20pt;
+    margin: 0 0 2mm 0;
+  }
+  .sub { color: #6B6359; font-size: 10pt; margin-bottom: 6mm; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8mm; }
+  table { width: 100%; border-collapse: collapse; font-size: 10.3pt; }
+  th, td { text-align: left; padding: 1.6mm 2mm; border-bottom: 1px solid #E4DFD6; }
+  th { color: #A8432B; font-size: 9.5pt; text-transform: uppercase; letter-spacing: .03em; }
+  td.t { color: #A8432B; font-weight: bold; white-space: nowrap; }
+  .total { margin-top: 2mm; font-weight: bold; color: #201C18; font-size: 10.5pt; }
+  h2 {
+    font-family: Georgia, serif;
+    font-size: 13pt;
+    color: #201C18;
+    border-bottom: 2px solid #A8432B;
+    padding-bottom: 1mm;
+    margin: 0 0 3mm 0;
+  }
+  .cifras { display: flex; flex-direction: column; gap: 3mm; margin-bottom: 6mm; }
+  .cifra { background: #F1ECE3; border: 1px solid #E4DFD6; border-radius: 3mm; padding: 3mm 4mm; }
+  .cifra .num { font-family: Georgia, serif; font-weight: bold; color: #A8432B; font-size: 15pt; }
+  .cifra .lbl { font-size: 9.5pt; color: #201C18; }
+  .frases { list-style: none; margin: 0; padding: 0; }
+  .frases li {
+    background: #A8432B; color: #F1ECE3; border-radius: 3mm; padding: 3mm 4mm;
+    margin-bottom: 3mm; font-size: 11pt; line-height: 1.35;
+  }
+  footer { margin-top: 6mm; font-size: 8.5pt; color: #8A8277; }
+</style>
+</head>
+<body>
+  <h1>Hoja del orador — Coffea IA</h1>
+  <div class="sub">Borrador para revisión del docente · Ponencia de 11 minutos (14 diapositivas principales + 4 de respaldo)</div>
+
+  <div class="grid">
+    <div>
+      <h2>Tiempo por diapositiva</h2>
+      <table>
+        <tr><th>#</th><th>Título</th><th>Tiempo</th></tr>
+        <tr><td>1</td><td>Portada</td><td class="t">30 s</td></tr>
+        <tr><td>2</td><td>El problema</td><td class="t">40 s</td></tr>
+        <tr><td>3</td><td>Objetivo y resultados esperados</td><td class="t">40 s</td></tr>
+        <tr><td>4</td><td>Los datos</td><td class="t">50 s</td></tr>
+        <tr><td>5</td><td>Métodos</td><td class="t">55 s</td></tr>
+        <tr><td>6</td><td>La app</td><td class="t">45 s</td></tr>
+        <tr><td>7</td><td>Resultado 1: bondad de ajuste</td><td class="t">55 s</td></tr>
+        <tr><td>8</td><td>Curvas de crecimiento</td><td class="t">50 s</td></tr>
+        <tr><td>9</td><td>Resultado 2: efecto inoculación</td><td class="t">60 s</td></tr>
+        <tr><td>10</td><td>Hallazgo: K no plausible</td><td class="t">55 s</td></tr>
+        <tr><td>11</td><td>Validación</td><td class="t">45 s</td></tr>
+        <tr><td>12</td><td>Limitaciones honestas</td><td class="t">50 s</td></tr>
+        <tr><td>13</td><td>Entregables y estado real</td><td class="t">40 s</td></tr>
+        <tr><td>14</td><td>Cierre</td><td class="t">45 s</td></tr>
+      </table>
+      <div class="total">Total: 660 s = 11:00 min</div>
+    </div>
+
+    <div>
+      <h2>Cifras clave (verificadas contra la app)</h2>
+      <div class="cifras">
+        <div class="cifra"><div class="num">0.876 – 0.997</div><div class="lbl">Rango de R² en los modelos que convergen</div></div>
+        <div class="cifra"><div class="num">790 679.8 cm vs 15.0 cm</div><div class="lbl">K estimada (Logístico, Altura, −M) vs máximo observado — ejemplo de K no plausible</div></div>
+        <div class="cifra"><div class="num">+97.1%</div><div class="lbl">Incremento de área foliar +M vs −M a 112 ddt (p&lt;0.0001)</div></div>
+        <div class="cifra"><div class="num">+71.7%</div><div class="lbl">Incremento de biomasa total +M vs −M a 112 ddt (p&lt;0.0001)</div></div>
+      </div>
+
+      <h2>3 frases que no pueden olvidarse</h2>
+      <ul class="frases">
+        <li>Esto es un reanálisis metodológico con réplicas sintéticas, no un experimento de campo nuevo.</li>
+        <li>Si no hay días suficientes o el ajuste no converge, la app nunca fuerza un resultado.</li>
+        <li>La validación externa está en curso; no presentamos resultados que todavía no existen.</li>
+      </ul>
+    </div>
+  </div>
+
+  <footer>Coffea IA · entregables/07_ponencia/ · generado desde ponencia_coffea_ia.pptx — no reemplaza las notas del orador de cada diapositiva.</footer>
+</body>
+</html>

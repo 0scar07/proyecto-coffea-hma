@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Artículo divulgativo — Coffea IA</title>
+<style>
+  :root{
+    --crema:#F1ECE3; --blanco:#FFFFFF; --tinta:#201C18;
+    --terracota:#A8432B; --borde:#E4DFD6; --gris:#6B6359;
+  }
+  @page { size: A4; margin: 16mm 15mm; }
+  * { box-sizing: border-box; }
+  html, body { margin:0; padding:0; }
+  body{
+    font-family: "Segoe UI", Calibri, sans-serif;
+    color: var(--tinta);
+    font-size: 10.3pt;
+    line-height: 1.42;
+  }
+  .pagina{
+    page-break-after: always;
+  }
+  .pagina:last-child{ page-break-after: auto; }
+
+  .marca-borrador{
+    font-size: 8pt; letter-spacing:.06em; text-transform:uppercase;
+    color: var(--gris); font-weight:600; margin-bottom: 3mm;
+  }
+  h1{
+    font-family: Georgia, serif; font-size: 21pt; color: var(--terracota);
+    margin: 0 0 3mm 0; line-height:1.18;
+  }
+  .bajada{ font-size: 11.5pt; color: var(--tinta); margin-bottom: 3mm; line-height:1.4; }
+  .firma{ font-size: 9pt; color: var(--gris); margin-bottom: 6mm; border-bottom: 1.5px solid var(--borde); padding-bottom: 4mm; }
+  .firma b{ color: var(--tinta); }
+
+  h2{
+    font-family: Georgia, serif; font-size: 12.5pt; color: var(--tinta);
+    margin: 0 0 2mm 0; break-after: avoid;
+  }
+  p{ margin: 0 0 2.8mm 0; text-align: justify; }
+
+  .columnas{ display:flex; gap: 8mm; align-items:flex-start; }
+  .col{ flex: 1 1 0; min-width:0; }
+  .bloque{ break-inside: avoid; margin-bottom: 3mm; }
+
+  .cita{
+    background: var(--crema); border-left: 4px solid var(--terracota);
+    padding: 3mm 4mm; margin: 0 0 3mm 0; font-family: Georgia, serif;
+    font-style: italic; font-size: 11pt; line-height: 1.4; color: var(--tinta);
+    break-inside: avoid;
+  }
+
+  .datos-clave{
+    background: var(--crema); border:1px solid var(--borde); border-radius: 8px;
+    padding: 3mm 4mm; break-inside: avoid; margin-bottom: 3mm;
+  }
+  .datos-clave h2{ color: var(--terracota); font-size: 11.5pt; }
+  .datos-clave ul{ margin: 0; padding-left: 4mm; }
+  .datos-clave li{ margin-bottom: 1.5mm; font-size: 9.5pt; }
+  .datos-clave b{ color: var(--terracota); }
+
+  figure{
+    margin: 0 0 3mm 0; break-inside: avoid;
+    background: var(--crema); border:1px solid var(--borde); border-radius: 8px; padding: 2.5mm;
+  }
+  figure img{ width:100%; display:block; border-radius:4px; }
+  figcaption{ font-size: 8.5pt; color: var(--gris); margin-top: 2mm; line-height:1.35; }
+  figcaption b{ color: var(--terracota); }
+
+  .saber-mas{
+    break-inside: avoid; font-size: 9pt; background: var(--crema); border:1px solid var(--borde);
+    border-radius: 8px; padding: 3mm 4mm; margin-top: 2mm;
+  }
+  .saber-mas h2{ font-size: 11pt; }
+  .saber-mas p{ margin-bottom: 1.5mm; }
+</style>
+</head>
+<body>
+
+<div class="pagina">
+  <div class="marca-borrador">Borrador para revisión del docente</div>
+  <h1>¿Puede una fórmula matemática ayudarnos a entender el efecto de la micorriza en el café?</h1>
+  <div class="bajada">Ajustamos tres modelos matemáticos de crecimiento a datos publicados de <i>Coffea arabica</i> para comparar, con más rigor que un promedio, el efecto de los hongos micorrízicos arbusculares.</div>
+  <div class="firma"><b>Richard Montez · Diego Barrios · Santiago Uribe · Oscar Llanos</b> — Programa de Ingeniería, Universidad Simón Bolívar [facultad/departamento por definir]</div>
+
+  <div class="columnas">
+    <div class="col">
+      <div class="bloque">
+        <h2>La idea en una frase</h2>
+        <p>Le enseñamos a un programa a «dibujar» tres formas distintas de crecimiento de la planta de café, y luego usamos esas curvas para comparar plántulas con y sin hongos micorrízicos arbusculares (HMA) de forma más rigurosa que solo mirar una tabla de promedios.</p>
+      </div>
+
+      <div class="bloque">
+        <h2>¿Por qué modelar el crecimiento con curvas?</h2>
+        <p>Cuando se mide la altura o el área foliar de una plántula varias veces en el tiempo, los números por sí solos no dicen mucho sobre la <i>forma</i> en que la planta está creciendo. Existen fórmulas matemáticas clásicas — modelos de crecimiento — que describen distintos patrones: uno que no se detiene (Exponencial) y otros que se aceleran y luego se estabilizan (Logístico y Gompertz). Ajustar estas fórmulas a los datos reales permite comparar de forma más objetiva qué tanto un tratamiento cambia el patrón de crecimiento.</p>
+      </div>
+    </div>
+
+    <div class="col">
+      <div class="cita">
+        «Los resultados de significancia estadística que se presentan a continuación ilustran cómo funciona la metodología, y no deben leerse como una nueva evidencia experimental independiente del artículo original.»
+      </div>
+
+      <div class="bloque">
+        <h2>Lo que se hizo</h2>
+        <p>Construimos una herramienta computacional — la app Coffea IA — que toma datos de crecimiento de <i>Coffea arabica</i>: altura, área foliar, biomasa total y número de hojas, medidos a los 28, 56, 84 y 112 días después del trasplante. La app ajusta automáticamente los tres modelos a cada variable, para el grupo control sin inocular (−M) y el grupo inoculado con HMA (+M). Los datos base provienen del trabajo publicado por Aguirre-Medina et al. (2023) en la <i>Revista Fitotecnia Mexicana</i>.</p>
+      </div>
+
+      <figure>
+        <img src="assets/curvas_area_foliar.png" alt="Curvas de area foliar ajustadas para -M y +M, con replicas observadas y banda de confianza">
+        <figcaption><b>Figura 1.</b> Curvas de área foliar ajustadas para ambos grupos. Los círculos son réplicas individuales; las líneas, los modelos que lograron converger. La ventana de muestreo (28-112 ddt) todavía no muestra el aplanamiento típico de un modelo sigmoide.</figcaption>
+      </figure>
+    </div>
+  </div>
+</div>
+
+<div class="pagina">
+  <div class="columnas">
+    <div class="col">
+      <div class="bloque">
+        <h2>Una aclaración importante</h2>
+        <p>El artículo original de Aguirre-Medina et al. reporta promedios y variabilidad por tratamiento y día, no mediciones planta por planta. Por eso la herramienta genera réplicas individuales <b>sintéticas</b> que reproducen esos promedios, para poder hacer las comparaciones estadísticas. Los resultados de significancia que siguen ilustran cómo funciona la metodología, y no deben leerse como una nueva evidencia experimental independiente del artículo original.</p>
+      </div>
+
+      <div class="bloque">
+        <h2>Lo que se encontró</h2>
+        <p>Con los cuatro momentos de muestreo disponibles, el ajuste de los modelos fue razonablemente bueno (R² entre 0.876 y 0.997 en los modelos que convergen), aunque Gompertz no logró ajustarse en algunos casos — esperable cuando solo se cuenta con 4 puntos de datos por grupo para un modelo de 3 parámetros.</p>
+        <p>Al comparar los grupos con y sin micorriza: el <b>área foliar</b> mostró el efecto más consistente, con diferencias estadísticamente significativas en los cuatro momentos de muestreo (hasta +97.1% a los 112 días); la <b>biomasa total</b> también mostró un efecto significativo en 3 de los 4 momentos, con incrementos de hasta 71.7% a los 112 días; la <b>altura</b> y el <b>número de hojas</b> mostraron diferencias en su mayoría no significativas con estos datos.</p>
+      </div>
+
+      <figure>
+        <img src="assets/barras_r2_modelos.png" alt="R2 de Exponencial, Logistico y Gompertz por variable y grupo">
+        <figcaption><b>Figura 2.</b> Bondad de ajuste (R²) de los tres modelos en las cuatro variables y los dos grupos. Las barras vacías marcadas "No convergió" son ajustes de Gompertz que no encontraron solución con los 4 puntos disponibles por grupo.</figcaption>
+      </figure>
+    </div>
+
+    <div class="col">
+      <div class="datos-clave">
+        <h2>Datos clave</h2>
+        <ul>
+          <li><b>R²:</b> 0.876 – 0.997 en los modelos que convergen</li>
+          <li><b>Área foliar</b> +M vs −M (112 ddt): <b>+97.1%</b> (p&lt;0.0001)</li>
+          <li><b>Biomasa total</b> +M vs −M (112 ddt): <b>+71.7%</b> (p&lt;0.0001)</li>
+          <li><b>Altura y hojas:</b> sin diferencia significativa en la mayoría de los días</li>
+          <li><b>Réplicas:</b> sintéticas, reconstruidas desde medias y CV% publicados</li>
+        </ul>
+      </div>
+
+      <div class="bloque">
+        <h2>¿Qué significa esto para el vivero?</h2>
+        <p>Estos resultados son consistentes con la idea de que la inoculación con HMA favorece particularmente el desarrollo foliar y la acumulación de biomasa en las primeras etapas de la plántula, más que la elongación del tallo. Sin embargo, y esto es clave: estos hallazgos vienen de un reanálisis metodológico de datos ya publicados, con réplicas sintéticas — no de un experimento nuevo en campo. La validación con un conjunto de datos experimentales independiente todavía está en curso.</p>
+      </div>
+
+      <div class="saber-mas">
+        <h2>Para saber más</h2>
+        <p><b>App y código:</b> github.com/0scar07/proyecto-coffea-hma</p>
+        <p>Aguirre-Medina, J. F.; Aguirre-Cadena, J. F.; Escobar-España, J. C.; López-González, J. L. (2023). Crecimiento de <i>Coffea arabica</i> L. cv Catimor biofertilizado con diversos aislamientos de hongos endomicorrízicos en vivero. <i>Revista Fitotecnia Mexicana</i>, 46(3), 273-281. DOI: 10.35196/rfm.2023.3.273</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>
