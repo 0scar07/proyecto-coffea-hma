@@ -239,7 +239,7 @@ usa **"Reboot app"** desde el menú de la app en Streamlit Cloud para forzar
 un proceso nuevo (limpia cualquier caché de `@st.cache_data` que haya
 quedado de una versión anterior).
 
-## Trabajo futuro (pendiente)
+## Trabajo futuro (en proceso)
 
 - **Validación externa**: contrastar los modelos contra un dataset de
   crecimiento de *Coffea arabica* distinto al de Aguirre-Medina et al.
