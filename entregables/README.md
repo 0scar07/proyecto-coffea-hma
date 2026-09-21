@@ -15,9 +15,9 @@ La lista de productos y sus indicadores/beneficiarios provienen de la tabla de R
 | 5 | Formar a cuatro estudiantes de pregrado en investigación científica | [`04_informes_estudiantes/`](04_informes_estudiantes/) | Plantilla | Datos reales de cada estudiante; fecha de sustentación si aplica |
 | 6 | Realizar un taller de capacitación sobre modelos matemáticos y Python | [`03_taller_capacitacion/`](03_taller_capacitacion/) | Plantilla | Fecha, lugar, público objetivo y facilitador |
 | 7 | Fortalecer la cooperación científica mediante una publicación colaborativa | [`05_publicacion_colaborativa/`](05_publicacion_colaborativa/) | Esquema / en preparación | Roles y orden de autoría; fechas reales del cronograma; revista destino |
-| 8 | Elaborar un artículo divulgativo sobre los resultados | [`08_articulo_divulgativo/`](08_articulo_divulgativo/) | Borrador para revisión del docente | Revisión del docente; revista de divulgación destino |
+| 8 | Elaborar un artículo divulgativo sobre los resultados | [`08_articulo_divulgativo/`](08_articulo_divulgativo/) | Borrador maquetado, pendiente de publicar | Revisión del docente; revista de divulgación destino |
 | 9 | Desarrollar una guía práctica de uso e interpretación del modelo | [`06_guia_tecnica/`](06_guia_tecnica/) | Borrador para revisión del docente | Revisión del docente |
-| 10 | Socializar los resultados mediante una ponencia en un evento académico | [`07_ponencia/`](07_ponencia/) | Esquema (solo guion en Markdown) | Evento y fecha; generar el archivo de diapositivas si se solicita |
+| 10 | Socializar los resultados mediante una ponencia en un evento académico | [`07_ponencia/`](07_ponencia/) | Material preparado, pendiente de presentar | Evento y fecha por definir |
 
 La guía técnica del producto 9 ahora también existe en PDF: [`06_guia_tecnica/guia_tecnica_usuario.pdf`](06_guia_tecnica/guia_tecnica_usuario.pdf).
 
