@@ -172,6 +172,8 @@ la micorrización.
   ninguna validación externa** de los modelos contra un dataset distinto al
   de Aguirre-Medina et al. (2023).
 
+Actualización: ya existe una validación externa parcial de la metodología (no de mis propios resultados) contra tres estudios publicados — ver [docs/validacion_externa/informe.md](docs/validacion_externa/informe.md).
+
 ## Cómo correrla localmente
 
 Probado con Python 3.11.
