@@ -1,0 +1,3 @@
+# HTML/PDF intermedios de la generacion (pasada 1 sin numeros de indice, PDF sin
+# metadatos): se regeneran con generar_pdf.py y no se versionan.
+_build/
