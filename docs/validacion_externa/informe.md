@@ -1,25 +1,38 @@
 # Validación externa parcial de la metodología — 2026-09-27
 
-**Qué es esto:** una validación externa **parcial** de la metodología de Coffea IA (los
-3 modelos de crecimiento, el criterio de convergencia y el criterio de plausibilidad de
-K), usando datos ya publicados de otros tres estudios. No es una validación de mis
-propios resultados con datos de café biofertilizado nuevos — eso sigue pendiente. Los
-tres estudios difieren entre sí y con el mío en cultivar, sustrato, edad de la planta y
-unidades: se analizan por separado y solo se combinan las conclusiones metodológicas.
+## ¿Qué es esto y por qué existe?
 
-Generado por `scripts/validacion_externa.py`, que **no importa `app/app.py`**: extrae
-con el módulo `ast` el código fuente vigente de `modelo_exponencial/logistico/gompertz`,
-`ajustar_todos_los_modelos`, `calcular_r2/rmse/mae` y `_asintota_k_plausible`, lo ejecuta
-en un espacio de nombres aislado, y así usa siempre la lógica real de la app. Una prueba
-de fidelidad (altura, ambos grupos, `datos_reales_coffea_2023.xlsx`) confirma que ese
-código extraído produce exactamente el mismo R², RMSE, MAE y estado de convergencia que
-`app.py` importado directamente.
+Coffea IA es una app que ajusta tres modelos matemáticos de crecimiento a datos de
+*Coffea arabica* con y sin hongos micorrízicos. Todo lo probado hasta ahora venía de un
+solo dataset propio. Este documento es una validación externa **parcial**: comprueba si
+la *metodología* de la app (los 3 modelos, el criterio de convergencia y el criterio de
+plausibilidad de la asíntota K) se comporta de forma razonable frente a datos que **ya
+publicaron otros investigadores**, no frente a datos nuevos míos. Está pensado para
+alguien que abre este documento sin haber visto el resto del proyecto — por ejemplo, un
+docente revisando el trabajo — y que necesita entender de una vez qué se validó y qué no.
+"Parcial" es la palabra clave: valida la metodología, no valida (todavía) mis propios
+resultados con un experimento nuevo, y los tres estudios usados difieren entre sí y con
+el mío en cultivar, sustrato, edad de la planta y unidades, así que se analizan por
+separado y solo se combinan las conclusiones metodológicas al final.
 
-Todos los datos de estas tres fuentes son **medias publicadas, no réplicas**: cada fecha
-es una sola observación. No se generaron réplicas sintéticas para estas fuentes y no se
-corrieron las pruebas t de la app (que requieren arrays de réplicas) salvo en
-Vallejos-Torres, donde se usó `scipy.stats.ttest_ind_from_stats` directamente sobre los
-estadísticos de resumen del paper.
+**Cómo se generó (técnico):** el script `scripts/validacion_externa.py` **no importa
+`app/app.py`** (eso arrancaría Streamlit); en vez de eso extrae con el módulo `ast` de
+Python el código fuente vigente de `modelo_exponencial/logistico/gompertz`,
+`ajustar_todos_los_modelos`, `calcular_r2/rmse/mae` y `_asintota_k_plausible`, y lo
+ejecuta en un espacio de nombres aislado. Así se usa siempre la lógica real de la app,
+sin copiarla a mano y sin arriesgarse a que se desactualice. Una prueba de fidelidad
+(altura, ambos grupos, `datos_reales_coffea_2023.xlsx`) confirma que ese código extraído
+produce exactamente el mismo R², RMSE, MAE y estado de **convergencia** (que el ajuste
+numérico haya encontrado una solución estable, en vez de fallar o quedarse sin
+suficientes días de datos para siquiera intentarlo) que `app.py` importado directamente.
+
+**Qué tipo de datos son estos:** las tres fuentes externas son **medias publicadas, no
+réplicas** (mediciones repetidas de una misma condición): cada fecha es una sola
+observación. Por eso no se generaron réplicas sintéticas (datos simulados que imitan la
+variabilidad de mediciones individuales, como sí se usan con mi propio dataset) para
+estas fuentes, y no se corrieron las pruebas t de la app —que necesitan arrays de
+réplicas—, salvo en Vallejos-Torres, donde se usó `scipy.stats.ttest_ind_from_stats`
+directamente sobre los estadísticos de resumen que trae el paper.
 
 ## 1. León-Burgos et al. (2022) — validación de curvas
 
@@ -29,7 +42,10 @@ a área foliar, número de hojas y altura (las 3 variables comparables con mi ap
 como secundarias, diámetro del tallo y longitud de raíz.
 
 **Resultado clave:** convertí mi Logístico `K/(1+e^(-k(t-Ti)))` a la parametrización
-sigmoidal del paper `a/(1+e^(-(t-x0)/b))` igualando exponentes: `a=K`, `x0=Ti`, `b=1/k`.
+sigmoidal del paper `a/(1+e^(-(t-x0)/b))` igualando exponentes: `a=K` (la asíntota:
+el valor máximo teórico al que tiende la curva cuando el tiempo crece sin límite),
+`x0=Ti` (el punto de inflexión, donde el crecimiento pasa de acelerar a desacelerar),
+`b=1/k`.
 
 | Variable | Mi Logístico (convertido) | Publicado (sigmoidal) | Mi referencia aproximada previa |
 |---|---|---|---|
@@ -37,11 +53,11 @@ sigmoidal del paper `a/(1+e^(-(t-x0)/b))` igualando exponentes: `a=K`, `x0=Ti`, 
 | numero_hojas | K=12.9, Ti=89.8, R²=0.977 | a=12.4, x0=88.2, R²=0.97 | K≈12.9, x0≈90, R²≈0.98 |
 | altura | K=70.0, Ti=200.6, R²=0.980 | a=70.8, x0=203.9, R²=0.99 | K≈70.0, x0≈201, R²≈0.98 |
 
-Los tres casos caen muy cerca de los parámetros publicados (diferencias de 1-5% en K/a,
-menos de 2% en R²), y también muy cerca de mi propia referencia aproximada calculada de
-antemano con fórmulas estándar — sin usar la app. Esto es la evidencia más directa de
-que la implementación del modelo Logístico en `app.py` reproduce un ajuste ya publicado
-de forma independiente.
+*Lectura: los tres casos caen muy cerca de los parámetros publicados* (diferencias de
+1-5% en K/a, menos de 2% en R²), y también muy cerca de mi propia referencia aproximada
+calculada de antemano con fórmulas estándar — sin usar la app. Esto es la evidencia más
+directa de que la implementación del modelo Logístico en `app.py` reproduce un ajuste ya
+publicado de forma independiente.
 
 **Pregunta central — ¿coincide el patrón de plausibilidad de K con el de mis propios
 datos (28-112 ddt)?** Sí, y de forma reveladora: mi criterio de plausibilidad marca la
@@ -58,9 +74,17 @@ El "exponencial" del paper es una exponencial **saturante** `a(1-e^(-bx))`, una 
 distinta a mi Exponencial `P0·e^(rt)` (sin límite superior): no se comparan como si
 fueran el mismo modelo, siguiendo la instrucción explícita de no confundirlos.
 
-Figuras: `figuras/leon_burgos_area_foliar.png`, `leon_burgos_numero_hojas.png`,
-`leon_burgos_altura.png` (círculos = medias publicadas; línea punteada = asíntota K,
-solo cuando el criterio de la app la permite).
+**Figura 1.** Área foliar: círculos = medias publicadas por León-Burgos et al.; líneas =
+los 3 modelos de la app ajustados a esos puntos; línea punteada = asíntota K, dibujada
+porque aquí sí cumple el criterio de plausibilidad (K/máx = 1.18). —
+`figuras/leon_burgos_area_foliar.png`
+
+**Figura 2.** Número de hojas: misma lectura que la Figura 1; K también se dibuja aquí
+(K/máx = 1.07). — `figuras/leon_burgos_numero_hojas.png`
+
+**Figura 3.** Altura: los 3 modelos ajustan bien (R² > 0.97), pero ninguna línea de K
+aparece — es justo el caso que describe la "Pregunta central" de arriba: el criterio de
+plausibilidad la descarta. — `figuras/leon_burgos_altura.png`
 
 ## 2. Siqueira et al. (1998) — apoyo, efecto en el tiempo
 
@@ -70,14 +94,18 @@ Lav: **+50.0% a 9 MAT, +18.4% (≈18%) a 19 MAT, +10.4% (≈10%) a 26 MAT** sobr
 sin inocular (Ni) — coincide con lo publicado.
 
 Con solo 4 fechas (altura) la app **sí intenta** los 3 modelos (4 ≥ 3, el mínimo para
-Logístico/Gompertz), pero con 1 solo grado de libertad: el ejemplo del control (Ni) da
-R²=0.9999 en Logístico, un ajuste casi perfecto que es un **artefacto de tener apenas un
-punto de más que parámetros**, no evidencia de un modelo excelente. Con diámetro del
-tallo y de copa (solo 3 fechas: 9/19/26 MAT), Logístico y Gompertz caen en el límite
-exacto (3 parámetros, 3 puntos, 0 grados de libertad): el ajuste es exacto por
-construcción y no es informativo. No se fuerza ningún ajuste fuera de estas reglas.
+Logístico/Gompertz), pero con 1 solo **grado de libertad** (cuántos puntos "sobran" una
+vez que el modelo ya usó los que necesita para fijar sus parámetros: 4 fechas − 3
+parámetros = 1): el ejemplo del control (Ni) da R²=0.9999 en Logístico, un ajuste casi
+perfecto que es un **artefacto de tener apenas un punto de más que parámetros**, no
+evidencia de un modelo excelente. Con diámetro del tallo y de copa (solo 3 fechas:
+9/19/26 MAT), Logístico y Gompertz caen en el límite exacto (3 parámetros, 3 puntos, 0
+grados de libertad): el ajuste es exacto por construcción y no es informativo. No se
+fuerza ningún ajuste fuera de estas reglas.
 
-Figura: `figuras/siqueira_efecto_altura.png` (% de incremento sobre Ni por tratamiento).
+**Figura 4.** % de incremento en altura de cada tratamiento fúngico sobre el control sin
+inocular (Ni), a lo largo de las 4 fechas medidas: el efecto es mayor al inicio y se
+reduce con el tiempo en todos los tratamientos. — `figuras/siqueira_efecto_altura.png`
 
 ## 3. Vallejos-Torres et al. (2021) — efecto +M frente a −M
 
@@ -85,12 +113,13 @@ Café arábica en San Martín (Perú), medias por consorcio agrupadas sobre suel
 propagación (Tabla 3 del paper). Los 3 consorcios (Huall-pache, Do-cat, Mo-cat) muestran
 incrementos positivos sobre el control en las 4 variables medidas (+7% a +82%).
 
-**Sensibilidad estadística (Welch, `ttest_ind_from_stats`) bajo 4 escenarios explícitos**
-(n=18 unidades o n=108 plantas, × valor entre paréntesis interpretado como desviación
-estándar o como error estándar, con DE=EE·√n): el resultado depende casi por completo de
-**cómo se interprete el paréntesis**, no de qué n se elija. Interpretándolo como
-desviación estándar, la mayoría de los efectos son significativos (p<0.05) en los dos
-tamaños de n. Interpretándolo como error estándar —el rótulo que da el propio paper,
+**Sensibilidad estadística (prueba t de Welch —una prueba t que no asume que los dos
+grupos tengan la misma varianza—, vía `ttest_ind_from_stats`) bajo 4 escenarios
+explícitos** (n=18 unidades o n=108 plantas, × valor entre paréntesis interpretado como
+desviación estándar o como error estándar, con DE=EE·√n): el resultado depende casi por
+completo de **cómo se interprete el paréntesis**, no de qué n se elija. Interpretándolo
+como desviación estándar, la mayoría de los efectos son significativos (p<0.05) en los
+dos tamaños de n. Interpretándolo como error estándar —el rótulo que da el propio paper,
 aunque la ficha de la fuente ya advierte que el valor parece demasiado grande para serlo
 con más de 100 plantas por nivel— **ningún efecto resulta significativo**, en ningún n.
 Esto es matemáticamente esperable: si el paréntesis es un error estándar, la desviación
@@ -98,7 +127,7 @@ estándar usada se recalcula como EE·√n, y el error estándar de la media res
 (DE/√n) vuelve a dar exactamente EE, sin importar qué n se haya elegido. La ambigüedad
 real está en la interpretación del paréntesis, no en el tamaño de muestra. **No se puede
 sacar una conclusión fuerte de un solo escenario** — el detalle completo está en
-`sensibilidad_vallejos_torres.csv`.
+`datos/sensibilidad_vallejos_torres.csv`.
 
 **Comparación de dirección con mi app** (datos reales, 112 ddt — únicas 2 variables con
 datos reales en mi app; mi "diámetro" usa datos simulados, así que no se compara aquí):
@@ -113,7 +142,9 @@ de magnitud** y significancia — esperable dado que mis réplicas son sintétic
 edades/sustratos/unidades no son comparables. No se interpreta esto como una
 confirmación cuantitativa, solo como consistencia direccional.
 
-Figura: `figuras/vallejos_torres_incremento.png`.
+**Figura 5.** % de incremento de cada consorcio sobre el control sin HMA, por variable:
+Do-cat y Mo-cat muestran los incrementos más grandes en número de ramas y de hojas. —
+`figuras/vallejos_torres_incremento.png`
 
 ## Qué SÍ se puede afirmar
 
@@ -170,11 +201,13 @@ Figura: `figuras/vallejos_torres_incremento.png`.
 
 ## Archivos generados
 
-- `resultados_curvas.csv` — ajuste de los 3 modelos por variable/fuente (León-Burgos,
-  Siqueira).
-- `comparacion_publicado.csv` — mi Logístico convertido vs. el sigmoidal publicado por
-  León-Burgos et al., y mi referencia aproximada previa.
-- `efecto.csv` — % de incremento sobre el control (Siqueira en el tiempo,
+- `datos/resultados_curvas.csv` — ajuste de los 3 modelos por variable/fuente
+  (León-Burgos, Siqueira).
+- `datos/comparacion_publicado.csv` — mi Logístico convertido vs. el sigmoidal publicado
+  por León-Burgos et al., y mi referencia aproximada previa.
+- `datos/efecto.csv` — % de incremento sobre el control (Siqueira en el tiempo,
   Vallejos-Torres por consorcio).
-- `sensibilidad_vallejos_torres.csv` — Welch bajo los 4 escenarios explícitos.
-- `figuras/*.png` — 6 figuras (3 de León-Burgos, 1 de Siqueira, 1 de Vallejos-Torres).
+- `datos/sensibilidad_vallejos_torres.csv` — Welch bajo los 4 escenarios explícitos.
+- `datos/excel/*.xlsx` — las 4 tablas anteriores, formateadas para lectura humana
+  (mismos datos, sin decimales de más, con hoja "Léeme").
+- `figuras/*.png` — 5 figuras (3 de León-Burgos, 1 de Siqueira, 1 de Vallejos-Torres).
