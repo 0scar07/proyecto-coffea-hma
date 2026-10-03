@@ -25,8 +25,10 @@ propios resultados con un experimento nuevo — eso sigue pendiente.
 
 ## Cómo se generó
 
-`scripts/validacion_externa.py` (en la raíz del repo) hace todo el análisis: extrae con
-`ast` el código vigente de `app/app.py` (sin importarlo), lo corre contra los tres
-datasets externos en `datos_reales/validacion_externa/`, y escribe los CSV, las figuras y
-los dos `.md` de esta carpeta. `fuente_pdf/` solo se encarga de convertir esos `.md` ya
+El análisis lo hizo `scripts/validacion_externa.py`: extraía con `ast` el código vigente
+de `app/app.py` (sin importarlo), lo corría contra los tres datasets externos (León-Burgos
+2022, Siqueira 1998 y Vallejos-Torres 2021) y escribía los CSV, las figuras y los dos `.md`
+de esta carpeta. El script y esos tres Excel ya no están en el repositorio (se retiraron
+después de generar el informe); siguen disponibles en el historial de git si hiciera falta
+volver a correrlo. `fuente_pdf/` solo se encarga de convertir esos `.md` ya
 generados a PDF con el estilo visual de la app — no cambia ningún número.
