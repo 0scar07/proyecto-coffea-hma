@@ -451,9 +451,6 @@ MODELO_ESTILO = {
     "Gompertz":    {"color": "#009E73", "dash": "solid"},
 }
 
-# Patron de trama por grupo para las barras -- redundante con el color -M/+M que ya usa
-# la app (T["CONTROL"]/T["ACCENT"]), para que las barras tambien se distingan sin color.
-PATRON_GRUPO = {"-M": ".", "+M": "/"}
 
 
 def texto_significancia(p):
@@ -782,222 +779,236 @@ def texto_interpretativo_efecto(variable, fila):
             f"{abs(inc):.1f}% ({formatear_p(fila['p'])}, {signif}).")
 
 
-def titulo_barras_significancia(datos, variable):
+def titulo_barras_significancia(datos, variable, filas=None):
     """Título-conclusión de las barras: en cuántas fechas +M supera a −M de forma significativa
-    (misma prueba t de Welch que usa toda la app, vía calcular_efecto_micorriza)."""
+    (misma prueba t de Welch que usa toda la app, vía calcular_efecto_micorriza) y cómo termina."""
     nombre = NOMBRE_VARIABLE[variable]
-    filas = calcular_efecto_micorriza(datos, variable) if {"-M", "+M"} <= set(datos[variable]) else []
+    if filas is None:
+        filas = calcular_efecto_micorriza(datos, variable) if {"-M", "+M"} <= set(datos[variable]) else []
     if not filas:
         return f"{nombre}: media ± DE por día"
     sig_pos = [f for f in filas if f["significativo"] and f["incremento_pct"] > 0]
     sig_neg = [f for f in filas if f["significativo"] and f["incremento_pct"] < 0]
-    total = len(filas)
-    if sig_pos and len(sig_pos) == total:
-        return f"{nombre}: +M supera a −M de forma significativa en todas las fechas"
+    ult = filas[-1]
+    final = (f"al final, {_fmt_signo(ult['incremento_pct'], 0)} % "
+             f"({'significativo' if ult['significativo'] else 'no significativo'})")
     if sig_pos:
-        return (f"{nombre}: +M supera a −M de forma significativa en {len(sig_pos)} de {total} fechas "
-                f"(la primera, día {int(sig_pos[0]['dia'])})")
+        return (f"{nombre}: +M supera a −M de forma significativa en {len(sig_pos)} de {len(filas)} fechas; "
+                f"{final}")
     if sig_neg:
-        return f"{nombre}: +M queda por debajo de −M de forma significativa en {len(sig_neg)} de {total} fechas"
-    return f"{nombre}: sin diferencias significativas entre +M y −M en ninguna fecha"
+        return f"{nombre}: +M queda por debajo de −M en {len(sig_neg)} de {len(filas)} fechas; {final}"
+    return f"{nombre}: sin diferencias significativas entre +M y −M; {final}"
 
 
 def fig_barras_variable(datos, variable, fuente_datos="simulado"):
-    """Barras agrupadas -M vs +M por día: altura de barra = media de réplicas, con barras de
-    error = desviación estándar, patrón de trama por grupo (redundante con el color, para que
-    se distingan también en blanco y negro) y marcas de significancia (ns/*/**/***) sobre cada
-    día -- reutilizando prueba_t_independiente ya existente, sin recalcular nada nuevo.
-    Independiente de las curvas de crecimiento ya existentes."""
-    dias_comunes = sorted(set(datos[variable].get("-M", {})) | set(datos[variable].get("+M", {})))
+    """Barras −M vs +M por día, diseñadas para leerse solas:
+    - barra = promedio del día (color sólido por grupo, sin tramas) y ± DE;
+    - un círculo por cada planta medida, encima de su barra (se ve la variación real);
+    - sobre cada día, un corchete con cuánto más crece +M que −M, la significancia de la
+      prueba t de Welch ya existente (prueba_t_independiente) y los promedios −M → +M;
+      en tinta si es significativa y en gris si no;
+    - leyenda escrita arriba y título con la conclusión."""
+    unidad = UNIDADES[variable]
+    grupos = [g for g in ("-M", "+M") if g in datos[variable]]
+    dias = sorted(set().union(*[set(datos[variable][g]) for g in grupos]))
+    x = np.arange(len(dias), dtype=float)
+    denso = len(dias) > 6
+    ancho = 0.36
     fig = go.Figure()
+    rng = np.random.default_rng(3)
+    techo = 0.0
     n_replicas_vistas = set()
-    y_max_con_error = 0.0
-    for grupo in ("-M", "+M"):
-        if grupo not in datos[variable]:
-            continue
-        color = COLOR_GRUPO[grupo]
-        dias, medias, sds, ns = media_sd_por_dia(datos[variable][grupo])
+    for k, g in enumerate(grupos):
+        desplaz = (k - (len(grupos) - 1) / 2) * ancho * 1.08
+        dias_g, medias, sds, ns = media_sd_por_dia(datos[variable][g])
         n_replicas_vistas.update(int(n) for n in ns)
-        if len(medias):
-            y_max_con_error = max(y_max_con_error, float(np.max(medias + sds)))
+        xs = np.array([x[dias.index(d)] for d in dias_g]) + desplaz
+        techo = max(techo, float(np.max(medias + sds)),
+                    max(float(np.max(datos[variable][g][d])) for d in dias_g))
         fig.add_trace(go.Bar(
-            x=[str(int(d)) for d in dias], y=medias, name=f"{texto_grupo(grupo)} · {NOMBRE_GRUPO[grupo]}",
-            error_y=dict(type="data", array=sds, visible=True, color=G_INK, thickness=1.2, width=4),
-            marker=dict(color=color, line=dict(color="white", width=1.5),
-                        pattern=dict(shape=PATRON_GRUPO[grupo], fillmode="overlay", fgcolor="white", size=6, solidity=0.25)),
-            hovertemplate=f"{texto_grupo(grupo)} · día %{{x}}<br>media %{{y:.3g}} {UNIDADES[variable]}<extra></extra>",
-        ))
+            x=xs, y=medias, width=ancho, name=f"{texto_grupo(g)} · {NOMBRE_GRUPO[g]}",
+            marker=dict(color=COLOR_GRUPO[g], opacity=0.9, line_width=0, cornerradius=4),
+            error_y=dict(type="data", array=sds, color=G_INK, thickness=1.2, width=0),
+            customdata=dias_g,
+            hovertemplate=f"{texto_grupo(g)} · día %{{customdata:.0f}}<br>promedio %{{y:.3g}} {unidad}<extra></extra>"))
+        px, py = [], []
+        for xi, d in zip(xs, dias_g):
+            v = np.asarray(datos[variable][g][d], dtype=float)
+            px += list(xi + rng.uniform(-ancho * 0.28, ancho * 0.28, len(v)))
+            py += list(v)
+        fig.add_trace(go.Scatter(x=px, y=py, mode="markers", showlegend=False, hoverinfo="skip",
+                                 marker=dict(size=5 if denso else 6, color="white", line=dict(color=G_INK, width=1))))
 
-    # Marcas de significancia sobre cada día con réplicas en ambos grupos: se anota el
-    # resultado de la prueba t de Welch ya implementada (prueba_t_independiente), no se
-    # calcula una prueba nueva ni se decide un umbral distinto al que ya usa la app (p<0.05).
-    if "-M" in datos[variable] and "+M" in datos[variable]:
-        y_rango = y_max_con_error if y_max_con_error > 0 else 1.0
-        for dia in dias_comunes:
-            resultado_t = prueba_t_independiente(datos, variable, dia)
-            if resultado_t is None:
-                continue
-            y_top = max(resultado_t["media_control"] + resultado_t["sd_control"],
-                        resultado_t["media_tratado"] + resultado_t["sd_tratado"])
-            fig.add_annotation(
-                x=str(int(dia)), y=y_top + 0.045 * y_rango, text=texto_significancia(resultado_t["p"]),
-                showarrow=False, yanchor="bottom",
-                font=dict(family=FUENTE_PUBLICACION, size=13, color=G_INK),
-            )
+    filas = calcular_efecto_micorriza(datos, variable) if len(grupos) == 2 else []
+    techo = techo if techo > 0 else 1.0
+    for f in filas:
+        i = dias.index(f["dia"])
+        a, b = np.asarray(datos[variable]["-M"][f["dia"]]), np.asarray(datos[variable]["+M"][f["dia"]])
+        y_c = max(f["media_control"] + f["sd_control"], f["media_tratado"] + f["sd_tratado"],
+                  float(a.max()), float(b.max())) + techo * 0.05
+        x0, x1 = x[i] - ancho * 0.54, x[i] + ancho * 0.54
+        sig = f["significativo"]
+        color = G_INK if sig else G_MUTED
+        fig.add_shape(type="path", line=dict(color=color, width=1.3),
+                      path=f"M {x0},{y_c - techo * 0.02} L {x0},{y_c} L {x1},{y_c} L {x1},{y_c - techo * 0.02}")
+        efecto = _fmt_signo(f["incremento_pct"], 0)
+        estrellas = texto_significancia(f["p"])
+        if denso:
+            texto = f"<b>{efecto}%</b><br>{estrellas}" if sig else f"{efecto}%<br>ns"
+        else:
+            texto = (f"<b>{efecto} %</b> {estrellas}" if sig else f"{efecto} % · ns") + (
+                f"<br><span style='font-size:11px;color:{G_MUTED}'>"
+                f"{f['media_control']:.3g} → {f['media_tratado']:.3g} {unidad}</span>")
+        fig.add_annotation(x=x[i], y=y_c, yanchor="bottom", showarrow=False, text=texto,
+                           font=dict(family=FUENTE_PUBLICACION, size=(10.5 if denso else 13) if sig else
+                                     (10 if denso else 12), color=color))
 
-    fig.update_layout(
-        barmode="group", bargap=0.25, bargroupgap=0.08,
-        xaxis_title="Días después del trasplante",
-        yaxis_title=f"{NOMBRE_VARIABLE[variable]} ({UNIDADES[variable]})",
-    )
-    if y_max_con_error > 0:
-        fig.update_yaxes(range=[0, y_max_con_error * 1.25])
-    estilo_publicacion(fig, width=1000, height=520, titulo=titulo_barras_significancia(datos, variable),
-                       subtitulo="Barra = media de las plantas de ese día · línea = ± DE · sobre cada día, la "
-                                 "prueba t (−M vs +M): ns = sin diferencia · * p < 0.05 · ** p < 0.01 · *** p < 0.001")
+    # Leyenda escrita arriba a la izquierda (en vez de una caja de leyenda aparte)
+    for k, g in enumerate(grupos):
+        fig.add_annotation(xref="paper", yref="paper", x=k * 0.24, y=1.04, xanchor="left", yanchor="bottom",
+                           showarrow=False, text=f"<span style='color:{COLOR_GRUPO[g]}'>■</span> "
+                                                 f"{texto_grupo(g)} · {NOMBRE_GRUPO[g]}",
+                           font=dict(family=FUENTE_PUBLICACION, size=13, color=G_INK))
+    fig.update_xaxes(tickvals=x, ticktext=[f"Día {d:g}" for d in dias], title_text="Días después del trasplante",
+                     ticks="", range=[-0.6, len(dias) - 0.4])
+    fig.update_yaxes(title_text=f"{NOMBRE_VARIABLE[variable]} ({unidad})", range=[0, techo * 1.36])
+    estilo_publicacion(
+        fig, width=1100, height=580, titulo=titulo_barras_significancia(datos, variable, filas),
+        mostrar_leyenda=False, left_margin=75,
+        subtitulo="Barra = promedio · círculos = cada planta · línea = ± DE<br>Arriba de cada día: cuánto más crece "
+                  "+M que −M, la prueba t y los promedios (−M → +M) · ns = sin diferencia · * p < 0.05 · "
+                  "** p < 0.01 · *** p < 0.001")
+    fig.update_layout(margin=dict(t=fig.layout.margin.t + 12))
 
     n_reps_txt = "/".join(str(n) for n in sorted(n_replicas_vistas)) if n_replicas_vistas else "?"
     descripcion = (
-        f"{NOMBRE_VARIABLE[variable]} ({UNIDADES[variable]}), media ± DE, n = {n_reps_txt} réplicas por día y "
-        "grupo. Significancia (prueba t de Welch, −M vs +M): ns = p ≥ 0.05 · * p < 0.05 · ** p < 0.01 · "
-        "*** p < 0.001."
+        f"{NOMBRE_VARIABLE[variable]} ({unidad}): barra = promedio y línea = ± DE de n = {n_reps_txt} plantas por "
+        "día y grupo; círculos = cada planta. Sobre cada día: % de incremento de +M sobre −M y prueba t de Welch "
+        "(ns = p ≥ 0.05 · * p < 0.05 · ** p < 0.01 · *** p < 0.001)."
     )
     extra = ("Réplicas sintéticas generadas a partir de medias y CV% publicados (Aguirre-Medina et al., 2023)."
              if fuente_datos == "real" else None)
     return fig, construir_pie(descripcion, extra=extra)
 
 
-def fig_barras_resumen_2x2(datos, variables, fuente_datos="simulado"):
-    """Figura resumen 2x2 con hasta 4 variables, etiquetas (a)-(d), ejes Y independientes por
-    panel (cada variable tiene su propia unidad) y una sola leyenda. Complementa -- no
-    reemplaza -- las figuras individuales por variable."""
-    letras = ["a", "b", "c", "d"]
-    vars_incluidas = variables[:4]
-    cols_n = 2
-    fig = make_subplots(
-        rows=2, cols=cols_n,
-        subplot_titles=[f"({letras[i]}) {NOMBRE_VARIABLE[v]}" for i, v in enumerate(vars_incluidas)],
-        horizontal_spacing=0.15, vertical_spacing=0.22,
-    )
-    for idx, variable in enumerate(vars_incluidas):
-        fila, col = idx // cols_n + 1, idx % cols_n + 1
-        dias_variable = sorted(set().union(*(datos[variable][g].keys() for g in datos[variable])))
-        for grupo in ("-M", "+M"):
-            if grupo not in datos[variable]:
-                continue
-            color = COLOR_GRUPO[grupo]
-            dias, medias, sds, _ = media_sd_por_dia(datos[variable][grupo])
-            fig.add_trace(go.Bar(
-                x=[str(int(d)) for d in dias], y=medias, name=f"{texto_grupo(grupo)} · {NOMBRE_GRUPO[grupo]}",
-                legendgroup=grupo, showlegend=(idx == 0),
-                error_y=dict(type="data", array=sds, visible=True, color=G_INK, thickness=1.1, width=3),
-                marker=dict(color=color, line=dict(color="white", width=1.2),
-                            pattern=dict(shape=PATRON_GRUPO[grupo], fillmode="overlay", fgcolor="white", size=5, solidity=0.25)),
-                hovertemplate=f"{texto_grupo(grupo)} · día %{{x}}<br>media %{{y:.3g}} {UNIDADES[variable]}<extra></extra>",
-            ), row=fila, col=col)
-        fig.update_xaxes(title_text="Días después del trasplante", tickvals=[str(int(d)) for d in dias_variable],
-                         row=fila, col=col)
-        fig.update_yaxes(title_text=UNIDADES[variable], row=fila, col=col)
-    fig.update_layout(barmode="group", bargap=0.25, bargroupgap=0.08)
-    # Título-conclusión: en cuántas variables +M termina por encima de −M (último día común).
-    finales = []
-    for v in vars_incluidas:
-        if {"-M", "+M"} <= set(datos[v]):
-            comunes = sorted(set(datos[v]["-M"]) & set(datos[v]["+M"]))
-            if comunes:
-                finales.append(np.mean(datos[v]["+M"][comunes[-1]]) > np.mean(datos[v]["-M"][comunes[-1]]))
-    titulo = (f"Al final del ensayo, +M supera a −M en {sum(finales)} de {len(finales)} variables"
-              if finales else "Resumen: media ± DE por día y grupo")
-    estilo_publicacion(fig, width=1200, height=900, titulo=titulo,
-                       subtitulo="Barra = media de las plantas de ese día · línea = ± DE · "
-                                 "cada panel tiene su propia escala y unidad")
-    alinear_titulos_panel_izquierda(fig, len(vars_incluidas))
-
+def fig_resumen_efecto_final(datos, variables, fuente_datos="simulado"):
+    """Resumen en una sola gráfica: cuánto más crece +M que −M en el ÚLTIMO día común de cada
+    variable (barra horizontal = % de incremento, línea = IC 95 % por bootstrap de las réplicas),
+    color fuerte si la prueba t de Welch es significativa y claro si no, con los promedios
+    escritos al lado. Devuelve (None, motivo) si ninguna variable tiene −M y +M comparables."""
+    filas = []
+    for v in variables:
+        if not {"-M", "+M"} <= set(datos[v]):
+            continue
+        comunes = sorted(set(datos[v]["-M"]) & set(datos[v]["+M"]))
+        if not comunes:
+            continue
+        d = comunes[-1]
+        t_res = prueba_t_independiente(datos, v, d)
+        a, b = np.asarray(datos[v]["-M"][d], dtype=float), np.asarray(datos[v]["+M"][d], dtype=float)
+        if t_res is None or a.mean() == 0:
+            continue
+        inc = (b.mean() - a.mean()) / a.mean() * 100
+        rng = np.random.default_rng(1)
+        boot = np.array([(rng.choice(b, len(b)).mean() / rng.choice(a, len(a)).mean() - 1) * 100
+                         for _ in range(4000)])
+        lo, hi = np.percentile(boot[np.isfinite(boot)], [2.5, 97.5])
+        filas.append(dict(nombre=NOMBRE_VARIABLE[v], inc=inc, lo=lo, hi=hi, p=t_res["p"],
+                          sig=t_res["significativo"], dia=d, ma=a.mean(), mb=b.mean(), u=UNIDADES[v]))
+    if not filas:
+        return None, "Ninguna variable tiene −M y +M con réplicas en un mismo día para comparar."
+    filas.sort(key=lambda f: f["inc"])
+    color_claro = "#D9C6BF"
+    fig = go.Figure()
+    for f in filas:
+        fig.add_trace(go.Bar(
+            y=[f["nombre"]], x=[f["inc"]], orientation="h", width=0.55, showlegend=False,
+            marker=dict(color=T["ACCENT"] if f["sig"] else color_claro, cornerradius=4),
+            error_x=dict(type="data", symmetric=False, array=[f["hi"] - f["inc"]], arrayminus=[f["inc"] - f["lo"]],
+                         color=G_INK, thickness=1.2, width=5),
+            hovertemplate=f"{f['nombre']}: %{{x:+.1f}} %<extra></extra>"))
+        fig.add_annotation(
+            y=f["nombre"], x=max(f["hi"], f["inc"], 0), xshift=10, xanchor="left", showarrow=False, align="left",
+            text=(f"<b>{_fmt_signo(f['inc'], 0)} %</b> {texto_significancia(f['p'])}<br>"
+                  f"<span style='font-size:11px;color:{G_MUTED}'>{f['ma']:.3g} → {f['mb']:.3g} {f['u']} "
+                  f"(día {f['dia']:g})</span>"),
+            font=dict(family=FUENTE_PUBLICACION, size=13, color=G_INK if f["sig"] else G_MUTED))
+    fig.add_vline(x=0, line=dict(color=G_INK, width=1))
+    x_min = min(0.0, min(f["lo"] for f in filas)) - 5
+    x_max = max(max(f["hi"] for f in filas), 5) * 1.4
+    fig.update_xaxes(ticksuffix=" %", range=[x_min, x_max], showgrid=True, gridcolor=G_GRID,
+                     title_text="Cuánto más crece +M que −M al final del ensayo")
+    fig.update_yaxes(showgrid=False, tickfont=dict(family=FUENTE_PUBLICACION, size=14, color=G_INK))
+    n_sig = sum(f["sig"] and f["inc"] > 0 for f in filas)
+    titulo = (f"Al final del ensayo, la micorriza aumenta {n_sig} de {len(filas)} variables de forma significativa"
+              if n_sig else "Al final del ensayo, la micorriza no aumenta ninguna variable de forma significativa")
+    estilo_publicacion(fig, width=1100, height=max(320, 150 + 85 * len(filas)), titulo=titulo,
+                       mostrar_leyenda=False, left_margin=150,
+                       subtitulo="Barra = % de incremento de +M sobre −M el último día · línea = IC 95 % · "
+                                 "color fuerte = diferencia significativa (prueba t), claro = no significativa")
+    fig.update_yaxes(showgrid=False)
     extra = ("Réplicas sintéticas generadas a partir de medias y CV% publicados (Aguirre-Medina et al., 2023)."
              if fuente_datos == "real" else None)
     pie = construir_pie(
-        "Media ± DE por día y grupo. Ejes Y independientes por panel (unidad propia de cada variable).",
-        extra=extra,
-    )
+        "% de incremento de +M sobre −M en el último día con datos de ambos grupos, por variable. Línea = IC 95 % "
+        "por remuestreo (bootstrap) de las réplicas. Significancia: prueba t de Welch (ns = p ≥ 0.05 · * p < 0.05 · "
+        "** p < 0.01 · *** p < 0.001).", extra=extra)
     return fig, pie
 
 
 def fig_barras_r2_comparacion(RES, datos, variables, modelos):
-    """Cuadrícula 2x2 (una variable por subplot, no una fila de 4) del R² de cada modelo,
-    dejando la barra en 0 con la etiqueta 'No convergió' o 'Sin días suficientes' donde
-    corresponda. Eje Y siempre 0-1.15 (las barras parten de 0 -- no se recorta para
-    exagerar diferencias). Mismo patrón+color por grupo que el resto de las gráficas."""
-    n = len(variables)
-    cols_n = min(n, 2)
-    filas_n = -(-n // cols_n)  # ceil(n / cols_n)
-    fig = make_subplots(rows=filas_n, cols=cols_n, subplot_titles=[NOMBRE_VARIABLE[v] for v in variables],
-                         horizontal_spacing=0.12, vertical_spacing=0.16)
-
-    leyenda_mostrada = set()
-    for idx, variable in enumerate(variables):
-        fila, col = idx // cols_n + 1, idx % cols_n + 1
+    """R² de cada modelo como tabla de calor (filas = variable · grupo, columnas = modelo): más
+    oscuro = mejor ajuste, ★ = mejor modelo de la fila y el estado escrito en la celda cuando el
+    modelo no convergió o no tuvo días suficientes. Mucho más fácil de comparar que barras de
+    0.88 frente a 0.91."""
+    filas_txt, z, texto = [], [], []
+    ganadores = []
+    for variable in variables:
+        _, mejores = calcular_tabla_modelo(RES, datos, variable, modelos)
         for grupo in [g for g in ("-M", "+M") if g in datos[variable]]:
-            color = COLOR_GRUPO[grupo]
-            y_num, texto_num, y_nota, texto_nota = [], [], [], []
+            fila_z, fila_t = [], []
             for m in modelos:
                 res = RES[variable][grupo][m]
                 r2 = res["r2"]
                 if res.get("insuficiente"):
-                    y_num.append(None); texto_num.append("")
-                    y_nota.append(0); texto_nota.append(ESTADO_SIN_DIAS)
+                    fila_z.append(None)
+                    fila_t.append(f"—<br><span style='font-size:10px'>{ESTADO_SIN_DIAS.lower()}</span>")
                 elif r2 is None or (isinstance(r2, float) and np.isnan(r2)):
-                    y_num.append(None); texto_num.append("")
-                    y_nota.append(0); texto_nota.append(ESTADO_NO_CONVERGIO)
+                    fila_z.append(None)
+                    fila_t.append(f"—<br><span style='font-size:10px'>{ESTADO_NO_CONVERGIO.lower()}</span>")
                 else:
-                    y_num.append(round(r2, 3)); texto_num.append(f"{r2:.2f}")
-                    y_nota.append(None); texto_nota.append("")
-            mostrar_leyenda = grupo not in leyenda_mostrada
-            marcador = dict(color=color, line=dict(color="white", width=1.2),
-                             pattern=dict(shape=PATRON_GRUPO[grupo], fillmode="overlay",
-                                          fgcolor="white", size=6, solidity=0.25))
-            # `textangle` es un escalar por traza (no admite un valor distinto por barra), así
-            # que las notas "no convergió"/"sin días suficientes" van en una traza aparte con
-            # texto vertical (-90°): con el ángulo horizontal por defecto el texto es más ancho
-            # que una sola barra y se encima con las etiquetas de las barras vecinas.
-            fig.add_trace(go.Bar(x=modelos, y=y_num, name=f"{texto_grupo(grupo)} · {NOMBRE_GRUPO[grupo]}",
-                                  legendgroup=grupo, showlegend=mostrar_leyenda,
-                                  marker=marcador, text=texto_num, textposition="outside", cliponaxis=False,
-                                  constraintext="none",
-                                  hovertemplate=f"{texto_grupo(grupo)} · %{{x}}<br>R² = %{{y:.3f}}<extra></extra>",
-                                  textfont=dict(family=FUENTE_PUBLICACION, size=12, color=G_INK)),
-                          row=fila, col=col)
-            fig.add_trace(go.Bar(x=modelos, y=y_nota, name=grupo, legendgroup=grupo, showlegend=False,
-                                  marker=marcador, text=texto_nota, textposition="outside", cliponaxis=False,
-                                  constraintext="none", textangle=-90, hoverinfo="skip",
-                                  textfont=dict(family=FUENTE_PUBLICACION, size=12, color=G_MUTED)),
-                          row=fila, col=col)
-            leyenda_mostrada.add(grupo)
-        fig.update_yaxes(range=[0, 1.15], row=fila, col=col, tickmode="linear", tick0=0, dtick=0.2,
-                          title_text=("R²" if col == 1 else None))
-        fig.update_xaxes(row=fila, col=col, tickfont=dict(size=12))
-
-    # Título-conclusión: qué modelo gana más veces (mayor R² por variable y grupo).
-    ganadores = []
-    for variable in variables:
-        _, mejores = calcular_tabla_modelo(RES, datos, variable, modelos)
-        ganadores += [m for m in mejores.values() if m]
+                    fila_z.append(float(r2))
+                    fila_t.append(f"★ <b>{r2:.3f}</b>" if m == mejores[grupo] else f"{r2:.3f}")
+            if mejores[grupo]:
+                ganadores.append(mejores[grupo])
+            filas_txt.append(f"{NOMBRE_VARIABLE[variable]} · {texto_grupo(grupo)}")
+            z.append(fila_z)
+            texto.append(fila_t)
+    validos = [v for fila in z for v in fila if v is not None]
+    z_min = min(0.8, np.floor(min(validos) * 20) / 20) if validos else 0.8
+    fig = go.Figure(go.Heatmap(
+        z=z, x=modelos, y=filas_txt, text=texto, texttemplate="%{text}", xgap=4, ygap=4,
+        colorscale=[[0, "#F7EFE9"], [0.5, "#D9A08C"], [1, "#8E3520"]], zmin=z_min, zmax=1,
+        colorbar=dict(title=dict(text="R²", font=dict(color=G_MUTED)), thickness=12, len=0.8,
+                      tickfont=dict(color=G_MUTED)),
+        textfont=dict(family=FUENTE_PUBLICACION, size=14),
+        hovertemplate="%{y} · %{x}<br>R² = %{z:.3f}<extra></extra>"))
     if ganadores:
         top = max(set(ganadores), key=ganadores.count)
-        titulo = (f"{top} logra el R² más alto en {ganadores.count(top)} de {len(ganadores)} "
-                  "combinaciones variable-grupo")
+        titulo = f"{top} logra el mejor ajuste en {ganadores.count(top)} de {len(filas_txt)} casos"
     else:
         titulo = "Comparación de R² por modelo"
-    fig.update_layout(barmode="group", bargap=0.4, bargroupgap=0.3)
-    estilo_publicacion(fig, width=1200, height=(460 if filas_n == 1 else 430 * filas_n) + 40, titulo=titulo,
-                       subtitulo="R² = qué tan bien la curva describe los datos (1 = perfecto) · "
-                                 "cada panel es una variable · barras vacías = el modelo no se pudo ajustar")
-    alinear_titulos_panel_izquierda(fig, len(variables))
-
+    estilo_publicacion(fig, width=1100, height=max(360, 170 + 62 * len(filas_txt)), titulo=titulo,
+                       mostrar_leyenda=False, left_margin=180,
+                       subtitulo=f"Cada celda = R² del modelo (1 = ajuste perfecto) · más oscuro = mejor · ★ = mejor "
+                                 f"modelo de la fila · escala de color de {z_min:.2f} a 1")
+    fig.update_xaxes(side="top", showline=False, showgrid=False, ticks="",
+                     tickfont=dict(family=FUENTE_PUBLICACION, size=14, color=G_INK))
+    fig.update_yaxes(autorange="reversed", showgrid=False, tickmode="array", tickvals=filas_txt,
+                     ticktext=filas_txt, tickfont=dict(family=FUENTE_PUBLICACION, size=13, color=G_INK))
     pie = construir_pie(
-        "R² de cada modelo (Exponencial, Logístico, Gompertz) por variable y grupo. Eje Y fijo en 0-1.15: "
-        "las barras siempre parten de 0.",
-        notas=["Barras vacías con etiqueta vertical = modelo no convergió o sin días suficientes."],
-    )
+        "R² de cada modelo (Exponencial, Logístico, Gompertz) por variable y grupo. ★ = mayor R² de la fila. "
+        "Las celdas con «—» indican que el modelo no convergió o no tuvo días suficientes.")
     return fig, pie
 
 
@@ -3384,16 +3395,18 @@ elif seccion == "Gráficas de barras":
         )
         st.write("")
 
-    if len(variables_a_mostrar) >= 2:
-        st.markdown('<hr class="rule">', unsafe_allow_html=True)
-        st.markdown("### Resumen (a)–(d)")
-        fig_resumen, pie_resumen = fig_barras_resumen_2x2(DATOS, variables_a_mostrar, st.session_state.fuente_datos)
+    st.markdown('<hr class="rule">', unsafe_allow_html=True)
+    st.markdown("### Resumen: efecto de la micorriza al final del ensayo")
+    fig_resumen, pie_resumen = fig_resumen_efecto_final(DATOS, variables_a_mostrar, st.session_state.fuente_datos)
+    if fig_resumen is None:
+        st.info(pie_resumen)
+    else:
         st.plotly_chart(fig_resumen, width='stretch')
         mostrar_pie_streamlit(pie_resumen)
         st.download_button(
-            "Descargar PNG — Resumen (a)–(d)",
+            "Descargar PNG — Resumen del efecto",
             data=componer_png_con_pie(fig_resumen.to_image(format="png", scale=3), pie_resumen),
-            file_name="barras_resumen.png", mime="image/png", key="png_barras_resumen",
+            file_name="barras_resumen_efecto.png", mime="image/png", key="png_barras_resumen",
         )
 
     st.markdown('<hr class="rule">', unsafe_allow_html=True)
@@ -3877,7 +3890,7 @@ elif seccion == "Exportar reporte":
             "- Metodología breve de los tres modelos comparados\n"
             "- Tabla de R², RMSE y MAE por grupo y modelo (con el estado de cada ajuste)\n"
             "- Gráficas de curvas ajustadas por variable\n"
-            "- Gráficas de barras por variable y comparación de R² por modelo\n"
+            "- Gráficas de barras por variable, resumen del efecto final y tabla de R² por modelo\n"
             "- Tasas de crecimiento (AGR y RGR) del modelo con mejor R² en cada grupo\n"
             "- Análisis de residuos con ANOVA (¿el error cambia según el día? ¿qué modelo se equivoca menos?)\n"
             "- Resultados esperados: mejor modelo por variable y efecto +M vs −M con prueba t\n"
@@ -4122,21 +4135,18 @@ elif seccion == "Exportar reporte":
                 insertar_imagen_png(pdf, fig_barra_pdf.to_image(format="png", scale=3))
                 insertar_pie_pdf(pdf, pie_barra_pdf)
 
-            if len(variables_a_mostrar) >= 2:
-                asegurar_espacio(pdf, 110)
-                subtitulo_variable(pdf, "Resumen (a)-(d)")
-                fig_resumen_pdf, pie_resumen_pdf = fig_barras_resumen_2x2(
-                    DATOS, variables_a_mostrar, st.session_state.fuente_datos)
-                fig_resumen_pdf.update_layout(paper_bgcolor="white", plot_bgcolor="white")
+            fig_resumen_pdf, pie_resumen_pdf = fig_resumen_efecto_final(
+                DATOS, variables_a_mostrar, st.session_state.fuente_datos)
+            if fig_resumen_pdf is not None:
+                asegurar_espacio(pdf, 90)
+                subtitulo_variable(pdf, "Resumen: efecto de la micorriza al final del ensayo")
                 insertar_imagen_png(pdf, fig_resumen_pdf.to_image(format="png", scale=3))
                 insertar_pie_pdf(pdf, pie_resumen_pdf)
 
             asegurar_espacio(pdf, 100)
             subtitulo_variable(pdf, "Comparacion de R2 por modelo")
             fig_r2_pdf, pie_r2_pdf = fig_barras_r2_comparacion(RES, DATOS, variables_a_mostrar, modelos_a_mostrar)
-            # No se fuerza "height": la propia figura calcula su alto segun 1 o 2 filas de
-            # subplots (cuadricula 2x2 cuando hay 4 variables), y forzar un alto fijo aqui
-            # volvia a aplastar la segunda fila como antes de la Tarea 3.
+            # No se fuerza "height": la tabla de calor calcula su alto segun el numero de filas.
             fig_r2_pdf.update_layout(paper_bgcolor="white", plot_bgcolor="white")
             insertar_imagen_png(pdf, fig_r2_pdf.to_image(format="png", scale=3))
             insertar_pie_pdf(pdf, pie_r2_pdf)
