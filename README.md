@@ -49,9 +49,10 @@ reajustar el modelo)
 
 ![Tasas de crecimiento](docs/screenshots/tasas.png)
 
-**Gráficas de barras** — barras agrupadas −M vs +M por variable y día, con
-patrón de trama además de color, marcas de significancia (prueba t de
-Welch) y una comparación de R² por modelo en cuadrícula 2×2
+**Gráficas de barras** — barras −M vs +M por variable y día con cada planta
+como un círculo, y sobre cada día cuánto más crece +M (%) con su significancia
+(prueba t de Welch); un resumen del efecto de la micorriza al final del ensayo
+por variable, y el R² de cada modelo en una tabla de colores
 
 ![Gráficas de barras](docs/screenshots/barras.png)
 
@@ -84,8 +85,8 @@ La navegación de la app tiene estas secciones:
 - **Resultados** — curvas ajustadas por variable (panel −M / panel +M),
   con réplicas observadas, banda de confianza del 95% y, dentro de un
   expander, las tasas de crecimiento AGR/RGR.
-- **Gráficas de barras** — barras de medias ± DE por día con significancia
-  estadística, y comparación de R² por modelo en una cuadrícula 2×2.
+- **Gráficas de barras** — barras de medias ± DE por día con el % de efecto y
+  su significancia, resumen del efecto final por variable y tabla de R² por modelo.
 - **Resultados esperados** — mejor modelo por variable/grupo y tabla del
   efecto de la inoculación (+M vs −M) con la prueba t.
 - **Estadística** — intervalos de confianza por parámetro y prueba t de
