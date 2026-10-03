@@ -2496,14 +2496,21 @@ def ve_fig_predicho_vs_real(var, series, ventana, t_max, cita):
                        mostrar_leyenda=False,
                        subtitulo=f"Modelos ajustados a <b>sus datos</b>, sin cambiar parámetros, predicen un experimento "
                                  f"que <b>nunca vieron</b> ({cita})<br>{chips}", espacio_leyenda_px=40)
+    simbolo = {"-M": ("●", "○"), "+M": ("▲", "△")}
+    leyenda_b = "   ".join(f"<span style='color:{ve_color(g)}; font-size:14px'>{simbolo[g][0]}</span> "
+                           f"<span style='color:{G_INK}'>{texto_grupo(g)} · {NOMBRE_GRUPO[g]}</span>" for g in series)
+    leyenda_a = "   ".join(f"<span style='color:{ve_color(g)}; font-size:14px'>━ {simbolo[g][1]}</span> "
+                           f"<span style='color:{G_INK}'>{texto_grupo(g)} · {NOMBRE_GRUPO[g]}</span>"
+                           for g in series)
     for col, txt, sub in ((1, "(a) Curva predicha vs datos del paper",
-                           "línea = predicción · marcador = media publicada ± DE · punteado = error"),
-                          (2, "(b) Predicho vs real", "cada punto = una fecha del paper")):
+                           f"línea = predicción · marcador = media publicada ± DE · punteado = error<br>{leyenda_a}"),
+                          (2, "(b) Predicho vs real",
+                           f"cada punto = una fecha del paper (el número es su día)<br>{leyenda_b}")):
         xr, yr = _ref_ejes(col)
         fig.add_annotation(xref=f"{xr} domain", yref=f"{yr} domain", x=0, y=1.03, xanchor="left", yanchor="bottom",
                            showarrow=False, align="left", font=dict(family=FUENTE_PUBLICACION, size=14, color=G_INK),
                            text=f"<b>{txt}</b><br><span style='font-size:11.5px;color:{G_MUTED}'>{sub}</span>")
-    fig.update_layout(margin=dict(t=fig.layout.margin.t + 40))
+    fig.update_layout(margin=dict(t=fig.layout.margin.t + 58))
     return fig, mapes
 
 
