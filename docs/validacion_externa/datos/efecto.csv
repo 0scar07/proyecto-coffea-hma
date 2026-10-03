@@ -1,0 +1,73 @@
+fuente,variable,tratamiento,mat,media_control_Ni,media_tratamiento,incremento_pct,media_control,direccion
+siqueira_1998,altura,CM,0.0,10.0,15.0,50.0,,
+siqueira_1998,altura,CM,9.0,32.0,42.0,31.25,,
+siqueira_1998,altura,CM,19.0,76.0,82.0,7.894736842105263,,
+siqueira_1998,altura,CM,26.0,106.0,111.0,4.716981132075472,,
+siqueira_1998,altura,Lav,0.0,10.0,13.0,30.0,,
+siqueira_1998,altura,Lav,9.0,32.0,48.0,50.0,,
+siqueira_1998,altura,Lav,19.0,76.0,90.0,18.421052631578945,,
+siqueira_1998,altura,Lav,26.0,106.0,117.0,10.377358490566039,,
+siqueira_1998,altura,Par,0.0,10.0,11.0,10.0,,
+siqueira_1998,altura,Par,9.0,32.0,43.0,34.375,,
+siqueira_1998,altura,Par,19.0,76.0,88.0,15.789473684210526,,
+siqueira_1998,altura,Par,26.0,106.0,116.0,9.433962264150944,,
+siqueira_1998,altura,Pat,0.0,10.0,17.0,70.0,,
+siqueira_1998,altura,Pat,9.0,32.0,43.0,34.375,,
+siqueira_1998,altura,Pat,19.0,76.0,86.0,13.157894736842104,,
+siqueira_1998,altura,Pat,26.0,106.0,114.0,7.547169811320755,,
+siqueira_1998,altura,TP,0.0,10.0,13.0,30.0,,
+siqueira_1998,altura,TP,9.0,32.0,40.0,25.0,,
+siqueira_1998,altura,TP,19.0,76.0,81.0,6.578947368421052,,
+siqueira_1998,altura,TP,26.0,106.0,109.0,2.8301886792452833,,
+siqueira_1998,altura,Var,0.0,10.0,13.0,30.0,,
+siqueira_1998,altura,Var,9.0,32.0,43.0,34.375,,
+siqueira_1998,altura,Var,19.0,76.0,87.0,14.473684210526317,,
+siqueira_1998,altura,Var,26.0,106.0,116.0,9.433962264150944,,
+siqueira_1998,diametro_copa,CM,9.0,22.0,26.0,18.181818181818183,,
+siqueira_1998,diametro_copa,CM,19.0,71.0,76.0,7.042253521126761,,
+siqueira_1998,diametro_copa,CM,26.0,103.0,108.0,4.854368932038835,,
+siqueira_1998,diametro_copa,Lav,9.0,22.0,30.0,36.36363636363637,,
+siqueira_1998,diametro_copa,Lav,19.0,71.0,89.0,25.352112676056336,,
+siqueira_1998,diametro_copa,Lav,26.0,103.0,115.0,11.650485436893204,,
+siqueira_1998,diametro_copa,Par,9.0,22.0,27.0,22.727272727272727,,
+siqueira_1998,diametro_copa,Par,19.0,71.0,85.0,19.718309859154928,,
+siqueira_1998,diametro_copa,Par,26.0,103.0,111.0,7.766990291262135,,
+siqueira_1998,diametro_copa,Pat,9.0,22.0,26.0,18.181818181818183,,
+siqueira_1998,diametro_copa,Pat,19.0,71.0,85.0,19.718309859154928,,
+siqueira_1998,diametro_copa,Pat,26.0,103.0,116.0,12.62135922330097,,
+siqueira_1998,diametro_copa,TP,9.0,22.0,25.0,13.636363636363635,,
+siqueira_1998,diametro_copa,TP,19.0,71.0,77.0,8.450704225352112,,
+siqueira_1998,diametro_copa,TP,26.0,103.0,106.0,2.912621359223301,,
+siqueira_1998,diametro_copa,Var,9.0,22.0,30.0,36.36363636363637,,
+siqueira_1998,diametro_copa,Var,19.0,71.0,87.0,22.535211267605636,,
+siqueira_1998,diametro_copa,Var,26.0,103.0,117.0,13.592233009708737,,
+siqueira_1998,diametro_tallo,CM,9.0,5.5,7.4,34.545454545454554,,
+siqueira_1998,diametro_tallo,CM,19.0,22.7,24.8,9.25110132158591,,
+siqueira_1998,diametro_tallo,CM,26.0,24.1,24.4,1.2448132780082868,,
+siqueira_1998,diametro_tallo,Lav,9.0,5.5,8.7,58.181818181818166,,
+siqueira_1998,diametro_tallo,Lav,19.0,22.7,27.6,21.58590308370045,,
+siqueira_1998,diametro_tallo,Lav,26.0,24.1,26.2,8.713692946058082,,
+siqueira_1998,diametro_tallo,Par,9.0,5.5,7.5,36.36363636363637,,
+siqueira_1998,diametro_tallo,Par,19.0,22.7,26.7,17.62114537444934,,
+siqueira_1998,diametro_tallo,Par,26.0,24.1,26.5,9.958506224066383,,
+siqueira_1998,diametro_tallo,Pat,9.0,5.5,7.1,29.090909090909083,,
+siqueira_1998,diametro_tallo,Pat,19.0,22.7,26.6,17.180616740088116,,
+siqueira_1998,diametro_tallo,Pat,26.0,24.1,25.2,4.564315352697086,,
+siqueira_1998,diametro_tallo,TP,9.0,5.5,6.0,9.090909090909092,,
+siqueira_1998,diametro_tallo,TP,19.0,22.7,24.4,7.488986784140966,,
+siqueira_1998,diametro_tallo,TP,26.0,24.1,24.9,3.319502074688785,,
+siqueira_1998,diametro_tallo,Var,9.0,5.5,8.2,49.09090909090908,,
+siqueira_1998,diametro_tallo,Var,19.0,22.7,27.0,18.942731277533042,,
+siqueira_1998,diametro_tallo,Var,26.0,24.1,26.6,10.373443983402488,,
+vallejos_torres_2021,altura,Huall-pache,,,33.38,16.958654519971983,28.54,mayor que control
+vallejos_torres_2021,numero_ramas,Huall-pache,,,4.28,31.28834355828222,3.26,mayor que control
+vallejos_torres_2021,numero_hojas,Huall-pache,,,21.62,7.2420634920634965,20.16,mayor que control
+vallejos_torres_2021,diametro_tallo,Huall-pache,,,6.48,22.03389830508476,5.31,mayor que control
+vallejos_torres_2021,altura,Do-cat,,,39.11,37.03573931324457,28.54,mayor que control
+vallejos_torres_2021,numero_ramas,Do-cat,,,5.94,82.20858895705524,3.26,mayor que control
+vallejos_torres_2021,numero_hojas,Do-cat,,,33.63,66.8154761904762,20.16,mayor que control
+vallejos_torres_2021,diametro_tallo,Do-cat,,,7.7,45.009416195856886,5.31,mayor que control
+vallejos_torres_2021,altura,Mo-cat,,,38.72,35.66923615977575,28.54,mayor que control
+vallejos_torres_2021,numero_ramas,Mo-cat,,,5.43,66.56441717791411,3.26,mayor que control
+vallejos_torres_2021,numero_hojas,Mo-cat,,,31.04,53.96825396825397,20.16,mayor que control
+vallejos_torres_2021,diametro_tallo,Mo-cat,,,7.86,48.02259887005651,5.31,mayor que control

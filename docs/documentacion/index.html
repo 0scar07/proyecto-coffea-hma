@@ -1,0 +1,686 @@
+<!DOCTYPE html>
+<html lang="es" class="no-js">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Documentación técnica · Coffea IA</title>
+<meta name="description" content="Documentación técnica de app/app.py: arquitectura, modelos, métricas, referencia de funciones generada del código, despliegue y limitaciones.">
+<meta name="color-scheme" content="light dark">
+<link rel="stylesheet" href="assets/styles.css">
+<!-- efectos.css es puramente decorativo (transiciones/animaciones): si no carga, todo
+     lo de styles.css + app.js sigue funcionando igual, solo que sin movimiento. -->
+<link rel="stylesheet" href="assets/efectos.css">
+</head>
+<body>
+<a class="saltar-enlace" href="#contenido-principal">Saltar al contenido</a>
+<div class="solo-sr" role="status" aria-live="polite" data-anunciador></div>
+
+<div class="barra-progreso"><div class="relleno"></div></div>
+<div class="indicador-apartado">Apartado 1 de 14</div>
+
+<header class="barra-superior">
+  <button class="boton-icono abrir-menu" type="button" aria-label="Abrir menú" aria-expanded="false" aria-controls="menu-lateral">
+    <svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><path d="M2 5h16M2 10h16M2 15h16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+  </button>
+  <span class="marca">Coffea IA · Documentación técnica</span>
+</header>
+
+<div class="fondo-oscurecido"></div>
+
+<div class="envoltura">
+  <nav class="barra-lateral" id="menu-lateral" aria-label="Navegación principal">
+    <div style="display:flex;align-items:center;justify-content:space-between;">
+      <div class="marca-sidebar"><span class="hoja" aria-hidden="true">⁂</span><strong>Coffea IA</strong></div>
+      <button class="boton-icono cerrar-menu" type="button" aria-label="Cerrar menú">✕</button>
+    </div>
+    <div class="buscador" role="search">
+      <label class="solo-sr" for="campo-buscar">Buscar en la documentación</label>
+      <input type="search" id="campo-buscar" placeholder="Buscar…" autocomplete="off">
+      <span class="icono-buscar" aria-hidden="true">⌕</span>
+      <div class="resultados-busqueda" role="listbox" aria-label="Resultados de búsqueda"></div>
+    </div>
+    <ul class="nav-lateral">
+      <span class="indicador-activo-nav" aria-hidden="true"></span>
+      <li><a class="enlace-nav" href="#portada"><span class="num">Portada</span>Documentación técnica de Coffea IA</a></li>
+<li><a class="enlace-nav" href="#vision-general"><span class="num">1</span>Visión general y arquitectura</a></li>
+<li><a class="enlace-nav" href="#estructura-repo"><span class="num">2</span>Estructura del repositorio</a></li>
+<li><a class="enlace-nav" href="#formato-datos"><span class="num">3</span>Formato de datos y validaciones</a></li>
+<li><a class="enlace-nav" href="#modelos"><span class="num">4</span>Modelos: fórmulas y convergencia</a></li>
+<li><a class="enlace-nav" href="#metricas-k"><span class="num">5</span>Métricas y plausibilidad de K</a></li>
+<li><a class="enlace-nav" href="#estadistica"><span class="num">6</span>Estadística (t de Welch)</a></li>
+<li><a class="enlace-nav" href="#graficas-reporte"><span class="num">7</span>Gráficas y reporte PDF</a></li>
+<li><a class="enlace-nav" href="#ref-funciones"><span class="num">8</span>Referencia de funciones</a></li>
+<li><a class="enlace-nav" href="#despliegue"><span class="num">9</span>Despliegue</a></li>
+<li><a class="enlace-nav" href="#ejecutar-local"><span class="num">10</span>Ejecutar y probar en local</a></li>
+<li><a class="enlace-nav" href="#limitaciones"><span class="num">11</span>Limitaciones y trabajo futuro</a></li>
+<li><a class="enlace-nav" href="#glosario"><span class="num">12</span>Glosario</a></li>
+<li><a class="enlace-nav" href="#registro-cambios"><span class="num">13</span>Registro de cambios</a></li>
+    </ul>
+    <div class="selector-tema" role="group" aria-label="Tema de color">
+      <button type="button" data-tema="light" aria-pressed="false">☀ Claro</button>
+      <button type="button" data-tema="dark" aria-pressed="false">☾ Oscuro</button>
+      <button type="button" data-tema="auto" aria-pressed="true">Auto</button>
+    </div>
+  </nav>
+
+  <main class="contenido-principal" id="contenido-principal">
+    <section class="apartado" id="portada" aria-labelledby="titulo-portada">
+<p class="apartado-etiqueta">Coffea IA · Documentación técnica del código</p>
+<h1 id="titulo-portada">Documentación técnica de Coffea IA</h1>
+<p>Referencia técnica de <code>app/app.py</code> generada a partir del código real y de la
+salida de la app con datos reales — no es un tutorial de usuario (para eso existe la
+<a href="../06_guia_tecnica/guia_tecnica_usuario.pdf">guía técnica de usuario en PDF</a>).</p>
+<div class="contadores">
+  <div class="contador"><span class="valor" data-valor="46">0</span><span class="etiqueta">Funciones documentadas</span></div>
+  <div class="contador"><span class="valor" data-valor="2741">0</span><span class="etiqueta">Líneas en app.py</span></div>
+  <div class="contador"><span class="valor" data-valor="11">0</span><span class="etiqueta">Secciones de la app</span></div>
+  <div class="contador"><span class="valor" data-valor="15">0</span><span class="etiqueta">Funciones sin docstring</span></div>
+</div>
+<div class="recuadro recuadro-nota"><span class="etiqueta">Nota</span><b>Versión</b> generada el 2026-09-19 sobre el commit <code>058b590</code> de la rama <code>feature/docs-html</code>. Cada cifra de esta página (funciones, líneas, resultados de ejemplo) se calculó en el momento de generar, no está escrita a mano.</div>
+<div class="enlaces-pie">
+  <a class="boton" href="[URL de la app en Streamlit Cloud — pendiente de publicar en el README]">Abrir la app</a>
+  <a class="boton secundario" href="https://github.com/0scar07/proyecto-coffea-hma">Ver el repositorio</a>
+  <a class="boton secundario" href="../06_guia_tecnica/guia_tecnica_usuario.pdf">Guía técnica de usuario (PDF)</a>
+</div>
+<div class="recuadro recuadro-advertencia"><span class="etiqueta">Advertencia</span>Las réplicas individuales del dataset real son <b>sintéticas</b> (generadas a partir de las medias y CV% de Aguirre-Medina et al., 2023, DOI 10.35196/rfm.2023.3.273); los p-valores que aparecen en esta página son ilustrativos de la metodología, no evidencia estadística independiente. La validación externa está pendiente.</div>
+<nav class="nav-apartado" aria-label="Navegación entre apartados"><span></span><a class="siguiente" href="#vision-general" data-boton-siguiente><span class="direccion">Siguiente →</span>Visión general y arquitectura</a></nav></section>
+<section class="apartado" id="vision-general" aria-labelledby="titulo-vision-general">
+<p class="apartado-etiqueta">01 · Arquitectura</p>
+<h1 id="titulo-vision-general">Visión general y diagrama de arquitectura</h1>
+<p>Coffea IA es una app de Streamlit de un solo archivo (<code>app/app.py</code>, 2741
+líneas) que ajusta tres modelos de crecimiento no lineales a datos de <i>Coffea arabica</i> y
+compara un grupo control (−M) contra uno inoculado con hongos micorrízicos arbusculares (+M).
+El flujo de datos es siempre el mismo, sin importar la sección de la app que se esté usando:</p>
+<div class="diagrama-envoltura">
+  <svg class="diagrama-svg solo-escritorio-diagrama" viewBox="0 0 1480 204" role="img" aria-label="Diagrama de flujo: Datos, Validación, Ajuste de tres modelos, Métricas, Gráficas y Reporte PDF"><defs><marker id="flecha-punta" viewBox="0 0 10 10" refX="9" refY="5"
+      markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z"/></marker></defs><path class="flecha-flujo" d="M210,102.0 L270,102.0" marker-end="url(#flecha-punta)"/><path class="flecha-flujo" d="M460,102.0 L520,102.0" marker-end="url(#flecha-punta)"/><path class="flecha-flujo" d="M710,102.0 L770,102.0" marker-end="url(#flecha-punta)"/><path class="flecha-flujo" d="M960,102.0 L1020,102.0" marker-end="url(#flecha-punta)"/><path class="flecha-flujo" d="M1210,102.0 L1270,102.0" marker-end="url(#flecha-punta)"/><g class="grupo-nodo" data-funcion="cargar_datos_desde_archivo" data-index="0">
+      <rect class="caja-nodo" x="20" y="60" width="190" height="84" rx="10"/>
+      <text class="texto-nodo" x="115.0" y="96.0" text-anchor="middle">Datos</text>
+      <text class="texto-funcion" x="115.0" y="116.0" text-anchor="middle">cargar_datos_desde_archivo()</text>
+    </g><g class="grupo-nodo" data-funcion="advertir_dias_insuficientes" data-index="1">
+      <rect class="caja-nodo" x="270" y="60" width="190" height="84" rx="10"/>
+      <text class="texto-nodo" x="365.0" y="96.0" text-anchor="middle">Validación</text>
+      <text class="texto-funcion" x="365.0" y="116.0" text-anchor="middle">advertir_dias_insuficientes()</text>
+    </g><g class="grupo-nodo" data-funcion="ajustar_todos_los_modelos" data-index="2">
+      <rect class="caja-nodo" x="520" y="60" width="190" height="84" rx="10"/>
+      <text class="texto-nodo" x="615.0" y="96.0" text-anchor="middle">Ajuste (3 modelos)</text>
+      <text class="texto-funcion" x="615.0" y="116.0" text-anchor="middle">ajustar_todos_los_modelos()</text>
+    </g><g class="grupo-nodo" data-funcion="calcular_r2" data-index="3">
+      <rect class="caja-nodo" x="770" y="60" width="190" height="84" rx="10"/>
+      <text class="texto-nodo" x="865.0" y="96.0" text-anchor="middle">Métricas</text>
+      <text class="texto-funcion" x="865.0" y="116.0" text-anchor="middle">calcular_r2()</text>
+    </g><g class="grupo-nodo" data-funcion="fig_curvas_publicacion" data-index="4">
+      <rect class="caja-nodo" x="1020" y="60" width="190" height="84" rx="10"/>
+      <text class="texto-nodo" x="1115.0" y="96.0" text-anchor="middle">Gráficas</text>
+      <text class="texto-funcion" x="1115.0" y="116.0" text-anchor="middle">fig_curvas_publicacion()</text>
+    </g><g class="grupo-nodo" data-funcion="ReportePDF" data-index="5">
+      <rect class="caja-nodo" x="1270" y="60" width="190" height="84" rx="10"/>
+      <text class="texto-nodo" x="1365.0" y="96.0" text-anchor="middle">Reporte PDF</text>
+      <text class="texto-funcion" x="1365.0" y="116.0" text-anchor="middle">ReportePDF()</text>
+    </g></svg>
+  <svg class="diagrama-svg solo-movil-diagrama" viewBox="0 0 320 774" role="img" aria-label="Diagrama de flujo: Datos, Validación, Ajuste de tres modelos, Métricas, Gráficas y Reporte PDF"><defs><marker id="flecha-punta" viewBox="0 0 10 10" refX="9" refY="5"
+      markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z"/></marker></defs><path class="flecha-flujo" d="M160.0,104 L160.0,150" marker-end="url(#flecha-punta)"/><path class="flecha-flujo" d="M160.0,234 L160.0,280" marker-end="url(#flecha-punta)"/><path class="flecha-flujo" d="M160.0,364 L160.0,410" marker-end="url(#flecha-punta)"/><path class="flecha-flujo" d="M160.0,494 L160.0,540" marker-end="url(#flecha-punta)"/><path class="flecha-flujo" d="M160.0,624 L160.0,670" marker-end="url(#flecha-punta)"/><g class="grupo-nodo" data-funcion="cargar_datos_desde_archivo" data-index="0">
+      <rect class="caja-nodo" x="30" y="20" width="260" height="84" rx="10"/>
+      <text class="texto-nodo" x="160.0" y="56.0" text-anchor="middle">Datos</text>
+      <text class="texto-funcion" x="160.0" y="76.0" text-anchor="middle">cargar_datos_desde_archivo()</text>
+    </g><g class="grupo-nodo" data-funcion="advertir_dias_insuficientes" data-index="1">
+      <rect class="caja-nodo" x="30" y="150" width="260" height="84" rx="10"/>
+      <text class="texto-nodo" x="160.0" y="186.0" text-anchor="middle">Validación</text>
+      <text class="texto-funcion" x="160.0" y="206.0" text-anchor="middle">advertir_dias_insuficientes()</text>
+    </g><g class="grupo-nodo" data-funcion="ajustar_todos_los_modelos" data-index="2">
+      <rect class="caja-nodo" x="30" y="280" width="260" height="84" rx="10"/>
+      <text class="texto-nodo" x="160.0" y="316.0" text-anchor="middle">Ajuste (3 modelos)</text>
+      <text class="texto-funcion" x="160.0" y="336.0" text-anchor="middle">ajustar_todos_los_modelos()</text>
+    </g><g class="grupo-nodo" data-funcion="calcular_r2" data-index="3">
+      <rect class="caja-nodo" x="30" y="410" width="260" height="84" rx="10"/>
+      <text class="texto-nodo" x="160.0" y="446.0" text-anchor="middle">Métricas</text>
+      <text class="texto-funcion" x="160.0" y="466.0" text-anchor="middle">calcular_r2()</text>
+    </g><g class="grupo-nodo" data-funcion="fig_curvas_publicacion" data-index="4">
+      <rect class="caja-nodo" x="30" y="540" width="260" height="84" rx="10"/>
+      <text class="texto-nodo" x="160.0" y="576.0" text-anchor="middle">Gráficas</text>
+      <text class="texto-funcion" x="160.0" y="596.0" text-anchor="middle">fig_curvas_publicacion()</text>
+    </g><g class="grupo-nodo" data-funcion="ReportePDF" data-index="5">
+      <rect class="caja-nodo" x="30" y="670" width="260" height="84" rx="10"/>
+      <text class="texto-nodo" x="160.0" y="706.0" text-anchor="middle">Reporte PDF</text>
+      <text class="texto-funcion" x="160.0" y="726.0" text-anchor="middle">ReportePDF()</text>
+    </g></svg>
+  <p class="apartado-etiqueta" style="margin-top:12px;">Pasa el cursor o el foco por una caja para
+  ver qué función la implementa; haz clic para saltar a su entrada en la Referencia de funciones.</p>
+</div>
+<h2>Las capas del archivo</h2>
+<ol>
+  <li><b>Estilo y composición visual</b> — da formato a las figuras de Plotly y separa el pie de
+  cada figura del gráfico mismo.</li>
+  <li><b>Modelos matemáticos</b> — <code>modelo_exponencial</code>, <code>modelo_logistico</code>,
+  <code>modelo_gompertz</code>: funciones puras, sin efectos secundarios.</li>
+  <li><b>Datos y utilidades numéricas</b> — generación de datos simulados, manejo de réplicas,
+  métricas de bondad de ajuste.</li>
+  <li><b>Ajuste y pruebas estadísticas</b> — el núcleo: <code>ajustar_todos_los_modelos</code> y
+  <code>prueba_t_independiente</code>.</li>
+  <li><b>Construcción de figuras</b> — una función por tipo de gráfica.</li>
+  <li><b>Reporte PDF</b> — la clase <code>ReportePDF(FPDF)</code> y sus funciones de composición.</li>
+  <li><b>Entrada/salida de datos</b> — lectura/escritura de Excel, plantilla descargable.</li>
+  <li><b>Navegación e interfaz</b> — un bloque <code>if/elif seccion == "...":</code> por cada
+  una de las 11 secciones del menú.</li>
+</ol>
+<nav class="nav-apartado" aria-label="Navegación entre apartados"><a href="#portada" data-boton-anterior><span class="direccion">← Anterior</span>Documentación técnica de Coffea IA</a><a class="siguiente" href="#estructura-repo" data-boton-siguiente><span class="direccion">Siguiente →</span>Estructura del repositorio</a></nav></section>
+<section class="apartado" id="estructura-repo" aria-labelledby="titulo-estructura-repo">
+<p class="apartado-etiqueta">02 · Repositorio</p>
+<h1 id="titulo-estructura-repo">Estructura del repositorio</h1>
+<p>Árbol real de carpetas (se omiten <code>__pycache__/</code>, y las carpetas de previsualización
+<code>previews/</code>/<code>_build/</code>, que están en <code>.gitignore</code>):</p>
+<div class="bloque-codigo"><button class="boton-copiar" type="button" aria-label="Copiar código"><span class="texto-copiar">Copiar</span></button><pre><code class="lenguaje-text"><span class="linea">proyecto-coffea-hma/</span>
+<span class="linea">├── app/</span>
+<span class="linea">│   ├── app.py                  # única fuente de la lógica y el UI (no se toca desde esta doc)</span>
+<span class="linea">│   ├── requirements.txt</span>
+<span class="linea">│   └── .streamlit/config.toml  # tema &quot;Cuaderno de campo&quot;</span>
+<span class="linea">├── datos_reales/</span>
+<span class="linea">│   └── datos_reales_coffea_2023.xlsx</span>
+<span class="linea">├── scripts/</span>
+<span class="linea">│   └── validacion_cruzada_real.py</span>
+<span class="linea">├── docs/</span>
+<span class="linea">│   ├── screenshots/            # capturas de la app</span>
+<span class="linea">│   ├── figuras/                 # gráficas exportadas en PNG</span>
+<span class="linea">│   ├── reportes/                 # PDF de ejemplo generado por la app</span>
+<span class="linea">│   ├── documentacion/            # esta página (index.html + assets/)</span>
+<span class="linea">│   └── index.html                # redirección a documentacion/</span>
+<span class="linea">└── entregables/                 # borradores y plantillas de gestión/difusión</span>
+<span class="linea">    ├── 02_codigo_documentado/</span>
+<span class="linea">    │   ├── documentacion_codigo.md</span>
+<span class="linea">    │   └── fuente_html/           # fuente y script de esta página</span>
+<span class="linea">    └── 06_guia_tecnica/</span>
+<span class="linea">        ├── guia_tecnica_usuario.md</span>
+<span class="linea">        ├── guia_tecnica_usuario.pdf</span>
+<span class="linea">        └── fuente_pdf/</span></code></pre></div>
+<div class="recuadro recuadro-importante"><span class="etiqueta">Importante</span><code>app/app.py</code>, <code>app/requirements.txt</code> y <code>app/.streamlit/config.toml</code> son los únicos archivos que Streamlit Cloud necesita para desplegar — nunca se mueven ni se renombran (ver Apartado 9, Despliegue).</div>
+<nav class="nav-apartado" aria-label="Navegación entre apartados"><a href="#vision-general" data-boton-anterior><span class="direccion">← Anterior</span>Visión general y arquitectura</a><a class="siguiente" href="#formato-datos" data-boton-siguiente><span class="direccion">Siguiente →</span>Formato de datos y validaciones</a></nav></section>
+<section class="apartado" id="formato-datos" aria-labelledby="titulo-formato-datos">
+<p class="apartado-etiqueta">03 · Datos</p>
+<h1 id="titulo-formato-datos">Formato de datos y validaciones</h1>
+<p>La app acepta datos en <b>formato largo</b>, con estas columnas exactas (verificado contra
+<code>datos_reales_coffea_2023.xlsx</code>):</p>
+<div class="tabla-contenedor"><div class="tabla-scroll"><table><thead><tr><th>Columna</th><th>Significado</th><th>Ejemplo</th></tr></thead><tbody><tr><td><code>variable</code></td><td>Qué se midió</td><td>altura, area_foliar, biomasa, hojas, diametro</td></tr><tr><td><code>grupo</code></td><td>Tratamiento</td><td>-M (control) o +M (inoculado)</td></tr><tr><td><code>dat</code></td><td>Día después del trasplante</td><td>28, 56, 84, 112</td></tr><tr><td><code>replica</code></td><td>Número de réplica</td><td>1 a 5</td></tr><tr><td><code>valor</code></td><td>Valor medido</td><td>9.0538</td></tr></tbody></table></div><div class="pista-scroll">Desliza para ver más columnas →</div></div>
+<h2>Qué valida la app al cargar un archivo</h2>
+<p><code>cargar_datos_desde_archivo</code> revisa que estén las columnas obligatorias antes de
+aceptar el archivo; si falta alguna, muestra qué columna falta en vez de aceptar un archivo
+incompleto. <code>advertir_dias_insuficientes</code> revisa, variable por variable, cuántos días
+distintos hay disponibles y anticipa qué modelos no van a poder ajustarse.</p>
+<div class="recuadro recuadro-consejo"><span class="etiqueta">Consejo</span>La plantilla descargable en la sección "Datos de prueba" (<code>generar_plantilla_excel</code>) siempre tiene el formato correcto — la forma más segura de empezar es partir de ella.</div>
+<h2>Datos reales incluidos</h2>
+<p>Altura, número de hojas, área foliar y biomasa total en 4 momentos de muestreo (28, 56, 84 y
+112 ddt), 5 réplicas por grupo y día, provienen de Aguirre-Medina et al. (2023). El diámetro del
+tallo no está en ese estudio y sigue usando datos simulados.</p>
+<div class="recuadro recuadro-advertencia"><span class="etiqueta">Advertencia</span>Las réplicas individuales del archivo real son <b>sintéticas</b>: generadas para reproducir la media y el CV% publicados, no son mediciones planta por planta.</div>
+<nav class="nav-apartado" aria-label="Navegación entre apartados"><a href="#estructura-repo" data-boton-anterior><span class="direccion">← Anterior</span>Estructura del repositorio</a><a class="siguiente" href="#modelos" data-boton-siguiente><span class="direccion">Siguiente →</span>Modelos: fórmulas y convergencia</a></nav></section>
+<section class="apartado" id="modelos" aria-labelledby="titulo-modelos">
+<p class="apartado-etiqueta">04 · Modelos</p>
+<h1 id="titulo-modelos">Modelos: fórmulas, parámetros y regla de convergencia</h1>
+<p>Parametrización exacta tal como está en <code>app/app.py</code> — extraída con <code>ast</code>
+del propio código, no copiada de memoria:</p>
+<div class="pestanas"><ul class="pestanas-lista" role="tablist"><li role="presentation"><button class="tab-boton" role="tab" id="tabs-1-tab-0" aria-controls="tabs-1-panel-0" aria-selected="true" tabindex="0" type="button">Exponencial</button></li><li role="presentation"><button class="tab-boton" role="tab" id="tabs-1-tab-1" aria-controls="tabs-1-panel-1" aria-selected="false" tabindex="-1" type="button">Logístico</button></li><li role="presentation"><button class="tab-boton" role="tab" id="tabs-1-tab-2" aria-controls="tabs-1-panel-2" aria-selected="false" tabindex="-1" type="button">Gompertz</button></li><span class="indicador-tab" aria-hidden="true"></span></ul><div class="panel-tab activo" role="tabpanel" id="tabs-1-panel-0" aria-labelledby="tabs-1-tab-0">
+    <div class="formula-caja"><div class="nombre">Exponencial</div><div class="expr">P0 * np.exp(r * t)</div></div>
+    <p><b>Firma en el código:</b> <code>modelo_exponencial(t, P0, r)</code> (línea 429).</p>
+    <p><b>Días mínimos para converger:</b> 2 (por su número de parámetros).</p>
+    </div><div class="panel-tab" role="tabpanel" id="tabs-1-panel-1" aria-labelledby="tabs-1-tab-1">
+    <div class="formula-caja"><div class="nombre">Logístico</div><div class="expr">K / (1 + np.exp(-k * (t - Ti)))</div></div>
+    <p><b>Firma en el código:</b> <code>modelo_logistico(t, K, k, Ti)</code> (línea 432).</p>
+    <p><b>Días mínimos para converger:</b> 3 (por su número de parámetros).</p>
+    </div><div class="panel-tab" role="tabpanel" id="tabs-1-panel-2" aria-labelledby="tabs-1-tab-2">
+    <div class="formula-caja"><div class="nombre">Gompertz</div><div class="expr">K * np.exp(-np.exp(-k * (t - Ti)))</div></div>
+    <p><b>Firma en el código:</b> <code>modelo_gompertz(t, K, k, Ti)</code> (línea 435).</p>
+    <p><b>Días mínimos para converger:</b> 3 (por su número de parámetros).</p>
+    </div></div>
+<p>En Logístico y Gompertz, <code>K</code> es la asíntota superior, <code>k</code> la tasa de
+crecimiento y <code>Ti</code> el punto de inflexión. El ajuste de los tres modelos se hace con
+<code>scipy.optimize.curve_fit</code> — <b>regresión no lineal</b>, no aprendizaje automático.</p>
+<h2>Regla de convergencia</h2>
+<p>Cada modelo necesita un mínimo de días distintos de muestreo para ser identificable
+(Exponencial ≥ 2; Logístico y Gompertz ≥ 3). Si un dataset no llega a ese mínimo, o si
+<code>curve_fit</code> no converge, la app nunca fuerza ni aproxima un ajuste:</p>
+<div class="tabla-contenedor"><div class="tabla-scroll"><table><thead><tr><th>Estado</th><th>Cuándo ocurre</th><th>Qué hace la app</th></tr></thead><tbody><tr><td><code>Sin días suficientes</code></td><td>Menos días distintos de los que el modelo necesita</td><td>No intenta el ajuste; lo dice explícitamente (<code>texto_estado_sin_dias</code>).</td></tr><tr><td><code>No convergió</code></td><td><code>curve_fit</code> no encontró una solución estable</td><td>No dibuja ese modelo ni reporta un R².</td></tr><tr><td><code>OK</code></td><td>Convergió y tiene R² calculado</td><td>Se muestra normalmente en tablas y gráficas.</td></tr></tbody></table></div><div class="pista-scroll">Desliza para ver más columnas →</div></div>
+<p>La función <code>estado_de_ajuste</code> es la única fuente de este vocabulario en toda la app
+y en el PDF — nunca se reinterpreta caso por caso.</p>
+<nav class="nav-apartado" aria-label="Navegación entre apartados"><a href="#formato-datos" data-boton-anterior><span class="direccion">← Anterior</span>Formato de datos y validaciones</a><a class="siguiente" href="#metricas-k" data-boton-siguiente><span class="direccion">Siguiente →</span>Métricas y plausibilidad de K</a></nav></section>
+<section class="apartado" id="metricas-k" aria-labelledby="titulo-metricas-k">
+<p class="apartado-etiqueta">05 · Métricas</p>
+<h1 id="titulo-metricas-k">Métricas (R², RMSE, MAE) y criterio de plausibilidad de K</h1>
+<p><b>R²</b> (0 a 1): qué proporción de la variación observada explica el modelo. <b>RMSE</b> y
+<b>MAE</b>: error típico en las unidades de la variable; RMSE penaliza más los errores grandes.</p>
+<h2>Ejemplo real — Altura</h2>
+<p>Recalculado el 2026-09-19 sobre <code>datos_reales_coffea_2023.xlsx</code> llamando a
+<code>ajustar_todos_los_modelos</code>:</p>
+<div class="tabla-contenedor"><div class="tabla-scroll"><table><thead><tr><th>Grupo</th><th>Modelo</th><th>R²</th><th>RMSE</th><th>MAE</th></tr></thead><tbody><tr><td>-M</td><td>Exponencial</td><td>0.9082</td><td>0.8182</td><td>0.6483</td></tr><tr><td>-M</td><td>Logístico</td><td>0.9082</td><td>0.8182</td><td>0.6483</td></tr><tr><td>-M</td><td>Gompertz</td><td><em>No convergió</em></td><td>–</td><td>–</td></tr><tr><td>+M</td><td>Exponencial</td><td>0.8759</td><td>1.0804</td><td>0.8953</td></tr><tr><td>+M</td><td>Logístico</td><td>0.8769</td><td>1.0759</td><td>0.8911</td></tr><tr><td>+M</td><td>Gompertz</td><td>0.8762</td><td>1.0789</td><td>0.8944</td></tr></tbody></table></div><div class="pista-scroll">Desliza para ver más columnas →</div></div>
+<h2>Criterio de plausibilidad de K vigente</h2>
+<p>La app solo dibuja la asíntota K (Logístico/Gompertz) si se cumplen las <b>cuatro</b>
+condiciones a la vez (función <code>_asintota_k_plausible</code>):</p>
+<ol>
+  <li>El modelo convergió.</li>
+  <li>R² ≥ 0.90.</li>
+  <li>K ≤ 1.5× el máximo observado en ese grupo y variable.</li>
+  <li>El punto de inflexión Ti cae dentro del rango de días muestreados.</li>
+</ol>
+<p>Ejemplo real (Altura, notas generadas por <code>fig_curvas_publicacion</code>):</p>
+<ul><li>Logístico (-M): ni la asíntota K ni la banda de confianza se dibujan (K=790679.8 supera 1.5× el máximo observado (15.0)).</li><li>Gompertz (-M): no convergió.</li><li>Logístico (+M): ni la asíntota K ni la banda de confianza se dibujan (R²=0.877 &lt; 0.90).</li><li>Gompertz (+M): ni la asíntota K ni la banda de confianza se dibujan (R²=0.876 &lt; 0.90).</li></ul>
+<div class="recuadro recuadro-importante"><span class="etiqueta">Importante</span>Un R² alto no implica que K esté bien identificada — puede fallar el criterio de rango o el del punto de inflexión aunque el ajuste general sea bueno en los puntos observados.</div>
+<nav class="nav-apartado" aria-label="Navegación entre apartados"><a href="#modelos" data-boton-anterior><span class="direccion">← Anterior</span>Modelos: fórmulas y convergencia</a><a class="siguiente" href="#estadistica" data-boton-siguiente><span class="direccion">Siguiente →</span>Estadística (t de Welch)</a></nav></section>
+<section class="apartado" id="estadistica" aria-labelledby="titulo-estadistica">
+<p class="apartado-etiqueta">06 · Estadística</p>
+<h1 id="titulo-estadistica">Comparación estadística: prueba t de Welch</h1>
+<p><code>prueba_t_independiente</code> compara −M contra +M con <code>scipy.stats.ttest_ind</code>
+(<code>equal_var=False</code>) por variable y día — sin asumir que ambos grupos tienen la misma
+varianza. <code>calcular_efecto_micorriza</code> arma la tabla completa: media −M, media +M,
+incremento %, t, p y significancia.</p>
+<h2>Ejemplo real — Área foliar</h2>
+<div class="tabla-contenedor"><div class="tabla-scroll"><table><thead><tr><th>Día (ddt)</th><th>Media −M</th><th>Media +M</th><th>Incremento +M</th><th>t (Welch)</th><th>p</th><th>Significativo</th></tr></thead><tbody><tr><td>28</td><td>1.50</td><td>4.50</td><td>+200.0%</td><td>20.249</td><td>p < 0.0001</td><td>Sí</td></tr><tr><td>56</td><td>19.30</td><td>27.95</td><td>+44.8%</td><td>5.829</td><td>p = 0.0008</td><td>Sí</td></tr><tr><td>84</td><td>62.10</td><td>91.20</td><td>+46.9%</td><td>5.421</td><td>p = 0.0022</td><td>Sí</td></tr><tr><td>112</td><td>179.90</td><td>354.60</td><td>+97.1%</td><td>11.445</td><td>p < 0.0001</td><td>Sí</td></tr></tbody></table></div><div class="pista-scroll">Desliza para ver más columnas →</div></div>
+<div class="recuadro recuadro-advertencia"><span class="etiqueta">Advertencia</span>Estas réplicas son sintéticas (Aguirre-Medina et al., 2023) — el p-valor confirma que la diferencia entre las medias <i>reportadas</i> es grande frente a la variabilidad reconstruida, pero no es evidencia estadística independiente nueva sobre el efecto de la micorrización.</div>
+<h2>Códigos de significancia (<code>texto_significancia</code>)</h2>
+<p><code>ns</code> = p ≥ 0.05 · <code>*</code> = p &lt; 0.05 · <code>**</code> = p &lt; 0.01 ·
+<code>***</code> = p &lt; 0.001. <code>formatear_p</code> evita el "p = 0.0000" engañoso: por
+debajo de 0.0001 se reporta como cota superior ("p &lt; 0.0001").</p>
+<nav class="nav-apartado" aria-label="Navegación entre apartados"><a href="#metricas-k" data-boton-anterior><span class="direccion">← Anterior</span>Métricas y plausibilidad de K</a><a class="siguiente" href="#graficas-reporte" data-boton-siguiente><span class="direccion">Siguiente →</span>Gráficas y reporte PDF</a></nav></section>
+<section class="apartado" id="graficas-reporte" aria-labelledby="titulo-graficas-reporte">
+<p class="apartado-etiqueta">07 · Salidas</p>
+<h1 id="titulo-graficas-reporte">Gráficas y reporte PDF</h1>
+<p>Cada tipo de gráfica tiene su propia función constructora, todas devuelven <code>(fig, pie)</code>
+— la figura de Plotly y el texto del pie <i>por separado</i> (nunca como anotación incrustada):</p>
+<div class="tabla-contenedor"><div class="tabla-scroll"><table><thead><tr><th>Función</th><th>Qué produce</th></tr></thead><tbody><tr><td><code>fig_curvas_publicacion</code></td><td>Curvas ajustadas, panel (a) −M / panel (b) +M, banda de confianza y asíntota K</td></tr><tr><td><code>fig_tasas_crecimiento</code></td><td>Paneles AGR/RGR calculados analíticamente de los parámetros ya ajustados</td></tr><tr><td><code>fig_barras_variable</code></td><td>Barras de medias ± DE con significancia</td></tr><tr><td><code>fig_barras_resumen_2x2</code></td><td>Las 4 variables en cuadrícula 2×2</td></tr><tr><td><code>fig_barras_r2_comparacion</code></td><td>Comparación de R² por modelo y variable</td></tr></tbody></table></div><div class="pista-scroll">Desliza para ver más columnas →</div></div>
+<h2>El reporte PDF</h2>
+<p>La clase <code>ReportePDF(FPDF)</code> arma el documento sección por sección — metodología,
+tablas de R²/RMSE/MAE, las mismas figuras de arriba (reinsertadas con
+<code>insertar_imagen_png</code>/<code>insertar_pie_pdf</code>), y conclusiones — y termina en
+<code>pdf_bytes = bytes(pdf.output())</code>, ofrecido como descarga.</p>
+<div class="recuadro recuadro-nota"><span class="etiqueta">Nota</span>Un PDF de ejemplo generado con datos reales está en <code>docs/reportes/reporte_ejemplo_datos_reales.pdf</code>.</div>
+<nav class="nav-apartado" aria-label="Navegación entre apartados"><a href="#estadistica" data-boton-anterior><span class="direccion">← Anterior</span>Estadística (t de Welch)</a><a class="siguiente" href="#ref-funciones" data-boton-siguiente><span class="direccion">Siguiente →</span>Referencia de funciones</a></nav></section>
+<section class="apartado" id="ref-funciones" aria-labelledby="titulo-ref-funciones">
+<p class="apartado-etiqueta">08 · Referencia (generada del código)</p>
+<h1 id="titulo-ref-funciones">Referencia de funciones</h1>
+<p>Las 46 funciones de nivel superior de <code>app/app.py</code> (más la
+clase <code>ReportePDF</code>), extraídas con el módulo <code>ast</code> el 2026-09-19:
+firma completa, línea de origen, sección de la app que la usa (por dónde se llama en el código,
+no supuesto), y su docstring o el comentario inmediato si no tiene docstring.</p>
+<div class="recuadro recuadro-advertencia"><span class="etiqueta">Advertencia</span>15 funciones no tienen docstring ni comentario inmediato en el código. Se listan igual, marcadas explícitamente — no se les inventó una descripción.</div>
+<div class="filtro-funciones" role="group" aria-label="Filtrar funciones">
+  <button class="chip-filtro" type="button" data-filtro="todas" aria-pressed="true">Todas</button>
+  <button class="chip-filtro" type="button" data-filtro="Resumen" aria-pressed="false">Resumen</button><button class="chip-filtro" type="button" data-filtro="Ajustar modelos" aria-pressed="false">Ajustar modelos</button><button class="chip-filtro" type="button" data-filtro="Metodología" aria-pressed="false">Metodología</button><button class="chip-filtro" type="button" data-filtro="Resultados" aria-pressed="false">Resultados</button><button class="chip-filtro" type="button" data-filtro="Gráficas de barras" aria-pressed="false">Gráficas de barras</button><button class="chip-filtro" type="button" data-filtro="Resultados esperados" aria-pressed="false">Resultados esperados</button><button class="chip-filtro" type="button" data-filtro="Estadística" aria-pressed="false">Estadística</button><button class="chip-filtro" type="button" data-filtro="Residuos" aria-pressed="false">Residuos</button><button class="chip-filtro" type="button" data-filtro="Discusión y conclusiones" aria-pressed="false">Discusión y conclusiones</button><button class="chip-filtro" type="button" data-filtro="Datos de prueba" aria-pressed="false">Datos de prueba</button><button class="chip-filtro" type="button" data-filtro="Exportar reporte" aria-pressed="false">Exportar reporte</button><button class="chip-filtro" type="button" data-filtro="sin-doc" aria-pressed="false">Sin documentar</button>
+</div>
+<div class="funcion-entrada" id="fn-estilo_publicacion" data-secciones="Resumen,Ajustar modelos,Metodología,Resultados,Gráficas de barras,Resultados esperados,Estadística,Residuos,Discusión y conclusiones,Datos de prueba,Exportar reporte" data-sin-doc="0">
+      <code class="firma">estilo_publicacion(fig, width=None, height=420, left_margin=70, top_margin=60, espacio_eje_x_px=38, espacio_leyenda_px=34)</code>
+      <p class="meta">Línea 212–262 de <code>app/app.py</code> · Usada en: Resumen, Ajustar modelos, Metodología, Resultados, Gráficas de barras, Resultados esperados, Estadística, Residuos, Discusión y conclusiones, Datos de prueba, Exportar reporte</p>
+      <p>Plantilla visual única para toda gráfica exportable: fondo blanco, marco negro
+fino con ticks hacia afuera, cuadrícula tenue solo en Y, leyenda en UNA fila
+horizontal centrada debajo de los paneles (no a la derecha: con el pie de figura ya
+afuera, no hace falta reservar una columna lateral ancha), fuente y tamaños
+consistentes. No toca datos ni trazos, solo layout/ejes -- se llama al final de cada
+fig_*(), antes de construir_pie().</p>
+    </div><div class="funcion-entrada" id="fn-alinear_titulos_panel_izquierda" data-secciones="Resumen,Ajustar modelos,Metodología,Resultados,Gráficas de barras,Resultados esperados,Estadística,Residuos,Discusión y conclusiones,Datos de prueba,Exportar reporte" data-sin-doc="0">
+      <code class="firma">alinear_titulos_panel_izquierda(fig, n_paneles, tam_fuente=13)</code>
+      <p class="meta">Línea 265–277 de <code>app/app.py</code> · Usada en: Resumen, Ajustar modelos, Metodología, Resultados, Gráficas de barras, Resultados esperados, Estadística, Residuos, Discusión y conclusiones, Datos de prueba, Exportar reporte</p>
+      <p>Los subplot_titles de Plotly (usados para las etiquetas &quot;(a) −M&quot;/&quot;(b) +M&quot;, etc.) se
+centran por defecto; el diseño pide que vayan arriba a la IZQUIERDA de cada panel, no
+centradas. Reposiciona las primeras `n_paneles` anotaciones (que son exactamente los
+subplot_titles, en el mismo orden en que se crearon) al borde izquierdo del dominio de
+su propio eje X.</p>
+    </div><div class="funcion-entrada" id="fn-construir_pie" data-secciones="Resumen,Ajustar modelos,Metodología,Resultados,Gráficas de barras,Resultados esperados,Estadística,Residuos,Discusión y conclusiones,Datos de prueba,Exportar reporte" data-sin-doc="0">
+      <code class="firma">construir_pie(descripcion, notas=None, extra=None)</code>
+      <p class="meta">Línea 280–286 de <code>app/app.py</code> · Usada en: Resumen, Ajustar modelos, Metodología, Resultados, Gráficas de barras, Resultados esperados, Estadística, Residuos, Discusión y conclusiones, Datos de prueba, Exportar reporte</p>
+      <p>Estructura común del pie de figura: una línea de descripción + una lista corta de
+notas (una viñeta por modelo que no dibujó asíntota/banda o que no convergió) + una
+nota final opcional (ej. réplicas sintéticas). Nunca se agrega como anotación dentro
+de la figura de Plotly -- se usa igual en mostrar_pie_streamlit, pie_a_lineas_texto y
+componer_png_con_pie.</p>
+    </div><div class="funcion-entrada" id="fn-pie_a_lineas_texto" data-secciones="Resumen,Ajustar modelos,Metodología,Resultados,Gráficas de barras,Resultados esperados,Estadística,Residuos,Discusión y conclusiones,Datos de prueba,Exportar reporte" data-sin-doc="0">
+      <code class="firma">pie_a_lineas_texto(pie)</code>
+      <p class="meta">Línea 289–297 de <code>app/app.py</code> · Usada en: Resumen, Ajustar modelos, Metodología, Resultados, Gráficas de barras, Resultados esperados, Estadística, Residuos, Discusión y conclusiones, Datos de prueba, Exportar reporte</p>
+      <p>Aplana el pie a líneas de texto plano, para el PDF y los PNG compuestos.</p>
+    </div><div class="funcion-entrada" id="fn-mostrar_pie_streamlit" data-secciones="Resumen,Ajustar modelos,Metodología,Resultados,Gráficas de barras,Resultados esperados,Estadística,Residuos,Discusión y conclusiones,Datos de prueba,Exportar reporte" data-sin-doc="0">
+      <code class="firma">mostrar_pie_streamlit(pie)</code>
+      <p class="meta">Línea 300–307 de <code>app/app.py</code> · Usada en: Resumen, Ajustar modelos, Metodología, Resultados, Gráficas de barras, Resultados esperados, Estadística, Residuos, Discusión y conclusiones, Datos de prueba, Exportar reporte</p>
+      <p>Muestra el pie DEBAJO de la figura en la app, con st.caption/st.markdown -- nunca
+como anotación de Plotly (principio de diseño: figura y texto son cosas separadas).</p>
+    </div><div class="funcion-entrada" id="fn-_fuente_pie_png" data-secciones="Resumen,Ajustar modelos,Metodología,Resultados,Gráficas de barras,Resultados esperados,Estadística,Residuos,Discusión y conclusiones,Datos de prueba,Exportar reporte" data-sin-doc="0">
+      <code class="firma">_fuente_pie_png(tam_px)</code>
+      <p class="meta">Línea 313–321 de <code>app/app.py</code> · Usada en: Resumen, Ajustar modelos, Metodología, Resultados, Gráficas de barras, Resultados esperados, Estadística, Residuos, Discusión y conclusiones, Datos de prueba, Exportar reporte</p>
+      <p>Fuente TTF real para componer el pie en los PNG descargables (el bitmap por
+defecto de PIL es ilegible a cualquier tamaño). Reutiliza la DejaVu Sans que ya trae
+matplotlib -- ya es dependencia de la app, no se agrega ninguna nueva.</p>
+    </div><div class="funcion-entrada" id="fn-componer_png_con_pie" data-secciones="Resumen,Ajustar modelos,Metodología,Resultados,Gráficas de barras,Resultados esperados,Estadística,Residuos,Discusión y conclusiones,Datos de prueba,Exportar reporte" data-sin-doc="0">
+      <code class="firma">componer_png_con_pie(png_bytes, pie, scale=3)</code>
+      <p class="meta">Línea 324–366 de <code>app/app.py</code> · Usada en: Resumen, Ajustar modelos, Metodología, Resultados, Gráficas de barras, Resultados esperados, Estadística, Residuos, Discusión y conclusiones, Datos de prueba, Exportar reporte</p>
+      <p>Compone el PNG final para descarga: la figura de Plotly (limpia, sin pie
+incrustado) arriba, y el pie como una franja blanca debajo, con texto envuelto a
+líneas, alineado a la izquierda, fuente &gt;= 11pt (proporcional a `scale`, igual que el
+resto de la figura, para que no quede diminuta en la imagen de alta resolución).</p>
+    </div><div class="funcion-entrada" id="fn-formatear_p" data-secciones="Resumen,Ajustar modelos,Metodología,Resultados,Gráficas de barras,Resultados esperados,Estadística,Residuos,Discusión y conclusiones,Datos de prueba,Exportar reporte" data-sin-doc="0">
+      <code class="firma">formatear_p(p)</code>
+      <p class="meta">Línea 369–373 de <code>app/app.py</code> · Usada en: Resumen, Ajustar modelos, Metodología, Resultados, Gráficas de barras, Resultados esperados, Estadística, Residuos, Discusión y conclusiones, Datos de prueba, Exportar reporte</p>
+      <p>Evita el 'p = 0.0000' enganoso: por debajo de 0.0001 se reporta como cota superior.</p>
+    </div><div class="funcion-entrada" id="fn-texto_significancia" data-secciones="Resumen,Ajustar modelos,Metodología,Resultados,Gráficas de barras,Resultados esperados,Estadística,Residuos,Discusión y conclusiones,Datos de prueba,Exportar reporte" data-sin-doc="0">
+      <code class="firma">texto_significancia(p)</code>
+      <p class="meta">Línea 390–398 de <code>app/app.py</code> · Usada en: Resumen, Ajustar modelos, Metodología, Resultados, Gráficas de barras, Resultados esperados, Estadística, Residuos, Discusión y conclusiones, Datos de prueba, Exportar reporte</p>
+      <p>Asteriscos de significancia (convencion estandar): ns, *, **, ***.</p>
+    </div><div class="funcion-entrada" id="fn-agregar_pie_figura" data-secciones="Resumen,Ajustar modelos,Metodología,Resultados,Gráficas de barras,Resultados esperados,Estadística,Residuos,Discusión y conclusiones,Datos de prueba,Exportar reporte" data-sin-doc="0">
+      <code class="firma">agregar_pie_figura(fig, lineas, altura_linea_px=17, espacio_eje_x_px=70)</code>
+      <p class="meta">Línea 401–423 de <code>app/app.py</code> · Usada en: Resumen, Ajustar modelos, Metodología, Resultados, Gráficas de barras, Resultados esperados, Estadística, Residuos, Discusión y conclusiones, Datos de prueba, Exportar reporte</p>
+      <p>Agrega una o mas lineas de texto como pie de figura, debajo del título del eje X, y
+expande el margen inferior para que quepan. Las anotaciones usan yref=&quot;paper&quot;, que es
+relativo al ALTO DEL ÁREA DE TRAZADO (no de la figura completa) -- por eso la posición de
+cada línea se calcula en píxeles reales y se convierte a fracción usando el alto de
+trazado resultante, en vez de una fracción fija que se desalinea según cuántas líneas
+tenga el pie o cuánto margen ya tuviera la figura (con muchas líneas, una fracción fija
+dejaba el texto encimado con el título del eje X).</p>
+    </div><div class="funcion-entrada" id="fn-modelo_exponencial" data-secciones="Resumen,Ajustar modelos,Metodología,Resultados,Gráficas de barras,Resultados esperados,Estadística,Residuos,Discusión y conclusiones,Datos de prueba,Exportar reporte" data-sin-doc="0">
+      <code class="firma">modelo_exponencial(t, P0, r)</code>
+      <p class="meta">Línea 429–430 de <code>app/app.py</code> · Usada en: Resumen, Ajustar modelos, Metodología, Resultados, Gráficas de barras, Resultados esperados, Estadística, Residuos, Discusión y conclusiones, Datos de prueba, Exportar reporte</p>
+      <p>============================================================================== 1. MODELOS MATEMÁTICOS ==============================================================================</p>
+    </div><div class="funcion-entrada" id="fn-modelo_logistico" data-secciones="Resumen,Ajustar modelos,Metodología,Resultados,Gráficas de barras,Resultados esperados,Estadística,Residuos,Discusión y conclusiones,Datos de prueba,Exportar reporte" data-sin-doc="1">
+      <code class="firma">modelo_logistico(t, K, k, Ti)</code>
+      <p class="meta">Línea 432–433 de <code>app/app.py</code> · Usada en: Resumen, Ajustar modelos, Metodología, Resultados, Gráficas de barras, Resultados esperados, Estadística, Residuos, Discusión y conclusiones, Datos de prueba, Exportar reporte</p>
+      <p class="sin-doc">Esta función no tiene docstring ni un comentario inmediato en el código — no se inventó ninguna descripción.</p>
+    </div><div class="funcion-entrada" id="fn-modelo_gompertz" data-secciones="Resumen,Ajustar modelos,Metodología,Resultados,Gráficas de barras,Resultados esperados,Estadística,Residuos,Discusión y conclusiones,Datos de prueba,Exportar reporte" data-sin-doc="1">
+      <code class="firma">modelo_gompertz(t, K, k, Ti)</code>
+      <p class="meta">Línea 435–436 de <code>app/app.py</code> · Usada en: Resumen, Ajustar modelos, Metodología, Resultados, Gráficas de barras, Resultados esperados, Estadística, Residuos, Discusión y conclusiones, Datos de prueba, Exportar reporte</p>
+      <p class="sin-doc">Esta función no tiene docstring ni un comentario inmediato en el código — no se inventó ninguna descripción.</p>
+    </div><div class="funcion-entrada" id="fn-generar_datos" data-secciones="Resumen,Ajustar modelos,Metodología,Resultados,Gráficas de barras,Resultados esperados,Estadística,Residuos,Discusión y conclusiones,Datos de prueba,Exportar reporte" data-sin-doc="1">
+      <code class="firma">generar_datos(semilla: int)</code>
+      <p class="meta">Línea 478–516 de <code>app/app.py</code> · Usada en: Resumen, Ajustar modelos, Metodología, Resultados, Gráficas de barras, Resultados esperados, Estadística, Residuos, Discusión y conclusiones, Datos de prueba, Exportar reporte</p>
+      <p class="sin-doc">Esta función no tiene docstring ni un comentario inmediato en el código — no se inventó ninguna descripción.</p>
+    </div><div class="funcion-entrada" id="fn-dias_disponibles" data-secciones="Resumen,Ajustar modelos,Metodología,Resultados,Gráficas de barras,Resultados esperados,Estadística,Residuos,Discusión y conclusiones,Datos de prueba,Exportar reporte" data-sin-doc="1">
+      <code class="firma">dias_disponibles(datos_var_grupo)</code>
+      <p class="meta">Línea 519–520 de <code>app/app.py</code> · Usada en: Resumen, Ajustar modelos, Metodología, Resultados, Gráficas de barras, Resultados esperados, Estadística, Residuos, Discusión y conclusiones, Datos de prueba, Exportar reporte</p>
+      <p class="sin-doc">Esta función no tiene docstring ni un comentario inmediato en el código — no se inventó ninguna descripción.</p>
+    </div><div class="funcion-entrada" id="fn-flatten_replicas" data-secciones="Resumen,Ajustar modelos,Metodología,Resultados,Gráficas de barras,Resultados esperados,Estadística,Residuos,Discusión y conclusiones,Datos de prueba,Exportar reporte" data-sin-doc="0">
+      <code class="firma">flatten_replicas(datos_var_grupo)</code>
+      <p class="meta">Línea 522–529 de <code>app/app.py</code> · Usada en: Resumen, Ajustar modelos, Metodología, Resultados, Gráficas de barras, Resultados esperados, Estadística, Residuos, Discusión y conclusiones, Datos de prueba, Exportar reporte</p>
+      <p>De {dia: [valores...]} a arrays planos (t, y) para curve_fit.</p>
+    </div><div class="funcion-entrada" id="fn-media_sd_por_dia" data-secciones="Resumen,Ajustar modelos,Metodología,Resultados,Gráficas de barras,Resultados esperados,Estadística,Residuos,Discusión y conclusiones,Datos de prueba,Exportar reporte" data-sin-doc="1">
+      <code class="firma">media_sd_por_dia(datos_var_grupo)</code>
+      <p class="meta">Línea 531–536 de <code>app/app.py</code> · Usada en: Resumen, Ajustar modelos, Metodología, Resultados, Gráficas de barras, Resultados esperados, Estadística, Residuos, Discusión y conclusiones, Datos de prueba, Exportar reporte</p>
+      <p class="sin-doc">Esta función no tiene docstring ni un comentario inmediato en el código — no se inventó ninguna descripción.</p>
+    </div><div class="funcion-entrada" id="fn-calcular_r2" data-secciones="Resumen,Ajustar modelos,Metodología,Resultados,Gráficas de barras,Resultados esperados,Estadística,Residuos,Discusión y conclusiones,Datos de prueba,Exportar reporte" data-sin-doc="1">
+      <code class="firma">calcular_r2(y_obs, y_pred)</code>
+      <p class="meta">Línea 539–542 de <code>app/app.py</code> · Usada en: Resumen, Ajustar modelos, Metodología, Resultados, Gráficas de barras, Resultados esperados, Estadística, Residuos, Discusión y conclusiones, Datos de prueba, Exportar reporte</p>
+      <p class="sin-doc">Esta función no tiene docstring ni un comentario inmediato en el código — no se inventó ninguna descripción.</p>
+    </div><div class="funcion-entrada" id="fn-calcular_rmse" data-secciones="Resumen,Ajustar modelos,Metodología,Resultados,Gráficas de barras,Resultados esperados,Estadística,Residuos,Discusión y conclusiones,Datos de prueba,Exportar reporte" data-sin-doc="1">
+      <code class="firma">calcular_rmse(y_obs, y_pred)</code>
+      <p class="meta">Línea 544–545 de <code>app/app.py</code> · Usada en: Resumen, Ajustar modelos, Metodología, Resultados, Gráficas de barras, Resultados esperados, Estadística, Residuos, Discusión y conclusiones, Datos de prueba, Exportar reporte</p>
+      <p class="sin-doc">Esta función no tiene docstring ni un comentario inmediato en el código — no se inventó ninguna descripción.</p>
+    </div><div class="funcion-entrada" id="fn-calcular_mae" data-secciones="Resumen,Ajustar modelos,Metodología,Resultados,Gráficas de barras,Resultados esperados,Estadística,Residuos,Discusión y conclusiones,Datos de prueba,Exportar reporte" data-sin-doc="1">
+      <code class="firma">calcular_mae(y_obs, y_pred)</code>
+      <p class="meta">Línea 547–548 de <code>app/app.py</code> · Usada en: Resumen, Ajustar modelos, Metodología, Resultados, Gráficas de barras, Resultados esperados, Estadística, Residuos, Discusión y conclusiones, Datos de prueba, Exportar reporte</p>
+      <p class="sin-doc">Esta función no tiene docstring ni un comentario inmediato en el código — no se inventó ninguna descripción.</p>
+    </div><div class="funcion-entrada" id="fn-ajustar_todos_los_modelos" data-secciones="Resumen,Ajustar modelos,Metodología,Resultados,Gráficas de barras,Resultados esperados,Estadística,Residuos,Discusión y conclusiones,Datos de prueba,Exportar reporte" data-sin-doc="1">
+      <code class="firma">ajustar_todos_los_modelos(datos)</code>
+      <p class="meta">Línea 557–602 de <code>app/app.py</code> · Usada en: Resumen, Ajustar modelos, Metodología, Resultados, Gráficas de barras, Resultados esperados, Estadística, Residuos, Discusión y conclusiones, Datos de prueba, Exportar reporte</p>
+      <p class="sin-doc">Esta función no tiene docstring ni un comentario inmediato en el código — no se inventó ninguna descripción.</p>
+    </div><div class="funcion-entrada" id="fn-prueba_t_independiente" data-secciones="Resumen,Ajustar modelos,Metodología,Resultados,Gráficas de barras,Resultados esperados,Estadística,Residuos,Discusión y conclusiones,Datos de prueba,Exportar reporte" data-sin-doc="0">
+      <code class="firma">prueba_t_independiente(datos, variable, dia)</code>
+      <p class="meta">Línea 605–619 de <code>app/app.py</code> · Usada en: Resumen, Ajustar modelos, Metodología, Resultados, Gráficas de barras, Resultados esperados, Estadística, Residuos, Discusión y conclusiones, Datos de prueba, Exportar reporte</p>
+      <p>Prueba t de dos muestras independientes (Welch) entre −M y +M en un
+día concreto, usando las réplicas reales de ese día — ahora sí es una
+prueba t propiamente dicha, no una aproximación.</p>
+    </div><div class="funcion-entrada" id="fn-texto_estado_sin_dias" data-secciones="Resumen,Ajustar modelos,Metodología,Resultados,Gráficas de barras,Resultados esperados,Estadística,Residuos,Discusión y conclusiones,Datos de prueba,Exportar reporte" data-sin-doc="1">
+      <code class="firma">texto_estado_sin_dias(dias_disponibles, dias_requeridos)</code>
+      <p class="meta">Línea 644–645 de <code>app/app.py</code> · Usada en: Resumen, Ajustar modelos, Metodología, Resultados, Gráficas de barras, Resultados esperados, Estadística, Residuos, Discusión y conclusiones, Datos de prueba, Exportar reporte</p>
+      <p class="sin-doc">Esta función no tiene docstring ni un comentario inmediato en el código — no se inventó ninguna descripción.</p>
+    </div><div class="funcion-entrada" id="fn-estado_de_ajuste" data-secciones="Resumen,Ajustar modelos,Metodología,Resultados,Gráficas de barras,Resultados esperados,Estadística,Residuos,Discusión y conclusiones,Datos de prueba,Exportar reporte" data-sin-doc="0">
+      <code class="firma">estado_de_ajuste(res)</code>
+      <p class="meta">Línea 648–657 de <code>app/app.py</code> · Usada en: Resumen, Ajustar modelos, Metodología, Resultados, Gráficas de barras, Resultados esperados, Estadística, Residuos, Discusión y conclusiones, Datos de prueba, Exportar reporte</p>
+      <p>Determina el estado (ESTADO_OK / ESTADO_NO_CONVERGIO / texto_estado_sin_dias) de un
+resultado de `ajustar_todos_los_modelos`, sin recalcular ni reinterpretar la regla de
+insuficiente/no convergió que ya define esa función -- solo nombra el mismo caso siempre
+de la misma forma en toda la app y el PDF.</p>
+    </div><div class="funcion-entrada" id="fn-calcular_tabla_modelo" data-secciones="Resumen,Ajustar modelos,Metodología,Resultados,Gráficas de barras,Resultados esperados,Estadística,Residuos,Discusión y conclusiones,Datos de prueba,Exportar reporte" data-sin-doc="0">
+      <code class="firma">calcular_tabla_modelo(RES, datos, variable, modelos)</code>
+      <p class="meta">Línea 660–688 de <code>app/app.py</code> · Usada en: Resumen, Ajustar modelos, Metodología, Resultados, Gráficas de barras, Resultados esperados, Estadística, Residuos, Discusión y conclusiones, Datos de prueba, Exportar reporte</p>
+      <p>Para una variable: por cada grupo (-M/+M), arma las filas Grupo/Modelo/R2/RMSE/MAE con una
+nota corta cuando el modelo no pudo ajustarse, y determina el modelo con mejor R2 de entre los
+que sí ajustaron. No recalcula nada: solo lee los resultados que ya produjo
+`ajustar_todos_los_modelos` (misma regla de insuficiente/no convergió, sin tocarla).</p>
+    </div><div class="funcion-entrada" id="fn-calcular_efecto_micorriza" data-secciones="Resumen,Ajustar modelos,Metodología,Resultados,Gráficas de barras,Resultados esperados,Estadística,Residuos,Discusión y conclusiones,Datos de prueba,Exportar reporte" data-sin-doc="0">
+      <code class="firma">calcular_efecto_micorriza(datos, variable)</code>
+      <p class="meta">Línea 691–704 de <code>app/app.py</code> · Usada en: Resumen, Ajustar modelos, Metodología, Resultados, Gráficas de barras, Resultados esperados, Estadística, Residuos, Discusión y conclusiones, Datos de prueba, Exportar reporte</p>
+      <p>Por cada día con réplicas en ambos grupos, calcula el % de incremento de +M sobre -M y la
+prueba t de Welch entre grupos, reutilizando `prueba_t_independiente` (misma prueba que ya usa
+la sección Estadística, sin duplicar su lógica).</p>
+    </div><div class="funcion-entrada" id="fn-texto_interpretativo_efecto" data-secciones="Resumen,Ajustar modelos,Metodología,Resultados,Gráficas de barras,Resultados esperados,Estadística,Residuos,Discusión y conclusiones,Datos de prueba,Exportar reporte" data-sin-doc="1">
+      <code class="firma">texto_interpretativo_efecto(variable, fila)</code>
+      <p class="meta">Línea 707–713 de <code>app/app.py</code> · Usada en: Resumen, Ajustar modelos, Metodología, Resultados, Gráficas de barras, Resultados esperados, Estadística, Residuos, Discusión y conclusiones, Datos de prueba, Exportar reporte</p>
+      <p class="sin-doc">Esta función no tiene docstring ni un comentario inmediato en el código — no se inventó ninguna descripción.</p>
+    </div><div class="funcion-entrada" id="fn-fig_barras_variable" data-secciones="Resumen,Ajustar modelos,Metodología,Resultados,Gráficas de barras,Resultados esperados,Estadística,Residuos,Discusión y conclusiones,Datos de prueba,Exportar reporte" data-sin-doc="0">
+      <code class="firma">fig_barras_variable(datos, variable, fuente_datos='simulado')</code>
+      <p class="meta">Línea 716–776 de <code>app/app.py</code> · Usada en: Resumen, Ajustar modelos, Metodología, Resultados, Gráficas de barras, Resultados esperados, Estadística, Residuos, Discusión y conclusiones, Datos de prueba, Exportar reporte</p>
+      <p>Barras agrupadas -M vs +M por día: altura de barra = media de réplicas, con barras de
+error = desviación estándar, patrón de trama por grupo (redundante con el color, para que
+se distingan también en blanco y negro) y marcas de significancia (ns/*/**/***) sobre cada
+día -- reutilizando prueba_t_independiente ya existente, sin recalcular nada nuevo.
+Independiente de las curvas de crecimiento ya existentes.</p>
+    </div><div class="funcion-entrada" id="fn-fig_barras_resumen_2x2" data-secciones="Resumen,Ajustar modelos,Metodología,Resultados,Gráficas de barras,Resultados esperados,Estadística,Residuos,Discusión y conclusiones,Datos de prueba,Exportar reporte" data-sin-doc="0">
+      <code class="firma">fig_barras_resumen_2x2(datos, variables, fuente_datos='simulado')</code>
+      <p class="meta">Línea 779–818 de <code>app/app.py</code> · Usada en: Resumen, Ajustar modelos, Metodología, Resultados, Gráficas de barras, Resultados esperados, Estadística, Residuos, Discusión y conclusiones, Datos de prueba, Exportar reporte</p>
+      <p>Figura resumen 2x2 con hasta 4 variables, etiquetas (a)-(d), ejes Y independientes por
+panel (cada variable tiene su propia unidad) y una sola leyenda. Complementa -- no
+reemplaza -- las figuras individuales por variable.</p>
+    </div><div class="funcion-entrada" id="fn-fig_barras_r2_comparacion" data-secciones="Resumen,Ajustar modelos,Metodología,Resultados,Gráficas de barras,Resultados esperados,Estadística,Residuos,Discusión y conclusiones,Datos de prueba,Exportar reporte" data-sin-doc="0">
+      <code class="firma">fig_barras_r2_comparacion(RES, datos, variables, modelos)</code>
+      <p class="meta">Línea 821–884 de <code>app/app.py</code> · Usada en: Resumen, Ajustar modelos, Metodología, Resultados, Gráficas de barras, Resultados esperados, Estadística, Residuos, Discusión y conclusiones, Datos de prueba, Exportar reporte</p>
+      <p>Cuadrícula 2x2 (una variable por subplot, no una fila de 4) del R² de cada modelo,
+dejando la barra en 0 con la etiqueta 'No convergió' o 'Sin días suficientes' donde
+corresponda. Eje Y siempre 0-1.15 (las barras parten de 0 -- no se recorta para
+exagerar diferencias). Mismo patrón+color por grupo que el resto de las gráficas.</p>
+    </div><div class="funcion-entrada" id="fn-_asintota_k_plausible" data-secciones="Resumen,Ajustar modelos,Metodología,Resultados,Gráficas de barras,Resultados esperados,Estadística,Residuos,Discusión y conclusiones,Datos de prueba,Exportar reporte" data-sin-doc="0">
+      <code class="firma">_asintota_k_plausible(res, y_max_obs_grupo, dia_min, dia_max)</code>
+      <p class="meta">Línea 887–908 de <code>app/app.py</code> · Usada en: Resumen, Ajustar modelos, Metodología, Resultados, Gráficas de barras, Resultados esperados, Estadística, Residuos, Discusión y conclusiones, Datos de prueba, Exportar reporte</p>
+      <p>Criterio de plausibilidad de K (versión endurecida): se dibuja la asíntota solo si
+se cumplen TODAS: (1) el modelo convergió, (2) R² &gt;= 0.90, (3) K &lt;= 1.5x el máximo
+observado en ese grupo/variable, y (4) el punto de inflexión Ti cae dentro del rango de
+días observados (o sea que los datos sí alcanzan a mostrar la desaceleración hacia K).
+Devuelve (dibujar, K, motivo). El Exponencial no tiene K y nunca llega a llamar esto
+(se filtra en el llamador por nombres_param).</p>
+    </div><div class="funcion-entrada" id="fn-fig_curvas_publicacion" data-secciones="Resumen,Ajustar modelos,Metodología,Resultados,Gráficas de barras,Resultados esperados,Estadística,Residuos,Discusión y conclusiones,Datos de prueba,Exportar reporte" data-sin-doc="0">
+      <code class="firma">fig_curvas_publicacion(datos, RES, variable, modelos, fuente_datos='simulado')</code>
+      <p class="meta">Línea 911–1049 de <code>app/app.py</code> · Usada en: Resumen, Ajustar modelos, Metodología, Resultados, Gráficas de barras, Resultados esperados, Estadística, Residuos, Discusión y conclusiones, Datos de prueba, Exportar reporte</p>
+      <p>Curvas de crecimiento estilo publicación: panel (a) = -M, panel (b) = +M, con el mismo
+eje Y compartido. Puntos = TODAS las réplicas observadas (círculos vacíos, con
+transparencia), no solo la media. Un color + tipo de línea por modelo (MODELO_ESTILO,
+paleta colorblind-safe). Los modelos que no convergieron (o sin días suficientes) NO se
+dibujan -- se anotan en el pie de figura, igual que la asíntota K cuando no es plausible.
+No cambia el ajuste ni la regla de insuficiente/no convergió: solo lee RES.</p>
+    </div><div class="funcion-entrada" id="fn-calcular_agr_rgr" data-secciones="Resumen,Ajustar modelos,Metodología,Resultados,Gráficas de barras,Resultados esperados,Estadística,Residuos,Discusión y conclusiones,Datos de prueba,Exportar reporte" data-sin-doc="0">
+      <code class="firma">calcular_agr_rgr(modelo, params, t)</code>
+      <p class="meta">Línea 1052–1078 de <code>app/app.py</code> · Usada en: Resumen, Ajustar modelos, Metodología, Resultados, Gráficas de barras, Resultados esperados, Estadística, Residuos, Discusión y conclusiones, Datos de prueba, Exportar reporte</p>
+      <p>AGR (dP/dt) y RGR ((1/P)·dP/dt), calculados analíticamente a partir de las derivadas
+cerradas de cada modelo y de los parámetros que YA ajustó curve_fit -- no se reajusta ni
+se modifica el ajuste, solo se evalúan formulas conocidas en esos parámetros:
+  Exponencial P=P0·e^(rt)      -&gt; dP/dt = r·P            -&gt; RGR = r (constante)
+  Logístico  P=K/(1+e^-k(t-Ti)) -&gt; dP/dt = k·P·(1-P/K)   -&gt; RGR = k·(1-P/K)
+  Gompertz   P=K·e^(-e^-k(t-Ti)) -&gt; dP/dt = k·P·ln(K/P)  -&gt; RGR = k·ln(K/P)</p>
+    </div><div class="funcion-entrada" id="fn-fig_tasas_crecimiento" data-secciones="Resumen,Ajustar modelos,Metodología,Resultados,Gráficas de barras,Resultados esperados,Estadística,Residuos,Discusión y conclusiones,Datos de prueba,Exportar reporte" data-sin-doc="0">
+      <code class="firma">fig_tasas_crecimiento(datos, RES, variable, modelos, fuente_datos='simulado')</code>
+      <p class="meta">Línea 1081–1135 de <code>app/app.py</code> · Usada en: Resumen, Ajustar modelos, Metodología, Resultados, Gráficas de barras, Resultados esperados, Estadística, Residuos, Discusión y conclusiones, Datos de prueba, Exportar reporte</p>
+      <p>AGR y RGR (Tarea 5, opcional) del modelo con MEJOR R² en cada grupo -- reutiliza
+calcular_tabla_modelo para decidir cuál es el mejor, sin duplicar ese criterio. Devuelve
+(fig, None) o (None, motivo) si ningún grupo tiene un modelo convergido.</p>
+    </div><div class="funcion-entrada" id="fn-calcular_banda_confianza" data-secciones="Resumen,Ajustar modelos,Metodología,Resultados,Gráficas de barras,Resultados esperados,Estadística,Residuos,Discusión y conclusiones,Datos de prueba,Exportar reporte" data-sin-doc="1">
+      <code class="firma">calcular_banda_confianza(func, popt, pcov, t_eval, n_muestras=400, semilla_mc=7)</code>
+      <p class="meta">Línea 1138–1149 de <code>app/app.py</code> · Usada en: Resumen, Ajustar modelos, Metodología, Resultados, Gráficas de barras, Resultados esperados, Estadística, Residuos, Discusión y conclusiones, Datos de prueba, Exportar reporte</p>
+      <p class="sin-doc">Esta función no tiene docstring ni un comentario inmediato en el código — no se inventó ninguna descripción.</p>
+    </div><div class="funcion-entrada" id="fn-badge_r2" data-secciones="Resumen,Ajustar modelos,Metodología,Resultados,Gráficas de barras,Resultados esperados,Estadística,Residuos,Discusión y conclusiones,Datos de prueba,Exportar reporte" data-sin-doc="1">
+      <code class="firma">badge_r2(r2, insuficiente=False, dias_disponibles=None, dias_requeridos=None)</code>
+      <p class="meta">Línea 1152–1162 de <code>app/app.py</code> · Usada en: Resumen, Ajustar modelos, Metodología, Resultados, Gráficas de barras, Resultados esperados, Estadística, Residuos, Discusión y conclusiones, Datos de prueba, Exportar reporte</p>
+      <p class="sin-doc">Esta función no tiene docstring ni un comentario inmediato en el código — no se inventó ninguna descripción.</p>
+    </div><div class="funcion-entrada" id="fn-barra_valor_p" data-secciones="Resumen,Ajustar modelos,Metodología,Resultados,Gráficas de barras,Resultados esperados,Estadística,Residuos,Discusión y conclusiones,Datos de prueba,Exportar reporte" data-sin-doc="0">
+      <code class="firma">barra_valor_p(p, significativo)</code>
+      <p class="meta">Línea 1165–1179 de <code>app/app.py</code> · Usada en: Resumen, Ajustar modelos, Metodología, Resultados, Gráficas de barras, Resultados esperados, Estadística, Residuos, Discusión y conclusiones, Datos de prueba, Exportar reporte</p>
+      <p>HTML de una mini barra que ubica el valor p frente al umbral 0.05 (solo visual, no reemplaza el numero).</p>
+    </div><div class="funcion-entrada" id="fn-barra_comparacion_mitades" data-secciones="Resumen,Ajustar modelos,Metodología,Resultados,Gráficas de barras,Resultados esperados,Estadística,Residuos,Discusión y conclusiones,Datos de prueba,Exportar reporte" data-sin-doc="0">
+      <code class="firma">barra_comparacion_mitades(m1, m2, residuos)</code>
+      <p class="meta">Línea 1182–1194 de <code>app/app.py</code> · Usada en: Resumen, Ajustar modelos, Metodología, Resultados, Gráficas de barras, Resultados esperados, Estadística, Residuos, Discusión y conclusiones, Datos de prueba, Exportar reporte</p>
+      <p>HTML de una mini barra que compara la media de residuos de la 1a vs 2a mitad (solo visual).</p>
+    </div><div class="funcion-entrada" id="fn-generar_sugerencias" data-secciones="Resumen,Ajustar modelos,Metodología,Resultados,Gráficas de barras,Resultados esperados,Estadística,Residuos,Discusión y conclusiones,Datos de prueba,Exportar reporte" data-sin-doc="0">
+      <code class="firma">generar_sugerencias(fuente_datos)</code>
+      <p class="meta">Línea 1197–1217 de <code>app/app.py</code> · Usada en: Resumen, Ajustar modelos, Metodología, Resultados, Gráficas de barras, Resultados esperados, Estadística, Residuos, Discusión y conclusiones, Datos de prueba, Exportar reporte</p>
+      <p>Lista de sugerencias de mejora, adaptada segun si se esta usando
+datos simulados o datos reales cargados por el usuario.</p>
+    </div><div class="funcion-entrada" id="fn-generar_ilustracion_plantas" data-secciones="Resumen,Ajustar modelos,Metodología,Resultados,Gráficas de barras,Resultados esperados,Estadística,Residuos,Discusión y conclusiones,Datos de prueba,Exportar reporte" data-sin-doc="0">
+      <code class="firma">generar_ilustracion_plantas(datos, fuente_datos='simulado')</code>
+      <p class="meta">Línea 1220–1318 de <code>app/app.py</code> · Usada en: Resumen, Ajustar modelos, Metodología, Resultados, Gráficas de barras, Resultados esperados, Estadística, Residuos, Discusión y conclusiones, Datos de prueba, Exportar reporte</p>
+      <p>Ilustracion esquematica (NO fotografica) que compara -M vs +M usando
+los valores reales del ultimo dia de muestreo disponible. Devuelve bytes
+PNG, o None si no hay ninguna variable relevante en `datos`.</p>
+    </div><div class="funcion-entrada" id="fn-datos_a_formato_largo" data-secciones="Resumen,Ajustar modelos,Metodología,Resultados,Gráficas de barras,Resultados esperados,Estadística,Residuos,Discusión y conclusiones,Datos de prueba,Exportar reporte" data-sin-doc="0">
+      <code class="firma">datos_a_formato_largo(datos)</code>
+      <p class="meta">Línea 1324–1332 de <code>app/app.py</code> · Usada en: Resumen, Ajustar modelos, Metodología, Resultados, Gráficas de barras, Resultados esperados, Estadística, Residuos, Discusión y conclusiones, Datos de prueba, Exportar reporte</p>
+      <p>============================================================================== 2b. FORMATO LARGO (para plantilla / carga de datos reales / exportación) ==============================================================================</p>
+    </div><div class="funcion-entrada" id="fn-generar_plantilla_excel" data-secciones="Resumen,Ajustar modelos,Metodología,Resultados,Gráficas de barras,Resultados esperados,Estadística,Residuos,Discusión y conclusiones,Datos de prueba,Exportar reporte" data-sin-doc="1">
+      <code class="firma">generar_plantilla_excel()</code>
+      <p class="meta">Línea 1335–1352 de <code>app/app.py</code> · Usada en: Resumen, Ajustar modelos, Metodología, Resultados, Gráficas de barras, Resultados esperados, Estadística, Residuos, Discusión y conclusiones, Datos de prueba, Exportar reporte</p>
+      <p class="sin-doc">Esta función no tiene docstring ni un comentario inmediato en el código — no se inventó ninguna descripción.</p>
+    </div><div class="funcion-entrada" id="fn-cargar_datos_desde_archivo" data-secciones="Resumen,Ajustar modelos,Metodología,Resultados,Gráficas de barras,Resultados esperados,Estadística,Residuos,Discusión y conclusiones,Datos de prueba,Exportar reporte" data-sin-doc="0">
+      <code class="firma">cargar_datos_desde_archivo(archivo)</code>
+      <p class="meta">Línea 1355–1398 de <code>app/app.py</code> · Usada en: Resumen, Ajustar modelos, Metodología, Resultados, Gráficas de barras, Resultados esperados, Estadística, Residuos, Discusión y conclusiones, Datos de prueba, Exportar reporte</p>
+      <p>Lee un CSV/Excel en formato largo y lo convierte a la estructura
+DATOS[variable][grupo][dia] = array. Devuelve (datos, error).</p>
+    </div><div class="funcion-entrada" id="fn-advertir_dias_insuficientes" data-secciones="Resumen,Ajustar modelos,Metodología,Resultados,Gráficas de barras,Resultados esperados,Estadística,Residuos,Discusión y conclusiones,Datos de prueba,Exportar reporte" data-sin-doc="0">
+      <code class="firma">advertir_dias_insuficientes(datos)</code>
+      <p class="meta">Línea 1401–1432 de <code>app/app.py</code> · Usada en: Resumen, Ajustar modelos, Metodología, Resultados, Gráficas de barras, Resultados esperados, Estadística, Residuos, Discusión y conclusiones, Datos de prueba, Exportar reporte</p>
+      <p>Avisa de inmediato (al cargar el archivo, no al ajustar) si alguna
+combinación variable/grupo no tiene suficientes días distintos (dat)
+para identificar alguno de los modelos de crecimiento.</p>
+    </div><div class="funcion-entrada" id="fn-obtener_datos_activos" data-secciones="Resumen,Ajustar modelos,Metodología,Resultados,Gráficas de barras,Resultados esperados,Estadística,Residuos,Discusión y conclusiones,Datos de prueba,Exportar reporte" data-sin-doc="1">
+      <code class="firma">obtener_datos_activos()</code>
+      <p class="meta">Línea 1435–1438 de <code>app/app.py</code> · Usada en: Resumen, Ajustar modelos, Metodología, Resultados, Gráficas de barras, Resultados esperados, Estadística, Residuos, Discusión y conclusiones, Datos de prueba, Exportar reporte</p>
+      <p class="sin-doc">Esta función no tiene docstring ni un comentario inmediato en el código — no se inventó ninguna descripción.</p>
+    </div><div class="funcion-entrada" id="fn-nav_item" data-secciones="Resumen,Ajustar modelos,Metodología,Resultados,Gráficas de barras,Resultados esperados,Estadística,Residuos,Discusión y conclusiones,Datos de prueba,Exportar reporte" data-sin-doc="0">
+      <code class="firma">nav_item(nombre)</code>
+      <p class="meta">Línea 1447–1451 de <code>app/app.py</code> · Usada en: Resumen, Ajustar modelos, Metodología, Resultados, Gráficas de barras, Resultados esperados, Estadística, Residuos, Discusión y conclusiones, Datos de prueba, Exportar reporte</p>
+      <p>============================================================================== 3. BARRA LATERAL — navegación agrupada ==============================================================================</p>
+    </div>
+<div class="funcion-entrada" id="fn-ReportePDF" data-secciones="Exportar reporte" data-sin-doc="0">
+  <code class="firma">class ReportePDF(FPDF)</code>
+  <p class="meta">Definida dentro de la sección "Exportar reporte" de <code>app/app.py</code> ·
+  Usada en: Exportar reporte</p>
+  <p>Subclase de <code>fpdf.FPDF</code> que personaliza encabezado y pie de página del reporte.
+  Métodos propios: <code>header</code>, <code>footer</code>.</p>
+</div>
+<nav class="nav-apartado" aria-label="Navegación entre apartados"><a href="#graficas-reporte" data-boton-anterior><span class="direccion">← Anterior</span>Gráficas y reporte PDF</a><a class="siguiente" href="#despliegue" data-boton-siguiente><span class="direccion">Siguiente →</span>Despliegue</a></nav></section>
+<section class="apartado" id="despliegue" aria-labelledby="titulo-despliegue">
+<p class="apartado-etiqueta">09 · Despliegue</p>
+<h1 id="titulo-despliegue">Despliegue en Streamlit Cloud</h1>
+<ol>
+  <li>En <a href="https://share.streamlit.io">share.streamlit.io</a>, "New app".</li>
+  <li>Repositorio: <code>0scar07/proyecto-coffea-hma</code>, rama <code>master</code>.</li>
+  <li>Main file path: <code>app/app.py</code>.</li>
+  <li>Streamlit Cloud toma automáticamente <code>app/requirements.txt</code> y
+  <code>app/.streamlit/config.toml</code> porque están junto al archivo principal.</li>
+</ol>
+<h2>Versiones fijadas en <code>app/requirements.txt</code></h2>
+<div class="bloque-codigo"><button class="boton-copiar" type="button" aria-label="Copiar código"><span class="texto-copiar">Copiar</span></button><pre><code class="lenguaje-text"><span class="linea">streamlit</span>
+<span class="linea">pandas</span>
+<span class="linea">numpy</span>
+<span class="linea">scipy</span>
+<span class="linea">plotly==6.9.0</span>
+<span class="linea">openpyxl</span>
+<span class="linea">fpdf2</span>
+<span class="linea">kaleido==0.2.1</span>
+<span class="linea">matplotlib</span>
+<span class="linea">Pillow</span></code></pre></div>
+<div class="recuadro recuadro-importante"><span class="etiqueta">Importante</span><code>plotly</code> y <code>kaleido</code> están fijados a versiones exactas (no rangos): <code>kaleido&gt;=1</code> rompe la exportación de PNG con Plotly 6.x, ya verificado en una sesión anterior de este proyecto.</div>
+<h2>Cómo se reinicia la app</h2>
+<p>Si el código cambia y la app desplegada no lo refleja, usa <b>"Reboot app"</b> desde el menú de
+la app en Streamlit Cloud — limpia cualquier caché de <code>@st.cache_data</code> de una versión
+anterior.</p>
+<nav class="nav-apartado" aria-label="Navegación entre apartados"><a href="#ref-funciones" data-boton-anterior><span class="direccion">← Anterior</span>Referencia de funciones</a><a class="siguiente" href="#ejecutar-local" data-boton-siguiente><span class="direccion">Siguiente →</span>Ejecutar y probar en local</a></nav></section>
+<section class="apartado" id="ejecutar-local" aria-labelledby="titulo-ejecutar-local">
+<p class="apartado-etiqueta">10 · Local</p>
+<h1 id="titulo-ejecutar-local">Cómo ejecutarlo y probarlo en local</h1>
+<p>Probado con Python 3.11:</p>
+<div class="bloque-codigo"><button class="boton-copiar" type="button" aria-label="Copiar código"><span class="texto-copiar">Copiar</span></button><pre><code class="lenguaje-bash"><span class="linea">git clone https://github.com/0scar07/proyecto-coffea-hma.git</span>
+<span class="linea">cd proyecto-coffea-hma</span>
+<span class="linea">python -m venv .venv</span>
+<span class="linea">.venv\Scripts\activate        # Windows; en Linux/Mac: source .venv/bin/activate</span>
+<span class="linea">pip install -r app/requirements.txt</span>
+<span class="linea">streamlit run app/app.py</span></code></pre></div>
+<p>La app abre en <code>http://localhost:8501</code>. Arranca con datos simulados; para probar
+con datos reales, ve a Datos de prueba y sube <code>datos_reales_coffea_2023.xlsx</code>.</p>
+<h2>Pruebas automatizadas (sin abrir un navegador)</h2>
+<p>La app se puede ejercitar con <code>streamlit.testing.v1.AppTest</code>:</p>
+<div class="bloque-codigo"><button class="boton-copiar" type="button" aria-label="Copiar código"><span class="texto-copiar">Copiar</span></button><pre><code class="lenguaje-python"><span class="linea">from streamlit.testing.v1 import AppTest</span>
+<span class="linea">at = AppTest.from_file(&quot;app/app.py&quot;, default_timeout=60)</span>
+<span class="linea">at.run()</span>
+<span class="linea">at.session_state[&quot;seccion&quot;] = &quot;Ajustar modelos&quot;</span>
+<span class="linea">at.run()</span>
+<span class="linea"># clic de botones, verificacion de at.exception, etc.</span></code></pre></div>
+<div class="recuadro recuadro-nota"><span class="etiqueta">Nota</span>No existe todavía una carpeta <code>tests/</code> versionada en el repositorio con estos scripts — es una posible mejora futura, no incluida en este entregable.</div>
+<nav class="nav-apartado" aria-label="Navegación entre apartados"><a href="#despliegue" data-boton-anterior><span class="direccion">← Anterior</span>Despliegue</a><a class="siguiente" href="#limitaciones" data-boton-siguiente><span class="direccion">Siguiente →</span>Limitaciones y trabajo futuro</a></nav></section>
+<section class="apartado" id="limitaciones" aria-labelledby="titulo-limitaciones">
+<p class="apartado-etiqueta">11 · Limitaciones</p>
+<h1 id="titulo-limitaciones">Limitaciones y trabajo futuro</h1>
+<h2>Ventana de muestreo limitada</h2>
+<p>Con los 4 días disponibles (28-112 ddt) la planta está sobre todo en fase de crecimiento
+acelerado y todavía no muestra el "codo" de desaceleración que Logístico y Gompertz necesitan
+para estimar su asíntota K de forma confiable. Con solo 4 puntos por grupo, Gompertz
+frecuentemente no converge en uno de los dos grupos.</p>
+<h2>Réplicas sintéticas</h2>
+<p>Las réplicas individuales del dataset real se generaron a partir de las medias y CV%
+publicados por Aguirre-Medina et al. (2023) — no son mediciones planta por planta. Cualquier
+prueba estadística sobre ellas ilustra la metodología, no aporta evidencia experimental nueva.</p>
+<h2>Validación disponible — solo interna</h2>
+<p><code>scripts/validacion_cruzada_real.py</code> hace un hold-out 80/20 repetido 200 veces sobre
+las réplicas sintéticas, midiendo qué tan estable es la media reportada. Esto <b>no valida</b> que
+los modelos generalicen a datos nuevos.</p>
+<div class="recuadro recuadro-advertencia"><span class="etiqueta">Advertencia</span>No existe, todavía, ninguna validación externa de los modelos contra un dataset distinto al de Aguirre-Medina et al. (2023).</div>
+<h2>Trabajo futuro</h2>
+<ul>
+  <li>Validación externa con un dataset de <i>Coffea arabica</i> independiente.</li>
+  <li>Ampliar el muestreo para cubrir la fase de desaceleración del crecimiento.</li>
+  <li>Posible carpeta <code>tests/</code> versionada con las pruebas de AppTest.</li>
+</ul>
+<nav class="nav-apartado" aria-label="Navegación entre apartados"><a href="#ejecutar-local" data-boton-anterior><span class="direccion">← Anterior</span>Ejecutar y probar en local</a><a class="siguiente" href="#glosario" data-boton-siguiente><span class="direccion">Siguiente →</span>Glosario</a></nav></section>
+<section class="apartado" id="glosario" aria-labelledby="titulo-glosario">
+<p class="apartado-etiqueta">12 · Glosario</p>
+<h1 id="titulo-glosario">Glosario</h1>
+<dl class="glosario"><dt>−M / +M</dt><dd>Grupo control sin inocular / grupo inoculado con hongos micorrízicos arbusculares (HMA).</dd><dt>ddt</dt><dd>Días después del trasplante — unidad de tiempo del eje X.</dd><dt>curve_fit</dt><dd>scipy.optimize.curve_fit: ajuste por mínimos cuadrados no lineales.</dd><dt>R²</dt><dd>Coeficiente de determinación: proporción de la variación observada que explica el modelo.</dd><dt>RMSE</dt><dd>Raíz del error cuadrático medio.</dd><dt>MAE</dt><dd>Error absoluto medio.</dd><dt>Asíntota K</dt><dd>Valor máximo teórico de Logístico/Gompertz; solo se dibuja si pasa el criterio de plausibilidad.</dd><dt>Convergencia</dt><dd>Que curve_fit haya encontrado una solución estable.</dd><dt>Prueba t de Welch</dt><dd>Compara las medias de dos grupos sin asumir igual varianza (scipy.stats.ttest_ind, equal_var=False).</dd><dt>Réplicas sintéticas</dt><dd>En el dataset real, mediciones individuales generadas a partir de medias y CV% publicados.</dd><dt>AGR / RGR</dt><dd>Tasa de crecimiento absoluta / relativa, derivadas analíticamente de los parámetros ya ajustados.</dd></dl>
+<nav class="nav-apartado" aria-label="Navegación entre apartados"><a href="#limitaciones" data-boton-anterior><span class="direccion">← Anterior</span>Limitaciones y trabajo futuro</a><a class="siguiente" href="#registro-cambios" data-boton-siguiente><span class="direccion">Siguiente →</span>Registro de cambios</a></nav></section>
+<section class="apartado" id="registro-cambios" aria-labelledby="titulo-registro-cambios">
+<p class="apartado-etiqueta">13 · Registro de cambios</p>
+<h1 id="titulo-registro-cambios">Registro de cambios</h1>
+<p>Últimos 15 commits de <code>git log --oneline</code> en <code>feature/docs-html</code>
+(generado el 2026-09-19, no editado a mano):</p>
+<ul class="lista-commits"><li><code>058b590</code> Agrega guÃ­a tÃ©cnica de usuario en PDF</li><li><code>d720b5b</code> Nota en entregables/README.md: la guia tecnica ya existe tambien en PDF</li><li><code>8802f2d</code> Agrega guia_tecnica_usuario.pdf (guia tecnica de usuario, v1.0)</li><li><code>9f28af6</code> Agrega el script que genera la guia tecnica en PDF</li><li><code>4e22e95</code> Agrega fuente de la guia tecnica en PDF: estilos y capturas propias</li><li><code>cff5b18</code> Corrige capturas desactualizadas en docs/screenshots/</li><li><code>6bc5c35</code> Quita la nota metodolÃ³gica de Resultados</li><li><code>dcc6eab</code> Agrega entregables: borradores y plantillas</li><li><code>cac91f0</code> Quita el recuadro de Nota metodologica de la seccion Resultados</li><li><code>9b824f8</code> Agrega indice de entregables y una linea de referencia en el README principal</li><li><code>5d0b28a</code> Agrega trazabilidad de metricas de ajuste de modelos (producto 3)</li><li><code>e4ba8f7</code> Agrega trazabilidad de metodologia estadistica (producto 2)</li><li><code>fdedb5f</code> Agrega borrador de articulo divulgativo (producto 8)</li><li><code>6d6a1cf</code> Agrega guion de ponencia con notas del orador (producto 10)</li><li><code>3ca4ba6</code> Agrega guia tecnica de usuario con capturas reales (producto 9)</li></ul>
+<div class="enlaces-pie">
+  <a class="boton" href="[URL de la app en Streamlit Cloud — pendiente de publicar en el README]">Abrir la app</a>
+  <a class="boton secundario" href="https://github.com/0scar07/proyecto-coffea-hma">Ver el repositorio</a>
+  <a class="boton secundario" href="../06_guia_tecnica/guia_tecnica_usuario.pdf">Guía técnica de usuario (PDF)</a>
+</div>
+<nav class="nav-apartado" aria-label="Navegación entre apartados"><a href="#glosario" data-boton-anterior><span class="direccion">← Anterior</span>Glosario</a></nav></section>
+  </main>
+
+  <aside class="toc-lateral" aria-label="En esta página">
+    <h2>En esta página</h2>
+    <ul><li><a href="#portada">Documentación técnica de Coffea IA</a></li>
+<li><a href="#vision-general">Visión general y arquitectura</a></li>
+<li><a href="#estructura-repo">Estructura del repositorio</a></li>
+<li><a href="#formato-datos">Formato de datos y validaciones</a></li>
+<li><a href="#modelos">Modelos: fórmulas y convergencia</a></li>
+<li><a href="#metricas-k">Métricas y plausibilidad de K</a></li>
+<li><a href="#estadistica">Estadística (t de Welch)</a></li>
+<li><a href="#graficas-reporte">Gráficas y reporte PDF</a></li>
+<li><a href="#ref-funciones">Referencia de funciones</a></li>
+<li><a href="#despliegue">Despliegue</a></li>
+<li><a href="#ejecutar-local">Ejecutar y probar en local</a></li>
+<li><a href="#limitaciones">Limitaciones y trabajo futuro</a></li>
+<li><a href="#glosario">Glosario</a></li>
+<li><a href="#registro-cambios">Registro de cambios</a></li></ul>
+  </aside>
+</div>
+
+<nav class="barra-inferior" aria-label="Anterior y siguiente">
+  <button type="button" data-boton-anterior>← Anterior</button>
+  <button type="button" data-boton-siguiente>Siguiente →</button>
+</nav>
+
+<script src="assets/app.js"></script>
+</body>
+</html>

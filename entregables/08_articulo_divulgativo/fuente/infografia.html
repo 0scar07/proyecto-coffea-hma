@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Infografía — Coffea IA</title>
+<style>
+  :root{
+    --crema:#F1ECE3; --blanco:#FFFFFF; --tinta:#201C18;
+    --terracota:#A8432B; --borde:#E4DFD6; --gris:#6B6359;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin:0; padding:0; }
+  body{
+    width: 1200px;
+    font-family: "Segoe UI", Calibri, sans-serif;
+    color: var(--tinta);
+    background: var(--blanco);
+  }
+  .marca-borrador{
+    text-align:center; font-size:13px; letter-spacing:.06em; text-transform:uppercase;
+    color: var(--gris); padding: 14px 0 0 0; font-weight:600;
+  }
+  header{
+    padding: 18px 70px 34px 70px;
+    text-align:center;
+  }
+  header h1{
+    font-family: Georgia, serif;
+    font-size: 46px;
+    line-height:1.18;
+    color: var(--terracota);
+    margin: 10px 0 16px 0;
+  }
+  header .gancho{
+    font-size: 21px;
+    color: var(--tinta);
+    line-height:1.4;
+    max-width: 920px;
+    margin: 0 auto;
+  }
+  section{ padding: 0 70px; margin-bottom: 46px; }
+  h2.seccion{
+    font-family: Georgia, serif;
+    font-size: 30px;
+    color: var(--tinta);
+    border-bottom: 4px solid var(--terracota);
+    display:inline-block;
+    padding-bottom: 6px;
+    margin: 0 0 30px 0;
+  }
+  .pasos{ display:flex; gap: 24px; }
+  .paso{
+    flex:1; background: var(--crema); border:1px solid var(--borde); border-radius:16px;
+    padding: 26px 20px; text-align:center;
+  }
+  .paso .icono{ margin: 0 auto 14px auto; width:64px; height:64px; }
+  .paso .num{
+    font-family: Georgia, serif; color: var(--terracota); font-weight:bold; font-size:15px;
+    margin-bottom: 6px;
+  }
+  .paso p{ font-size: 16.5px; line-height:1.45; margin:0; }
+
+  .hallazgos{ display:flex; gap:24px; }
+  .hallazgo{
+    flex:1; text-align:center; background: var(--terracota); color: var(--crema);
+    border-radius:16px; padding: 28px 16px;
+  }
+  .hallazgo .cifra{ font-family: Georgia, serif; font-size:44px; font-weight:bold; }
+  .hallazgo .desc{ font-size: 15.5px; margin-top: 8px; line-height:1.4; }
+
+  .figura{
+    background: var(--crema); border:1px solid var(--borde); border-radius: 16px;
+    padding: 20px; margin-bottom: 26px;
+  }
+  .figura img{ width:100%; display:block; border-radius:6px; }
+  .figura .lectura{
+    margin-top:14px; font-size:17px; font-weight:600; color: var(--terracota); text-align:center;
+  }
+
+  .falta{ list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:14px; }
+  .falta li{
+    background: var(--blanco); border:1.5px solid var(--borde); border-left:6px solid var(--terracota);
+    border-radius: 10px; padding: 16px 20px; font-size:16.5px; line-height:1.45;
+  }
+
+  .nota-datos{
+    background: var(--crema); border:1px dashed var(--gris); border-radius:12px;
+    padding: 20px 24px; font-size: 14.5px; line-height:1.55; color: var(--tinta);
+  }
+  .nota-datos b{ color: var(--terracota); }
+
+  footer{
+    padding: 30px 70px 50px 70px; text-align:center; border-top: 2px solid var(--borde);
+    margin-top: 10px;
+  }
+  footer .autores{ font-size:17px; font-weight:bold; margin-bottom:6px; }
+  footer .inst{ font-size:13.5px; color: var(--gris); margin-bottom: 18px; }
+  footer .qr-row{ display:flex; align-items:center; justify-content:center; gap:18px; }
+  footer .qr-row img{ width:110px; height:110px; }
+  footer .enlace{ font-size:15px; color: var(--terracota); font-weight:600; }
+</style>
+</head>
+<body>
+  <div class="marca-borrador">Borrador para revisión del docente</div>
+  <header>
+    <h1>¿Puede una fórmula matemática mostrar el efecto de la micorriza en el café?</h1>
+    <div class="gancho">Comparamos plántulas de café con y sin hongos micorrízicos ajustando curvas de crecimiento a los datos — no solo mirando una tabla de promedios.</div>
+  </header>
+
+  <section>
+    <h2 class="seccion">Qué hicimos</h2>
+    <div class="pasos">
+      <div class="paso">
+        <svg class="icono" viewBox="0 0 64 64"><rect x="10" y="8" width="44" height="48" rx="4" fill="none" stroke="#A8432B" stroke-width="3"/><line x1="18" y1="20" x2="46" y2="20" stroke="#A8432B" stroke-width="3"/><line x1="18" y1="30" x2="46" y2="30" stroke="#A8432B" stroke-width="3"/><line x1="18" y1="40" x2="36" y2="40" stroke="#A8432B" stroke-width="3"/></svg>
+        <div class="num">PASO 1</div>
+        <p>Tomamos datos reales publicados de crecimiento de café: 4 variables, 4 momentos, dos grupos (con y sin micorriza).</p>
+      </div>
+      <div class="paso">
+        <svg class="icono" viewBox="0 0 64 64"><path d="M8 48 C 20 48, 24 16, 56 12" fill="none" stroke="#A8432B" stroke-width="3.5"/><circle cx="8" cy="48" r="3.5" fill="#A8432B"/><circle cx="56" cy="12" r="3.5" fill="#A8432B"/><circle cx="32" cy="26" r="3.5" fill="#A8432B"/></svg>
+        <div class="num">PASO 2</div>
+        <p>Ajustamos 3 modelos matemáticos de crecimiento a esos datos con la app Coffea IA (regresión no lineal).</p>
+      </div>
+      <div class="paso">
+        <svg class="icono" viewBox="0 0 64 64"><rect x="10" y="30" width="14" height="24" fill="#A8432B"/><rect x="40" y="16" width="14" height="38" fill="#A8432B" opacity="0.55"/><line x1="6" y1="56" x2="58" y2="56" stroke="#A8432B" stroke-width="3"/></svg>
+        <div class="num">PASO 3</div>
+        <p>Comparamos estadísticamente el grupo inoculado (+M) contra el grupo control (−M).</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2 class="seccion">Qué encontramos</h2>
+    <div class="hallazgos">
+      <div class="hallazgo">
+        <div class="cifra">+97.1%</div>
+        <div class="desc">Área foliar de +M sobre −M a los 112 días — significativo en los 4 momentos medidos</div>
+      </div>
+      <div class="hallazgo">
+        <div class="cifra">+71.7%</div>
+        <div class="desc">Biomasa total de +M sobre −M a los 112 días — significativo en 3 de 4 momentos</div>
+      </div>
+      <div class="hallazgo">
+        <div class="cifra">ns</div>
+        <div class="desc">Altura y número de hojas: mayormente sin diferencia significativa con estos datos</div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2 class="seccion">Las gráficas</h2>
+    <div class="figura">
+      <img src="assets/barras_area_foliar.png" alt="Area foliar por dia, media mas menos DE, comparando -M y +M con significancia">
+      <div class="lectura">El área foliar de las plantas inoculadas se dispara sobre todo después de los 84 días.</div>
+    </div>
+    <div class="figura">
+      <img src="assets/barras_biomasa.png" alt="Biomasa total por dia, media mas menos DE, comparando -M y +M con significancia">
+      <div class="lectura">La biomasa total sigue el mismo patrón: la ventaja de +M crece con el tiempo.</div>
+    </div>
+  </section>
+
+  <section>
+    <h2 class="seccion">Lo que aún falta</h2>
+    <ul class="falta">
+      <li>Los datos originales solo publican promedios; usamos réplicas generadas estadísticamente para poder comparar los grupos.</li>
+      <li>Todavía no comparamos estos resultados con un experimento nuevo e independiente — la validación externa está en curso.</li>
+      <li>La ventana medida (28-112 días) no alcanza a mostrar si el crecimiento llega a estabilizarse.</li>
+    </ul>
+  </section>
+
+  <section>
+    <div class="nota-datos">
+      <b>Nota sobre los datos:</b> la base es real (Aguirre-Medina et al., 2023), pero las réplicas individuales usadas en el análisis estadístico son <b>sintéticas</b>: se generaron para reproducir los promedios y la variabilidad publicados, porque el estudio original no reporta mediciones planta por planta. Por eso los valores p ilustran el método, no son evidencia experimental nueva.
+    </div>
+  </section>
+
+  <footer>
+    <div class="autores">Richard Montez · Diego Barrios · Santiago Uribe · Oscar Llanos</div>
+    <div class="inst">Programa de Ingeniería, Universidad Simón Bolívar [facultad/departamento por definir]</div>
+    <div class="qr-row">
+      <img src="assets/qr_app.png" alt="Codigo QR al repositorio del proyecto en GitHub">
+      <div class="enlace">github.com/0scar07/proyecto-coffea-hma</div>
+    </div>
+  </footer>
+</body>
+</html>
