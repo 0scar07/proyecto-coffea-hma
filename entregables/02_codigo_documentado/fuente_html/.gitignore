@@ -1,0 +1,4 @@
+# Capturas, videos y fotogramas de la verificacion con Playwright, y el HTML/CSS/JS
+# intermedio: se regeneran con generar_docs_html.py y no se versionan.
+previews/
+_build/
