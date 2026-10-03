@@ -15,6 +15,7 @@ CÓMO CORRERLA:
 """
 
 import io
+import os
 import tempfile
 from datetime import datetime
 import numpy as np
@@ -23,8 +24,8 @@ import streamlit as st
 import plotly.graph_objects as go
 import plotly.io as pio
 from plotly.subplots import make_subplots
-from scipy.optimize import curve_fit
-from scipy.stats import t as t_dist, ttest_ind
+from scipy.optimize import brentq, curve_fit
+from scipy.stats import t as t_dist, ttest_ind, ttest_ind_from_stats
 from fpdf import FPDF
 from PIL import Image
 
@@ -46,6 +47,7 @@ defaults = {
     "modelos_incluidos": ["Exponencial", "Logístico", "Gompertz"],
     "fuente_datos": "simulado", "datos_reales": None, "dia_ttest": 120, "ultimo_archivo_id": None,
     "cita_datos_reales": "", "recien_ajustado": False,
+    "ve_paper": None, "ve_paper_id": None, "ve_ultimo_archivo": None,
 }
 for k, v in defaults.items():
     if k not in st.session_state:
@@ -696,6 +698,718 @@ DATOS = obtener_datos_activos()
 
 
 # ==============================================================================
+# VALIDACIÓN EXTERNA — datos independientes de un paper, cargados en «Datos de prueba».
+# Los modelos se ajustan a los datos reales activos (o, si no hay, con el Excel real del
+# repositorio) y se comparan con los datos del paper, que el modelo nunca vio.
+#
+# Excel del paper — hoja «datos», una fila por variable, grupo y fecha:
+#   variable (altura | hojas | diametro | biomasa | area_foliar), grupo (-M | +M), dia,
+#   media, de (opcional), n (opcional)
+# También acepta réplicas: variable, grupo, dia (o dat), replica, valor -> se calculan media, DE y n.
+# Hoja «info» (opcional, columnas campo | valor): cita, origen_tiempo (trasplante | siembra |
+# inoculacion), desfase_dias (días a SUMAR para pasar al eje ddt de la app).
+# ==============================================================================
+VE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "datos_reales")
+VE_XLSX_BASE = os.path.join(VE_DIR, "datos_reales_coffea_2023.xlsx")
+VE_XLSX_EJEMPLO = os.path.join(VE_DIR, "validacion_externa", "aguirre_medina_2011.xlsx")
+VE_VARIABLES = ("altura", "hojas", "diametro", "biomasa", "area_foliar")
+VE_ORIGENES = ("trasplante", "siembra", "inoculacion")
+VE_MIN_FECHAS_HOLDOUT = 4   # 3 para ajustar Logístico/Gompertz + 1 para predecir
+VE_MIN_FECHAS_EFECTO = 3
+VE_NOMBRE = {"altura": "Altura", "hojas": "Número de hojas", "diametro": "Diámetro del tallo",
+             "biomasa": "Biomasa total", "area_foliar": "Área foliar"}
+VE_UNIDAD = {"altura": "cm", "hojas": "hojas", "diametro": "mm", "biomasa": "g", "area_foliar": "cm²"}
+VE_VENTANA_DEFECTO = (28, 112)
+VE_GRUPO_TXT = {"-M": "−M (sin inocular)", "+M": "+M (inoculado)"}
+VE_SIMBOLO = {"-M": "circle", "+M": "triangle-up"}
+VE_OPCIONES_MODELO = ["Mejor R²", "Exponencial", "Logístico", "Gompertz"]
+
+
+# --- Lectura y revisión del Excel del paper ---------------------------------------------
+def _ve_texto(x):
+    return "" if x is None or (isinstance(x, float) and np.isnan(x)) else str(x).strip()
+
+
+def ve_leer_paper(archivo):
+    """Lee el Excel/CSV del paper (ruta o archivo subido). Devuelve (paper, error), con
+    paper = {"datos": {variable: {grupo: {dia: {"media", "de", "n"}}}}, "cita", "origen", "desfase"}."""
+    nombre = archivo if isinstance(archivo, str) else getattr(archivo, "name", "")
+    try:
+        if str(nombre).lower().endswith(".csv"):
+            hojas = {"datos": pd.read_csv(archivo)}
+        else:
+            hojas = pd.read_excel(archivo, sheet_name=None)
+    except Exception as e:
+        return None, f"No se pudo leer el archivo: {e}"
+    hojas = {str(k).strip().lower(): v for k, v in hojas.items()}
+    df = hojas.get("datos", next(iter(hojas.values()))).copy()
+    df.columns = [str(c).strip().lower() for c in df.columns]
+    df = df.rename(columns={"dat": "dia", "día": "dia", "dds": "dia", "ddt": "dia", "sd": "de", "ds": "de"})
+
+    if not {"variable", "grupo", "dia"} <= set(df.columns):
+        return None, "Faltan columnas obligatorias: «variable», «grupo» y «dia». Usa la plantilla."
+    if "media" not in df.columns and "valor" not in df.columns:
+        return None, "Falta la columna «media» (medias publicadas) o «valor» (réplicas). Usa la plantilla."
+    df = df.dropna(subset=["variable", "grupo", "dia"])
+    if df.empty:
+        return None, "La hoja «datos» no tiene filas."
+    df["variable"] = df["variable"].astype(str).str.strip().str.lower()
+    df["grupo"] = df["grupo"].astype(str).str.strip().str.replace("−", "-", regex=False).str.upper()
+    malas = sorted(set(df["variable"]) - set(VE_VARIABLES))
+    if malas:
+        return None, f"Variables no reconocidas: {malas}. Usa: {', '.join(VE_VARIABLES)}."
+    malos = sorted(set(df["grupo"]) - {"-M", "+M"})
+    if malos:
+        return None, f"Grupos no reconocidos: {malos}. Usa «-M» (sin inocular) o «+M» (inoculado)."
+    try:
+        df["dia"] = pd.to_numeric(df["dia"]).astype(float)
+        for col in ("media", "valor", "de", "n"):
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col])
+    except Exception:
+        return None, "Las columnas «dia», «media»/«valor», «de» y «n» deben ser numéricas."
+
+    if "media" in df.columns:
+        if df.duplicated(["variable", "grupo", "dia"]).any():
+            return None, ("Hay filas repetidas (misma variable, grupo y día). Con columna «media» va una sola "
+                          "fila por fecha; si tienes réplicas, usa la columna «valor».")
+        resumen = df.assign(de=df["de"] if "de" in df.columns else np.nan,
+                            n=df["n"] if "n" in df.columns else np.nan)
+    else:
+        resumen = (df.groupby(["variable", "grupo", "dia"])["valor"]
+                   .agg(media="mean", de=lambda s: s.std(ddof=1) if len(s) > 1 else np.nan, n="count")
+                   .reset_index())
+    if resumen["media"].isna().any():
+        return None, "Hay filas sin valor en «media»."
+    if (resumen["media"] <= 0).any():
+        return None, "Todas las medias deben ser mayores que 0."
+
+    datos = {}
+    for r in resumen.itertuples():
+        datos.setdefault(r.variable, {}).setdefault(r.grupo, {})[float(r.dia)] = {
+            "media": float(r.media),
+            "de": float(r.de) if pd.notna(r.de) and r.de > 0 else None,
+            "n": int(r.n) if pd.notna(r.n) and r.n >= 2 else None,
+        }
+
+    info = {}
+    if "info" in hojas and hojas["info"].shape[1] >= 2:
+        hi = hojas["info"]
+        info = {_ve_texto(k).lower(): v for k, v in zip(hi.iloc[:, 0], hi.iloc[:, 1]) if _ve_texto(k)}
+    origen = (_ve_texto(info.get("origen_tiempo")) or "trasplante").lower()
+    origen = origen.replace("ó", "o").replace("inoculación", "inoculacion")
+    if origen not in VE_ORIGENES:
+        return None, f"En la hoja «info», origen_tiempo debe ser: {', '.join(VE_ORIGENES)}."
+    desfase = None
+    if _ve_texto(info.get("desfase_dias")):
+        try:
+            desfase = float(info["desfase_dias"])
+        except (TypeError, ValueError):
+            return None, "En la hoja «info», desfase_dias debe ser un número (o quedar vacío)."
+    return {"datos": datos, "cita": _ve_texto(info.get("cita")), "origen": origen, "desfase": desfase}, None
+
+
+def ve_plantilla_excel():
+    buffer = io.BytesIO()
+    ejemplo = pd.DataFrame([
+        ("altura", "-M", 30, 7.5, 0.6, 6), ("altura", "+M", 30, 8.1, 0.7, 6),
+        ("altura", "-M", 60, 10.2, 0.9, 6), ("altura", "+M", 60, 11.6, 1.0, 6),
+        ("hojas", "-M", 30, 2.0, 0.3, 6), ("hojas", "+M", 30, 2.4, 0.4, 6),
+    ], columns=["variable", "grupo", "dia", "media", "de", "n"])
+    info = pd.DataFrame([("cita", "Autor et al. (año). Título. Revista vol(n):páginas."),
+                         ("origen_tiempo", "trasplante"), ("desfase_dias", "")], columns=["campo", "valor"])
+    instrucciones = pd.DataFrame({"Instrucciones": [
+        "Hoja «datos»: una fila por variable, grupo y fecha, con los valores REALES publicados en el paper.",
+        "variable: altura, hojas, diametro, biomasa o area_foliar (las variables de más del paper se omiten).",
+        "grupo: -M = sin inocular (testigo); +M = inoculado con hongos micorrízicos.",
+        "dia: el día de la medición, tal como lo da el paper. media: valor publicado (> 0).",
+        "de y n (opcionales): desviación estándar y número de plantas. Permiten la prueba t del efecto del hongo.",
+        "Si tienes réplicas planta por planta: usa columnas variable, grupo, dia, replica, valor (sin «media»).",
+        "Hoja «info»: origen_tiempo = desde cuándo cuenta los días el paper (trasplante, siembra o inoculacion).",
+        "Si no es «trasplante», la app estima el desfase comparando el tamaño de las plantas; o escríbelo en desfase_dias.",
+        "Para «Fechas no vistas» hacen falta al menos 4 fechas por grupo; para el efecto del hongo, -M y +M.",
+    ]})
+    with pd.ExcelWriter(buffer, engine="openpyxl") as w:
+        ejemplo.to_excel(w, sheet_name="datos", index=False)
+        info.to_excel(w, sheet_name="info", index=False)
+        instrucciones.to_excel(w, sheet_name="instrucciones", index=False)
+    return buffer.getvalue()
+
+
+@st.cache_data
+def ve_leer_base(ruta):
+    df = pd.read_excel(ruta, sheet_name="datos")
+    datos = {}
+    for (v, g, d), s in df.groupby(["variable", "grupo", "dat"]):
+        datos.setdefault(v, {}).setdefault(g, {})[int(d)] = s["valor"].to_numpy()
+    return datos
+
+
+def ve_datos_base():
+    """Datos a los que se AJUSTAN los modelos: los datos reales activos en la app o, si no hay, el Excel real del repositorio."""
+    if st.session_state.fuente_datos == "real" and st.session_state.datos_reales is not None:
+        cita = st.session_state.cita_datos_reales or "datos reales cargados en «Datos de prueba»"
+        return st.session_state.datos_reales, cita
+    if os.path.exists(VE_XLSX_BASE):
+        return ve_leer_base(VE_XLSX_BASE), "datos_reales_coffea_2023.xlsx (Aguirre-Medina et al. 2023)"
+    return None, None
+
+
+def ve_capacidades(datos_paper, datos_base):
+    """Qué validaciones permite cada variable del paper."""
+    filas = []
+    for v in VE_VARIABLES:
+        if v not in datos_paper:
+            continue
+        grupos = datos_paper[v]
+        n_m, n_p = len(grupos.get("-M", {})), len(grupos.get("+M", {}))
+        en_base = datos_base is not None and v in datos_base
+        filas.append({
+            "Variable": VE_NOMBRE[v], "Fechas −M": n_m, "Fechas +M": n_p,
+            "Predicho vs real": "✔" if en_base else "✗ no está en los datos ajustados",
+            "Fechas no vistas": ("✔" if max(n_m, n_p) >= VE_MIN_FECHAS_HOLDOUT
+                                 else f"✗ necesita ≥ {VE_MIN_FECHAS_HOLDOUT} fechas"),
+            "Efecto del hongo": ("✔" if min(n_m, n_p) >= VE_MIN_FECHAS_EFECTO
+                                 else "✗ necesita −M y +M" if min(n_m, n_p) == 0
+                                 else f"✗ necesita ≥ {VE_MIN_FECHAS_EFECTO} fechas por grupo"),
+        })
+    return pd.DataFrame(filas)
+
+
+def ve_parece_mismo_dataset(datos_paper, datos_base):
+    comunes = iguales = 0
+    for v, grupos in datos_paper.items():
+        for g, serie in grupos.items():
+            base = (datos_base or {}).get(v, {}).get(g, {})
+            for d, x in serie.items():
+                if d in base:
+                    comunes += 1
+                    iguales += abs(float(np.mean(base[d])) - x["media"]) <= 1e-6 * max(1.0, abs(x["media"]))
+    return comunes >= 3 and iguales / comunes >= 0.9
+
+
+# --- Modelos -------------------------------------------------------------------------------
+def ve_valido(r):
+    """Un ajuste sirve solo si convergió y su R² no es negativo (R² < 0 = la curva explica
+    peor que una línea horizontal: ajuste degenerado)."""
+    return (r is not None and not r.get("insuficiente") and r["params"] is not None
+            and r["r2"] is not None and np.isfinite(r["r2"]) and r["r2"] >= 0)
+
+
+def ve_elegir(res_vg, eleccion):
+    ok = {m: r for m, r in res_vg.items() if ve_valido(r)}
+    if not ok:
+        return None, None
+    if eleccion == "Mejor R²":
+        m = max(ok, key=lambda k: ok[k]["r2"])
+        return m, ok[m]
+    return (eleccion, ok[eleccion]) if eleccion in ok else (None, None)
+
+
+def ve_predecir(modelo, r, t):
+    return MODELOS[modelo]["func"](np.asarray(t, dtype=float), *r["params"])
+
+
+def ve_metricas(real, pred):
+    real, pred = np.asarray(real, float), np.asarray(pred, float)
+    if len(real) == 0:
+        return dict(n=0, r2=np.nan, rmse=np.nan, mae=np.nan, mape=np.nan, sesgo=np.nan)
+    ss_tot = np.sum((real - real.mean()) ** 2)
+    return dict(n=len(real),
+                r2=1 - np.sum((real - pred) ** 2) / ss_tot if len(real) >= 3 and ss_tot > 0 else np.nan,
+                rmse=float(np.sqrt(np.mean((real - pred) ** 2))),
+                mae=float(np.mean(np.abs(real - pred))),
+                mape=float(np.mean(np.abs((pred - real) / real)) * 100),
+                sesgo=float(np.mean(pred - real)))
+
+
+def ve_desfase_estimado(paper, res_base):
+    """Días a sumar al eje del paper para llevarlo a ddt. Devuelve (desfase, explicación)."""
+    if paper["desfase"] is not None:
+        return paper["desfase"], "indicado en la hoja «info» del Excel"
+    if paper["origen"] == "trasplante":
+        return 0.0, "el paper cuenta desde el trasplante, igual que la app"
+    for v in ("altura", "biomasa", "hojas", "area_foliar", "diametro"):
+        for g in ("-M", "+M"):
+            serie = paper["datos"].get(v, {}).get(g)
+            if not serie or v not in res_base or g not in res_base[v]:
+                continue
+            m, r = ve_elegir(res_base[v][g], "Mejor R²")
+            if m is None:
+                continue
+            d0 = min(serie)
+            try:
+                t_eq = brentq(lambda t: ve_predecir(m, r, t) - serie[d0]["media"], 0.0, 400.0)
+            except ValueError:
+                continue
+            return float(t_eq - d0), (f"estimada por tamaño: {VE_NOMBRE[v].lower()} {g} del paper el día "
+                                      f"{d0:g} = la de sus plantas a {t_eq:.0f} ddt")
+    return 0.0, "no se pudo estimar por tamaño; ajústela a mano"
+
+
+def ve_ajustar_paper(serie, variable, grupo, desfase, dias):
+    """Los 3 modelos de la app ajustados a las medias del paper, con el eje alineado a ddt."""
+    datos = {variable: {grupo: {int(round(d + desfase)): np.array([serie[d]["media"]]) for d in dias}}}
+    return ajustar_todos_los_modelos(datos)[variable][grupo]
+
+
+def ve_calidad(mape):
+    if not np.isfinite(mape):
+        return "—"
+    return "muy buena" if mape < 10 else "aceptable" if mape < 20 else "pobre"
+
+
+# --- Gráficas ------------------------------------------------------------------------------
+def ve_figura(titulo, eje_x, eje_y, alto=480):
+    fig = go.Figure()
+    fig.update_layout(title=dict(text=titulo, x=0, xanchor="left", font=dict(size=15)), height=alto,
+                      margin=dict(l=60, r=20, t=50, b=150),
+                      legend=dict(orientation="h", yanchor="top", y=-0.22, x=0))
+    fig.update_xaxes(title=eje_x)
+    fig.update_yaxes(title=eje_y, rangemode="tozero")
+    return fig
+
+
+def ve_color(g):
+    return T["CONTROL"] if g == "-M" else T["ACCENT"]
+
+
+def ve_barras(serie, dias):
+    de = [serie[d]["de"] if serie[d]["de"] is not None else np.nan for d in dias]
+    return None if all(np.isnan(de)) else de
+
+
+def ve_trazar_real(fig, g, x, y, de=None, nombre="real", hover=None):
+    fig.add_trace(go.Scatter(
+        x=x, y=y, mode="markers", name=f"{VE_GRUPO_TXT[g]} · {nombre}",
+        marker=dict(symbol=VE_SIMBOLO[g], size=11, color="white", line=dict(color=ve_color(g), width=2.2)),
+        error_y=dict(type="data", array=de, color=ve_color(g), thickness=1, width=3) if de is not None else None,
+        customdata=hover, hovertemplate="%{customdata}<extra></extra>" if hover is not None else None))
+
+
+def ve_trazar_curva(fig, g, t, y, nombre):
+    fig.add_trace(go.Scatter(x=t, y=y, mode="lines", name=f"{VE_GRUPO_TXT[g]} · {nombre}",
+                             line=dict(color=ve_color(g), width=2.5), hoverinfo="skip"))
+
+
+def ve_segmentos_error(fig, x, y_real, y_pred):
+    xs, ys = [], []
+    for xi, a, b in zip(x, y_real, y_pred):
+        xs += [xi, xi, None]
+        ys += [a, b, None]
+    fig.add_trace(go.Scatter(x=xs, y=ys, mode="lines", line=dict(color=T["INK_MUTED"], width=1, dash="dot"),
+                             showlegend=False, hoverinfo="skip"))
+
+
+def ve_tabla(df, formato):
+    st.dataframe(df.style.format(formato, na_rep="—"), hide_index=True, width="stretch")
+
+
+def ve_ir_a_datos_de_prueba(clave):
+    if st.button("Ir a Datos de prueba", key=clave):
+        st.session_state.seccion = "Datos de prueba"
+        st.rerun()
+
+
+# --- Sección -------------------------------------------------------------------------------
+def ve_render():
+    st.markdown("### Validación externa")
+    paper = st.session_state.ve_paper
+    if paper is None:
+        st.markdown("Compara lo que **predicen** los modelos con los datos **reales** de un experimento "
+                    "independiente (un paper) que el modelo nunca vio.")
+        st.info("Todavía no hay datos de un paper cargados. En **Datos → Datos de prueba**, bloque "
+                "«Datos externos para validación», descarga la plantilla y sube el Excel del paper, "
+                "o carga el ejemplo de Aguirre-Medina et al. (2011).")
+        ve_ir_a_datos_de_prueba("ve_ir_sin_paper")
+        return
+    datos_base, origen_base = ve_datos_base()
+    if datos_base is None:
+        st.warning("No hay datos reales a los cuales ajustar los modelos. Cárgalos en «Datos de prueba».")
+        ve_ir_a_datos_de_prueba("ve_ir_sin_base")
+        return
+
+    dp = paper["datos"]
+    st.markdown(f"Datos reales del paper: **{paper['cita'] or 'paper sin cita (agrégala en la hoja «info»)'}**. "
+                f"Modelos ajustados a: **{origen_base}**.")
+    if ve_parece_mismo_dataset(dp, datos_base):
+        st.warning("Los datos del paper coinciden con los datos a los que se ajustaron los modelos. Para que sea una validación **externa**, "
+                   "deben venir de un experimento distinto.")
+
+    res_base = ajustar_todos_los_modelos(datos_base)
+    d_est, explicacion = ve_desfase_estimado(paper, res_base)
+    dias_base = sorted({d for v in datos_base.values() for g in v.values() for d in g})
+    ventana = (dias_base[0], dias_base[-1]) if dias_base else VE_VENTANA_DEFECTO
+
+    c1, c2 = st.columns(2)
+    eleccion = c1.selectbox("Modelo", VE_OPCIONES_MODELO, key="ve_modelo",
+                            help="«Mejor R²» usa, en cada grupo, el modelo que mejor ajusta.")
+    desfase = c2.slider("Alineación del tiempo (días)", -200, 200, int(round(d_est)),
+                        key=f"ve_desfase_{st.session_state.ve_paper_id}",
+                        help="Días que se suman al eje del paper para llevarlo a días después del trasplante (ddt).")
+    st.caption(f"El paper cuenta desde: **{paper['origen']}**. Alineación sugerida: **{d_est:+.0f} días** "
+               f"({explicacion}).")
+
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(["1 · Lo que predice el modelo", "2 · Predicho vs real",
+                                            "3 · Fechas no vistas", "4 · Efecto del hongo", "5 · Datos del paper"])
+
+    # --- 1 · Predicción del modelo ajustado ---------------------------------------------
+    with tab1:
+        st.markdown("#### ¿Qué valores predice el modelo?")
+        st.write("Elija una variable y un día: el modelo ajustado a sus datos devuelve el valor predicho "
+                 "para cada grupo.")
+        vars_base = [v for v in VE_VARIABLES if v in res_base and {"-M", "+M"} <= set(res_base[v])]
+        a, b = st.columns(2)
+        var1 = a.selectbox("Variable", vars_base, key="ve_var1",
+                           format_func=lambda v: f"{VE_NOMBRE[v]} ({VE_UNIDAD[v]})")
+        dia1 = b.number_input("Día a predecir (ddt)", min_value=0, max_value=400, value=100, step=1, key="ve_dia1")
+        modelos1 = {g: ve_elegir(res_base[var1][g], eleccion) for g in ("-M", "+M")}
+        if any(m is None for m, _ in modelos1.values()):
+            st.warning(f"«{eleccion}» no tiene un ajuste válido para {VE_NOMBRE[var1].lower()} en algún grupo. "
+                       "Pruebe con «Mejor R²».")
+        else:
+            pred1 = {g: float(ve_predecir(m, r, dia1)) for g, (m, r) in modelos1.items()}
+            k1, k2, k3 = st.columns(3)
+            k1.metric(f"{VE_NOMBRE[var1]} predicha · −M", f"{pred1['-M']:.2f} {VE_UNIDAD[var1]}",
+                      help=f"Modelo {modelos1['-M'][0]}")
+            k2.metric(f"{VE_NOMBRE[var1]} predicha · +M", f"{pred1['+M']:.2f} {VE_UNIDAD[var1]}",
+                      help=f"Modelo {modelos1['+M'][0]}")
+            k3.metric("Efecto predicho del hongo", f"{100 * (pred1['+M'] - pred1['-M']) / pred1['-M']:+.1f} %")
+            if not ventana[0] <= dia1 <= ventana[1]:
+                st.info(f"El día {dia1} está fuera de la ventana medida ({ventana[0]}-{ventana[1]} ddt): "
+                        "es una **extrapolación**, menos confiable.")
+            filas = []
+            for d in sorted(set(dias_base) | {int(dia1)}):
+                pm, pp = (float(ve_predecir(*modelos1[g], d)) for g in ("-M", "+M"))
+                filas.append({"Día (ddt)": d, f"−M predicho ({VE_UNIDAD[var1]})": pm,
+                              f"+M predicho ({VE_UNIDAD[var1]})": pp, "Efecto (%)": 100 * (pp - pm) / pm,
+                              "Tramo": "medido" if ventana[0] <= d <= ventana[1] else "extrapolación"})
+            ve_tabla(pd.DataFrame(filas), {f"−M predicho ({VE_UNIDAD[var1]})": "{:.3f}",
+                                           f"+M predicho ({VE_UNIDAD[var1]})": "{:.3f}", "Efecto (%)": "{:+.1f}"})
+            fig = ve_figura(f"{VE_NOMBRE[var1]}: curva predicha y medias de sus datos",
+                            "Días después del trasplante (ddt)", f"{VE_NOMBRE[var1]} ({VE_UNIDAD[var1]})")
+            t = np.linspace(0, max(ventana[1] + 18, dia1 + 10), 300)
+            for g, (m, r) in modelos1.items():
+                ve_trazar_curva(fig, g, t, ve_predecir(m, r, t), f"predicho ({m})")
+                dias, medias, sds, _ = media_sd_por_dia(datos_base[var1][g])
+                ve_trazar_real(fig, g, dias, medias, sds, "media de sus datos")
+                fig.add_trace(go.Scatter(x=[dia1], y=[pred1[g]], mode="markers", showlegend=False,
+                                         marker=dict(symbol="x", size=12, color=ve_color(g)),
+                                         hovertemplate=f"{VE_GRUPO_TXT[g]}<br>día {dia1}: {pred1[g]:.2f} "
+                                                       f"{VE_UNIDAD[var1]}<extra></extra>"))
+            fig.add_vrect(x0=ventana[0], x1=ventana[1], fillcolor=T["BORDER"], opacity=0.35, line_width=0,
+                          layer="below", annotation_text="ventana medida", annotation_position="top left")
+            st.plotly_chart(fig, width="stretch")
+
+    # --- 2 · El modelo ajustado predice el paper (validación externa estricta) --------------
+    with tab2:
+        st.markdown("#### Predicho por el modelo vs. real del paper")
+        st.write("El modelo ajustado a **sus datos**, sin cambiar sus parámetros, predice los días del paper "
+                 "**sin haberlos visto**, y se compara con lo que midieron los autores.")
+        vars2 = [v for v in VE_VARIABLES if v in dp and v in res_base
+                 and any(g in res_base[v] for g in dp[v])]
+        if not vars2:
+            st.info("Ninguna variable del paper está en los datos a los que se ajustaron los modelos, así que no hay nada que predecir. "
+                    f"Variables del paper: {', '.join(VE_NOMBRE[v] for v in dp)}.")
+        else:
+            var2 = st.radio("Variable", vars2, horizontal=True, key="ve_var2",
+                            format_func=lambda v: f"{VE_NOMBRE[v]} ({VE_UNIDAD[v]})")
+            grupos2 = [g for g in ("-M", "+M") if g in dp[var2] and g in res_base[var2]]
+            modelos2 = {g: ve_elegir(res_base[var2][g], eleccion) for g in grupos2}
+            modelos2 = {g: mr for g, mr in modelos2.items() if mr[0] is not None}
+            if not modelos2:
+                st.warning("El modelo elegido no tiene un ajuste válido para esta variable. Pruebe con «Mejor R²».")
+            else:
+                filas, resumen = [], []
+                fig = ve_figura(f"{VE_NOMBRE[var2]}: curva predicha vs. puntos reales",
+                                "Días después del trasplante (ddt)", f"{VE_NOMBRE[var2]} ({VE_UNIDAD[var2]})")
+                fig2 = ve_figura("Predicho vs. real", f"Real ({VE_UNIDAD[var2]})", f"Predicho ({VE_UNIDAD[var2]})")
+                t_max = max(max(max(dp[var2][g]) for g in modelos2) + desfase, ventana[1]) + 10
+                t = np.linspace(min(0, min(min(dp[var2][g]) for g in modelos2) + desfase), t_max, 300)
+                tope, sesgos = 0, []
+                for g, (m, r) in modelos2.items():
+                    serie = dp[var2][g]
+                    dias = sorted(serie)
+                    x = np.array(dias) + desfase
+                    real = np.array([serie[d]["media"] for d in dias])
+                    pred = ve_predecir(m, r, x)
+                    for d, xd, y, p in zip(dias, x, real, pred):
+                        filas.append({"Grupo": VE_GRUPO_TXT[g], "Día paper": d, "Día app (ddt)": round(xd),
+                                      f"Predicho ({VE_UNIDAD[var2]})": p, f"Real ({VE_UNIDAD[var2]})": y,
+                                      "Error (%)": 100 * (p - y) / y,
+                                      "Tramo": "medido" if ventana[0] <= xd <= ventana[1] else "extrapolación"})
+                    mt = ve_metricas(real, pred)
+                    sesgos.append(mt["sesgo"])
+                    resumen.append({"Grupo": VE_GRUPO_TXT[g], "Modelo": m, "Fechas": mt["n"], "R²": mt["r2"],
+                                    "RMSE": mt["rmse"], "MAE": mt["mae"], "Error medio (%)": mt["mape"],
+                                    "Calidad": ve_calidad(mt["mape"])})
+                    ve_trazar_curva(fig, g, t, ve_predecir(m, r, t), f"predicho ({m})")
+                    ve_segmentos_error(fig, x, real, pred)
+                    hover = [f"{VE_GRUPO_TXT[g]}<br>día {d:g} del paper = {xd:.0f} ddt<br>real {y:.3f} · "
+                             f"predicho {p:.3f}" for d, xd, y, p in zip(dias, x, real, pred)]
+                    ve_trazar_real(fig, g, x, real, ve_barras(serie, dias), "real (paper)", hover)
+                    tope = max(tope, real.max(), pred.max())
+                    fig2.add_trace(go.Scatter(x=real, y=pred, mode="markers", name=VE_GRUPO_TXT[g],
+                                              marker=dict(symbol=VE_SIMBOLO[g], size=11, color=ve_color(g))))
+                fig2.add_trace(go.Scatter(x=[0, tope * 1.05], y=[0, tope * 1.05], mode="lines",
+                                          name="predicho = real", line=dict(color=T["INK_MUTED"], dash="dash", width=1)))
+                ve_tabla(pd.DataFrame(filas), {"Día paper": "{:g}", f"Predicho ({VE_UNIDAD[var2]})": "{:.3f}",
+                                               f"Real ({VE_UNIDAD[var2]})": "{:.3f}", "Error (%)": "{:+.1f}"})
+                st.markdown("**Resumen del error**")
+                ve_tabla(pd.DataFrame(resumen), {"R²": "{:.3f}", "RMSE": "{:.3f}", "MAE": "{:.3f}",
+                                                 "Error medio (%)": "{:.1f}"})
+                g1, g2 = st.columns([3, 2])
+                g1.plotly_chart(fig, width="stretch")
+                g2.plotly_chart(fig2, width="stretch")
+                st.caption("Gráfica derecha: si el modelo acertara perfecto, los puntos caerían sobre la línea "
+                           "punteada. Por encima = sobreestima; por debajo = subestima.")
+                peor = max(r_["Error medio (%)"] for r_ in resumen)
+                if peor < 10:
+                    st.success("**Lectura:** el modelo ajustado a sus datos predice este experimento independiente "
+                               "con un error menor al 10%: **los parámetros se transfieren** a estas condiciones.")
+                elif peor < 20:
+                    st.info("**Lectura:** el modelo predice este experimento con un error aceptable (10-20%).")
+                else:
+                    sentido = "sobreestima" if np.mean(sesgos) > 0 else "subestima"
+                    st.info(f"**Lectura:** el modelo ajustado a sus datos **{sentido}** este experimento. Es "
+                            "esperable si las condiciones (variedad, sustrato, manejo) difieren de las de sus datos: "
+                            "**los parámetros no se transfieren** a otro vivero. Revise también la alineación del "
+                            "tiempo, y la pestaña 3, que pone a prueba los modelos con el propio paper.")
+
+    # --- 3 · Ajustar con las primeras fechas del paper, predecir las últimas -------------
+    with tab3:
+        st.markdown("#### Predicción de fechas que el modelo no vio")
+        st.write("Los modelos se ajustan solo a las **primeras fechas** del paper y predicen las **últimas**, que se "
+                 "ocultan. Así se pone a prueba la forma de los modelos sin depender de sus datos.")
+        vars3 = [v for v in VE_VARIABLES if v in dp
+                 and max(len(s) for s in dp[v].values()) >= VE_MIN_FECHAS_HOLDOUT]
+        if not vars3:
+            st.info(f"Ninguna variable del paper tiene al menos {VE_MIN_FECHAS_HOLDOUT} fechas en un grupo "
+                    "(3 para ajustar y 1 para predecir).")
+        else:
+            a, b = st.columns(2)
+            var3 = a.radio("Variable", vars3, horizontal=True, key="ve_var3",
+                           format_func=lambda v: f"{VE_NOMBRE[v]} ({VE_UNIDAD[v]})")
+            grupos3 = [g for g in ("-M", "+M") if len(dp[var3].get(g, {})) >= VE_MIN_FECHAS_HOLDOUT]
+            n_max = min(len(dp[var3][g]) for g in grupos3) - 1
+            if n_max > 3:
+                n_ent = b.slider("Fechas usadas en el ajuste", 3, n_max, n_max,
+                                 key=f"ve_nent_{st.session_state.ve_paper_id}_{var3}",
+                                 help="Logístico y Gompertz necesitan al menos 3 fechas.")
+            else:
+                n_ent = 3
+                b.caption("Con 4 fechas: se ajusta con las 3 primeras y se predice la última.")
+            omitidos = [VE_GRUPO_TXT[g] for g in ("-M", "+M") if g in dp[var3] and g not in grupos3]
+            if omitidos:
+                st.caption(f"{', '.join(omitidos)}: menos de {VE_MIN_FECHAS_HOLDOUT} fechas, no se incluye.")
+            filas, resumen, ajustes3 = [], [], {}
+            for g in grupos3:
+                serie = dp[var3][g]
+                dias = sorted(serie)
+                ent, pru = dias[:n_ent], dias[n_ent:]
+                m, r = ve_elegir(ve_ajustar_paper(serie, var3, g, desfase, ent), eleccion)
+                ajustes3[g] = (m, r, ent, pru)
+                if m is None:
+                    continue
+                for d in dias:
+                    y = serie[d]["media"]
+                    p = float(ve_predecir(m, r, d + desfase))
+                    filas.append({"Grupo": VE_GRUPO_TXT[g], "Día paper": d,
+                                  "Uso": "ajuste" if d in ent else "A PREDECIR",
+                                  f"Predicho ({VE_UNIDAD[var3]})": p, f"Real ({VE_UNIDAD[var3]})": y,
+                                  "Error (%)": 100 * (p - y) / y})
+                mt = ve_metricas([serie[d]["media"] for d in pru], ve_predecir(m, r, np.array(pru) + desfase))
+                resumen.append({"Grupo": VE_GRUPO_TXT[g], "Modelo": m, "R² del ajuste": r["r2"],
+                                "Fechas predichas": mt["n"], "Error medio en lo no visto (%)": mt["mape"],
+                                "Calidad": ve_calidad(mt["mape"])})
+            sin_ajuste = [VE_GRUPO_TXT[g] for g, (m, *_) in ajustes3.items() if m is None]
+            if sin_ajuste:
+                st.warning(f"Sin ajuste válido para {', '.join(sin_ajuste)} con «{eleccion}» y {n_ent} fechas. "
+                           "Pruebe con «Mejor R²» o con más fechas en el ajuste.")
+            if filas:
+                ve_tabla(pd.DataFrame(filas), {"Día paper": "{:g}", f"Predicho ({VE_UNIDAD[var3]})": "{:.3f}",
+                                               f"Real ({VE_UNIDAD[var3]})": "{:.3f}", "Error (%)": "{:+.1f}"})
+                st.markdown("**Resumen: error en las fechas no vistas**")
+                ve_tabla(pd.DataFrame(resumen), {"R² del ajuste": "{:.3f}",
+                                                 "Error medio en lo no visto (%)": "{:.1f}"})
+                fig = ve_figura(f"{VE_NOMBRE[var3]}: los puntos huecos se usan en el ajuste, los rellenos se predicen",
+                                "Días después del trasplante (ddt, alineado)", f"{VE_NOMBRE[var3]} ({VE_UNIDAD[var3]})")
+                corte = None
+                for g, (m, r, ent, pru) in ajustes3.items():
+                    if m is None:
+                        continue
+                    serie = dp[var3][g]
+                    todos = np.array(ent + pru, dtype=float) + desfase
+                    t = np.linspace(todos.min(), todos.max(), 300)
+                    ve_trazar_curva(fig, g, t, ve_predecir(m, r, t), f"modelo ({m})")
+                    ve_trazar_real(fig, g, np.array(ent) + desfase, [serie[d]["media"] for d in ent],
+                                   ve_barras(serie, ent), "real (ajuste)")
+                    de_pru = ve_barras(serie, pru)
+                    fig.add_trace(go.Scatter(
+                        x=np.array(pru) + desfase, y=[serie[d]["media"] for d in pru], mode="markers",
+                        name=f"{VE_GRUPO_TXT[g]} · real (a predecir)",
+                        marker=dict(symbol=VE_SIMBOLO[g], size=12, color=ve_color(g),
+                                    line=dict(color="white", width=1.5)),
+                        error_y=(dict(type="data", array=de_pru, color=ve_color(g), thickness=1, width=3)
+                                 if de_pru is not None else None)))
+                    ve_segmentos_error(fig, np.array(pru) + desfase, [serie[d]["media"] for d in pru],
+                                       ve_predecir(m, r, np.array(pru) + desfase))
+                    corte = (ent[-1] + pru[0]) / 2 + desfase
+                if corte is not None:
+                    fig.add_vline(x=corte, line=dict(color=T["INK_MUTED"], width=1, dash="dash"),
+                                  annotation_text="corte", annotation_position="top")
+                st.plotly_chart(fig, width="stretch")
+                st.caption("Barras verticales: ± desviación estándar publicada (si el Excel la trae). "
+                           "Línea punteada fina: distancia entre lo predicho y lo real.")
+
+    # --- 4 · Efecto del hongo: real vs. modelado ------------------------------------------
+    with tab4:
+        st.markdown("#### Efecto de la inoculación: real vs. modelado")
+        st.write("La app modela **todas** las fechas del paper para cada grupo y calcula cuánto más crece +M que −M "
+                 "en cada fecha. Se compara con el efecto real que midieron los autores.")
+        vars4 = [v for v in VE_VARIABLES if v in dp
+                 and min(len(dp[v].get("-M", {})), len(dp[v].get("+M", {}))) >= VE_MIN_FECHAS_EFECTO]
+        if not vars4:
+            st.info(f"Hace falta al menos una variable con −M y +M y {VE_MIN_FECHAS_EFECTO} o más fechas por grupo.")
+        else:
+            var4 = st.radio("Variable", vars4, horizontal=True, key="ve_var4",
+                            format_func=lambda v: f"{VE_NOMBRE[v]} ({VE_UNIDAD[v]})")
+            series4 = {g: dp[var4][g] for g in ("-M", "+M")}
+            ajustes4 = {g: ve_elegir(ve_ajustar_paper(series4[g], var4, g, desfase, sorted(series4[g])), eleccion)
+                        for g in ("-M", "+M")}
+            if any(m is None for m, _ in ajustes4.values()):
+                st.warning("El modelo elegido no tiene un ajuste válido para esta variable. Pruebe con «Mejor R²».")
+            else:
+                comunes = sorted(set(series4["-M"]) & set(series4["+M"]))
+                filas = []
+                for d in comunes:
+                    xm, xp = series4["-M"][d], series4["+M"][d]
+                    rm, rp = xm["media"], xp["media"]
+                    mm, mp = (float(ve_predecir(*ajustes4[g], d + desfase)) for g in ("-M", "+M"))
+                    ef_r, ef_m = 100 * (rp - rm) / rm, 100 * (mp - mm) / mm
+                    if None not in (xm["de"], xp["de"], xm["n"], xp["n"]):
+                        p = ttest_ind_from_stats(rp, xp["de"], xp["n"], rm, xm["de"], xm["n"], equal_var=False).pvalue
+                    else:
+                        p = np.nan
+                    coincide = ("sin diferencia real" if abs(ef_r) < 1 else
+                                "✔ misma dirección" if np.sign(ef_r) == np.sign(ef_m) else "✗ dirección opuesta")
+                    filas.append({"Día paper": d, "−M real": rm, "+M real": rp, "Efecto real (%)": ef_r,
+                                  "−M modelado": mm, "+M modelado": mp, "Efecto modelado (%)": ef_m,
+                                  "¿Coincide?": coincide, "p real (Welch)": p,
+                                  "¿Significativo?": "—" if np.isnan(p) else ("sí" if p < 0.05 else "no")})
+                df4 = pd.DataFrame(filas)
+                con_dif = df4[df4["¿Coincide?"] != "sin diferencia real"] if not df4.empty else df4
+                k1, k2, k3 = st.columns(3)
+                k1.metric("Fechas con la misma dirección",
+                          f"{(con_dif['¿Coincide?'] == '✔ misma dirección').sum()} de {len(con_dif)}"
+                          if len(con_dif) else "—")
+                k2.metric("R² de la app · −M", f"{ajustes4['-M'][1]['r2']:.3f}", help=ajustes4["-M"][0])
+                k3.metric("R² de la app · +M", f"{ajustes4['+M'][1]['r2']:.3f}", help=ajustes4["+M"][0])
+                if df4.empty:
+                    st.info("−M y +M no se midieron en las mismas fechas, así que no hay efecto real que comparar.")
+                else:
+                    ve_tabla(df4, {"Día paper": "{:g}", "−M real": "{:.3f}", "+M real": "{:.3f}",
+                                   "Efecto real (%)": "{:+.1f}", "−M modelado": "{:.3f}", "+M modelado": "{:.3f}",
+                                   "Efecto modelado (%)": "{:+.1f}", "p real (Welch)": "{:.3f}"})
+                g1, g2 = st.columns(2)
+                todos = np.array(sorted(set(series4["-M"]) | set(series4["+M"])), dtype=float) + desfase
+                t = np.linspace(todos.min(), todos.max(), 300)
+                fig = ve_figura(f"{VE_NOMBRE[var4]}: datos reales y curvas de la app",
+                                "Días después del trasplante (ddt, alineado)", f"{VE_NOMBRE[var4]} ({VE_UNIDAD[var4]})")
+                for g, (m, r) in ajustes4.items():
+                    dias = sorted(series4[g])
+                    ve_trazar_curva(fig, g, t, ve_predecir(m, r, t), f"modelado ({m})")
+                    ve_trazar_real(fig, g, np.array(dias) + desfase, [series4[g][d]["media"] for d in dias],
+                                   ve_barras(series4[g], dias), "real")
+                g1.plotly_chart(fig, width="stretch")
+                y = {g: ve_predecir(m, r, t) for g, (m, r) in ajustes4.items()}
+                fig2 = ve_figura("Efecto del hongo (+M sobre −M)", "Días después del trasplante (ddt, alineado)",
+                                 "+M sobre −M (%)")
+                fig2.add_hline(y=0, line=dict(color=T["INK_MUTED"], width=1))
+                fig2.add_trace(go.Scatter(x=t, y=100 * (y["+M"] - y["-M"]) / y["-M"], mode="lines",
+                                          name="efecto modelado por la app", line=dict(color=T["ACCENT"], width=2.5)))
+                if not df4.empty:
+                    fig2.add_trace(go.Scatter(
+                        x=df4["Día paper"] + desfase, y=df4["Efecto real (%)"], mode="markers+text",
+                        name="efecto real (paper)", marker=dict(size=10, color=T["INK"]),
+                        text=["*" if s == "sí" else "" for s in df4["¿Significativo?"]], textposition="top center",
+                        textfont=dict(size=16)))
+                fig2.update_yaxes(rangemode="normal")
+                g2.plotly_chart(fig2, width="stretch")
+                st.caption("\\* = diferencia real significativa (prueba t de Welch con la DE y el n del Excel). "
+                           "Si el Excel no trae DE y n, no se calcula.")
+
+    # --- 5 · Datos del paper ---------------------------------------------------------------
+    with tab5:
+        st.markdown("#### Datos reales cargados del paper")
+        st.markdown(f"**Cita:** {paper['cita'] or '—'}  \n**Los días cuentan desde:** {paper['origen']}")
+        st.markdown("**Qué permite validar cada variable**")
+        st.dataframe(ve_capacidades(dp, datos_base), hide_index=True, width="stretch")
+        for v in VE_VARIABLES:
+            if v not in dp:
+                continue
+            st.markdown(f"**{VE_NOMBRE[v]} ({VE_UNIDAD[v]})**")
+            dias = sorted(set().union(*[set(s) for s in dp[v].values()]))
+            tabla = {"Día paper": dias}
+            for g in ("-M", "+M"):
+                if g in dp[v]:
+                    s = dp[v][g]
+                    tabla[f"{g} media"] = [s[d]["media"] if d in s else np.nan for d in dias]
+                    tabla[f"{g} DE"] = [s[d]["de"] if d in s and s[d]["de"] is not None else np.nan for d in dias]
+                    tabla[f"{g} n"] = [s[d]["n"] if d in s and s[d]["n"] is not None else np.nan for d in dias]
+            df = pd.DataFrame(tabla)
+            ve_tabla(df, {c: ("{:g}" if c == "Día paper" or c.endswith(" n") else "{:.3f}") for c in df.columns})
+        ve_ir_a_datos_de_prueba("ve_ir_cambiar")
+
+
+def ve_bloque_datos_de_prueba():
+    """Bloque de «Datos de prueba» para cargar los datos independientes de un paper."""
+    st.write("")
+    st.markdown("### Datos externos para validación (paper)")
+    st.markdown("Datos **independientes** de otro experimento publicado, con plantas sin inocular (−M) y/o "
+                "inoculadas (+M). No reemplazan tus datos: se usan solo en **Análisis → Validación externa**, donde "
+                "los modelos ajustados a tus datos reales se comparan con estos.")
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        st.download_button("Descargar plantilla del paper (Excel)", data=ve_plantilla_excel(),
+                           file_name="plantilla_validacion_externa.xlsx",
+                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                           width="stretch")
+    with c2:
+        if st.button("Cargar ejemplo: Aguirre-Medina et al. (2011)", width="stretch",
+                     disabled=not os.path.exists(VE_XLSX_EJEMPLO)):
+            paper, error = ve_leer_paper(VE_XLSX_EJEMPLO)
+            if error:
+                st.error(error)
+            else:
+                st.session_state.ve_paper, st.session_state.ve_paper_id = paper, "ejemplo"
+                st.toast("Ejemplo cargado. Ve a Análisis → Validación externa.")
+    with c3:
+        if st.session_state.ve_paper is not None and st.button("Quitar datos del paper", width="stretch"):
+            st.session_state.ve_paper, st.session_state.ve_paper_id = None, None
+            st.rerun()
+
+    archivo = st.file_uploader("Subir Excel del paper (.xlsx o .csv)", type=["xlsx", "csv"], key="uploader_paper")
+    if archivo is not None and archivo.file_id != st.session_state.ve_ultimo_archivo:
+        st.session_state.ve_ultimo_archivo = archivo.file_id
+        paper, error = ve_leer_paper(archivo)
+        if error:
+            st.error(error)
+        else:
+            st.session_state.ve_paper, st.session_state.ve_paper_id = paper, archivo.file_id
+            st.success(f"Datos del paper cargados ({', '.join(VE_NOMBRE[v] for v in VE_VARIABLES if v in paper['datos'])}).")
+
+    paper = st.session_state.ve_paper
+    if paper is not None:
+        datos_base, _ = ve_datos_base()
+        st.markdown(f"**Paper cargado:** {paper['cita'] or 'sin cita'} · días contados desde **{paper['origen']}**")
+        st.dataframe(ve_capacidades(paper["datos"], datos_base), hide_index=True, width="stretch")
+        if st.button("Ir a Validación externa", type="primary"):
+            st.session_state.seccion = "Validación externa"
+            st.rerun()
+
+
+# ==============================================================================
 # 3. BARRA LATERAL — navegación agrupada
 # ==============================================================================
 def nav_item(nombre):
@@ -731,6 +1445,7 @@ with st.sidebar:
     nav_item("Estadística")
     nav_item("Residuos")
     nav_item("Discusión y conclusiones")
+    nav_item("Validación externa")
 
     st.markdown('<span class="field-label">Datos</span>', unsafe_allow_html=True)
     nav_item("Datos de prueba")
@@ -991,7 +1706,7 @@ elif seccion == "Metodología":
             with col_txt:
                 st.markdown('<span class="field-label">Supuesto biológico</span>', unsafe_allow_html=True)
                 st.markdown(info_txt["supuesto"])
-                st.markdown('<span class="field-label">Cuándo conviene usarlo</span>', unsafe_allow_html=True)
+                st.markdown('<span class="field-label">Cuándo conviene usarlo?</span>', unsafe_allow_html=True)
                 st.markdown(info_txt["cuando_usar"])
                 st.markdown('<span class="field-label">Limitación</span>', unsafe_allow_html=True)
                 st.markdown(info_txt["limitacion"])
@@ -1357,6 +2072,13 @@ elif seccion == "Discusión y conclusiones":
 
 
 # ==============================================================================
+# SECCIÓN · VALIDACIÓN EXTERNA
+# ==============================================================================
+elif seccion == "Validación externa":
+    ve_render()
+
+
+# ==============================================================================
 # SECCIÓN · DATOS DE PRUEBA
 # ==============================================================================
 elif seccion == "Datos de prueba":
@@ -1452,6 +2174,8 @@ elif seccion == "Datos de prueba":
             key="cita_datos_reales",
             placeholder="Ej: Aguirre-Medina et al. (2023), Revista Fitotecnia Mexicana, DOI 10.35196/rfm.2023.3.273",
         )
+
+    ve_bloque_datos_de_prueba()
 
     st.write("")
     st.markdown("### Descargar datos actuales")
