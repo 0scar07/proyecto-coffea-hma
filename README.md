@@ -65,7 +65,10 @@ automáticamente a partir de los datos cargados
 
 ![Estadística](docs/screenshots/estadistica.png)
 
-**Residuos** — diagnóstico de ajuste por modelo y grupo
+**Residuos** — ANOVA aplicado a los residuos: ¿el error del modelo cambia según el
+día (patrón sistemático)? y ¿qué modelo se equivoca menos? (con letras de Tukey).
+Cada gráfica trae debajo «Qué dice aquí», «Cómo leer esta gráfica», la tabla ANOVA
+y el significado de cada columna
 
 ![Residuos](docs/screenshots/residuos.png)
 
@@ -87,7 +90,8 @@ La navegación de la app tiene estas secciones:
   efecto de la inoculación (+M vs −M) con la prueba t.
 - **Estadística** — intervalos de confianza por parámetro y prueba t de
   Welch.
-- **Residuos** — gráficas de residuos por modelo y grupo.
+- **Residuos** — ANOVA de residuos (residuo ~ día y |residuo| ~ modelo con
+  Tukey), con explicación de cada gráfica y de cada columna de la tabla.
 - **Discusión y conclusiones** — lectura editorial de los resultados.
 - **Datos de prueba** — generación de datos simulados o carga de un Excel
   propio (o el real incluido en `datos_reales/`).
