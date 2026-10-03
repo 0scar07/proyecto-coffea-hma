@@ -227,38 +227,49 @@ def texto_grupo(g):
 
 def estilo_publicacion(fig, width=None, height=420, left_margin=70, top_margin=None,
                         espacio_eje_x_px=38, espacio_leyenda_px=34, titulo=None, subtitulo=None,
-                        mostrar_leyenda=True, right_margin=24):
+                        mostrar_leyenda=True, right_margin=24, leyenda_sobre_px=14):
     """Plantilla visual única para toda gráfica exportable (pantalla, PNG y PDF).
 
     La gráfica "habla sola": un TÍTULO que dice la conclusión (no solo qué variable es) y un
     SUBTÍTULO que explica cómo leerla. Ejes limpios (solo línea base en X, cuadrícula tenue en
-    Y), texto en tinta neutra y, cuando hace falta, una leyenda en una fila debajo de los
-    paneles. No toca datos ni trazos: se llama al final de cada fig_*(), antes de construir_pie().
-    Si no se pasa `titulo`, se conserva el título que ya tuviera la figura."""
+    Y), texto en tinta neutra y, cuando hace falta, una LEYENDA ARRIBA de los paneles (lo
+    primero que se lee después del título), con letra grande y dentro de un recuadro.
+    `leyenda_sobre_px` es la separación entre la leyenda y el área de trazado (más grande cuando
+    los paneles llevan encabezado propio). No toca datos ni trazos: se llama al final de cada
+    fig_*(), antes de construir_pie(). Si no se pasa `titulo`, se conserva el que ya tuviera."""
     if titulo is None and fig.layout.title is not None and fig.layout.title.text:
-        titulo = fig.layout.title.text
+        titulo = fig.layout.title.text.replace("<b>", "").replace("</b>", "").split("<br><span")[0]
+    if titulo and "<br>" not in titulo and len(titulo) > 78:
+        # Un título largo se parte en dos líneas: en pantallas angostas Plotly no lo envuelve solo.
+        corte = titulo.rfind(" ", 0, len(titulo) // 2 + 12)
+        if corte > 20:
+            titulo = titulo[:corte] + "<br>" + titulo[corte + 1:]
+    lineas_titulo = titulo.count("<br>") + 1 if titulo else 0
     lineas_sub = (subtitulo or "").count("<br>") + 1 if subtitulo else 0
     if top_margin is None:
-        top_margin = (62 if titulo else 24) + 22 * lineas_sub + 34
+        top_margin = ((38 + 24 * lineas_titulo) if titulo else 24) + 22 * lineas_sub + (18 if mostrar_leyenda else 34)
+        if mostrar_leyenda:
+            top_margin += 44 + max(leyenda_sobre_px - 14, 0)
     texto_titulo = ""
     if titulo:
         texto_titulo = f"<b>{titulo}</b>"
         if subtitulo:
             texto_titulo += f"<br><span style='font-size:13.5px;color:{G_MUTED}'>{subtitulo}</span>"
 
-    margen_b = espacio_eje_x_px + (espacio_leyenda_px if mostrar_leyenda else 0) + 14
+    margen_b = espacio_eje_x_px + 14
     alto_trazado = max(height - top_margin - margen_b, 50)
-    y_leyenda = -(espacio_eje_x_px + espacio_leyenda_px / 2) / alto_trazado
+    y_leyenda = 1 + leyenda_sobre_px / alto_trazado
 
     layout_kwargs = dict(
         font=dict(family=FUENTE_PUBLICACION, size=13, color=G_INK),
         paper_bgcolor="white", plot_bgcolor="white",
-        title=dict(text=texto_titulo, font=dict(family=FUENTE_PUBLICACION, size=19, color=G_INK),
+        title=dict(text=texto_titulo, font=dict(family=FUENTE_PUBLICACION, size=19, color=G_INK, weight=400),
                    x=0.012, xanchor="left", y=1, yref="container", yanchor="top", pad=dict(t=24)),
         showlegend=mostrar_leyenda,
-        legend=dict(orientation="h", xanchor="center", x=0.5, yanchor="middle", y=y_leyenda,
-                    bgcolor="rgba(255,255,255,0)", bordercolor="rgba(0,0,0,0)",
-                    font=dict(family=FUENTE_PUBLICACION, size=12, color=G_INK)),
+        legend=dict(orientation="h", xanchor="left", x=0, yanchor="bottom", y=y_leyenda,
+                    bgcolor="#FAF8F5", bordercolor=G_EJE, borderwidth=1, itemsizing="constant",
+                    itemwidth=40, tracegroupgap=6,
+                    font=dict(family=FUENTE_PUBLICACION, size=14, color=G_INK)),
         margin=dict(l=left_margin, r=right_margin, t=top_margin, b=margen_b),
         height=height,
         hoverlabel=dict(font=dict(family=FUENTE_PUBLICACION)),
@@ -332,7 +343,14 @@ def sello_veredicto(fig, panel, ok, linea1, linea2, x=0.98, y=0.97):
                        text=f"<b>{'✓' if ok else '✗'} {linea1}</b><br>{linea2}")
 
 
-def etiquetas_fin_de_linea(fig, panel, etiquetas, rango_y, separacion_frac=0.055, tam=11.5):
+def entrada_leyenda(fig, nombre, **kw):
+    """Agrega una entrada SOLO de leyenda (un trazo vacío) para explicar un símbolo que en la
+    gráfica aparece muchas veces o sin nombre: «cada planta medida», «promedio ± DE», etc."""
+    kw.setdefault("mode", "markers")
+    fig.add_trace(go.Scatter(x=[None], y=[None], name=nombre, showlegend=True, hoverinfo="skip", **kw))
+
+
+def etiquetas_fin_de_linea(fig, panel, etiquetas, rango_y, separacion_frac=0.065, tam=13):
     """Etiquetas directas al final de cada línea (en vez de una leyenda aparte). `etiquetas` es
     una lista de (texto, x, y); se separan verticalmente cuando chocan."""
     xr, yr = _ref_ejes(panel)
@@ -826,7 +844,7 @@ def fig_barras_variable(datos, variable, fuente_datos="simulado"):
         techo = max(techo, float(np.max(medias + sds)),
                     max(float(np.max(datos[variable][g][d])) for d in dias_g))
         fig.add_trace(go.Bar(
-            x=xs, y=medias, width=ancho, name=f"{texto_grupo(g)} · {NOMBRE_GRUPO[g]}",
+            x=xs, y=medias, width=ancho, name=f"{texto_grupo(g)} · {NOMBRE_GRUPO[g]}", showlegend=True,
             marker=dict(color=COLOR_GRUPO[g], opacity=0.9, line_width=0, cornerradius=4),
             error_y=dict(type="data", array=sds, color=G_INK, thickness=1.2, width=0),
             customdata=dias_g,
@@ -863,22 +881,20 @@ def fig_barras_variable(datos, variable, fuente_datos="simulado"):
                            font=dict(family=FUENTE_PUBLICACION, size=(10.5 if denso else 13) if sig else
                                      (10 if denso else 12), color=color))
 
-    # Leyenda escrita arriba a la izquierda (en vez de una caja de leyenda aparte)
-    for k, g in enumerate(grupos):
-        fig.add_annotation(xref="paper", yref="paper", x=k * 0.24, y=1.04, xanchor="left", yanchor="bottom",
-                           showarrow=False, text=f"<span style='color:{COLOR_GRUPO[g]}'>■</span> "
-                                                 f"{texto_grupo(g)} · {NOMBRE_GRUPO[g]}",
-                           font=dict(family=FUENTE_PUBLICACION, size=13, color=G_INK))
+    # Leyenda (arriba): las barras de cada grupo ya tienen nombre; se agregan los círculos y el corchete.
+    entrada_leyenda(fig, "Cada planta medida", marker=dict(size=9, color="white", line=dict(color=G_INK, width=1.2)))
+    if filas:
+        entrada_leyenda(fig, "Corchete: cuánto más crece +M (prueba t)", mode="lines",
+                        line=dict(color=G_INK, width=1.5))
     fig.update_xaxes(tickvals=x, ticktext=[f"Día {d:g}" for d in dias], title_text="Días después del trasplante",
                      ticks="", range=[-0.6, len(dias) - 0.4])
     fig.update_yaxes(title_text=f"{NOMBRE_VARIABLE[variable]} ({unidad})", range=[0, techo * 1.36])
     estilo_publicacion(
-        fig, width=1100, height=580, titulo=titulo_barras_significancia(datos, variable, filas),
-        mostrar_leyenda=False, left_margin=75,
+        fig, width=1100, height=620, titulo=titulo_barras_significancia(datos, variable, filas),
+        left_margin=75,
         subtitulo="Barra = promedio · círculos = cada planta · línea = ± DE<br>Arriba de cada día: cuánto más crece "
                   "+M que −M, la prueba t y los promedios (−M → +M) · ns = sin diferencia · * p < 0.05 · "
                   "** p < 0.01 · *** p < 0.001")
-    fig.update_layout(margin=dict(t=fig.layout.margin.t + 12))
 
     n_reps_txt = "/".join(str(n) for n in sorted(n_replicas_vistas)) if n_replicas_vistas else "?"
     descripcion = (
@@ -942,10 +958,13 @@ def fig_resumen_efecto_final(datos, variables, fuente_datos="simulado"):
     n_sig = sum(f["sig"] and f["inc"] > 0 for f in filas)
     titulo = (f"Al final del ensayo, la micorriza aumenta {n_sig} de {len(filas)} variables de forma significativa"
               if n_sig else "Al final del ensayo, la micorriza no aumenta ninguna variable de forma significativa")
-    estilo_publicacion(fig, width=1100, height=max(320, 150 + 85 * len(filas)), titulo=titulo,
-                       mostrar_leyenda=False, left_margin=150,
-                       subtitulo="Barra = % de incremento de +M sobre −M el último día · línea = IC 95 % · "
-                                 "color fuerte = diferencia significativa (prueba t), claro = no significativa")
+    entrada_leyenda(fig, "Diferencia significativa (p < 0.05)",
+                    marker=dict(symbol="square", size=14, color=T["ACCENT"]))
+    entrada_leyenda(fig, "No significativa", marker=dict(symbol="square", size=14, color=color_claro))
+    entrada_leyenda(fig, "Intervalo de confianza 95 %", mode="lines", line=dict(color=G_INK, width=1.5))
+    estilo_publicacion(fig, width=1100, height=max(380, 210 + 85 * len(filas)), titulo=titulo, left_margin=150,
+                       subtitulo="Barra = % de incremento de +M sobre −M el último día con datos de ambos grupos "
+                                 "(prueba t de Welch)")
     fig.update_yaxes(showgrid=False)
     extra = ("Réplicas sintéticas generadas a partir de medias y CV% publicados (Aguirre-Medina et al., 2023)."
              if fuente_datos == "real" else None)
@@ -1198,10 +1217,21 @@ def fig_curvas_publicacion(datos, RES, variable, modelos, fuente_datos="simulado
     # ninguna curva ni asintota puede dominar la escala del panel.
     fig.update_yaxes(range=[y_bottom_cap, y_top_cap])
     titulo = titulo_efecto_final(datos, variable) or f"{NOMBRE_VARIABLE[variable]}: curvas de crecimiento ajustadas"
+    # Leyenda: qué es cada símbolo (en gris: el color de cada panel ya dice el grupo) y cada línea.
+    entrada_leyenda(fig, "Cada planta medida", marker=dict(size=9, color=G_MUTED, opacity=0.45))
+    entrada_leyenda(fig, "Promedio ± DE", mode="markers", marker=dict(size=11, color=G_MUTED,
+                                                                      line=dict(color="white", width=2)))
+    modelos_dibujados = [m for m in modelos if any(
+        RES[variable][g][m]["params"] is not None and not RES[variable][g][m].get("insuficiente") for g in grupos)]
+    for m in modelos_dibujados:
+        entrada_leyenda(fig, m, mode="lines", line=dict(color=MODELO_ESTILO[m]["color"],
+                                                        dash=MODELO_ESTILO[m]["dash"], width=3))
+    entrada_leyenda(fig, "Día de crecimiento más rápido", marker=dict(symbol="diamond", size=12, color="white",
+                                                                      line=dict(color=G_INK, width=2)))
     estilo_publicacion(
-        fig, width=1200, height=600, titulo=titulo, mostrar_leyenda=False, right_margin=185, left_margin=80,
-        subtitulo="Puntos claros = cada planta medida · punto con barra = media ± DE · líneas = modelos ajustados "
-                  "(★ = mejor ajuste; banda = IC 95 %)")
+        fig, width=1200, height=660, titulo=titulo, right_margin=185, left_margin=80, leyenda_sobre_px=50,
+        subtitulo="Panel izquierdo = −M, derecho = +M · ★ = mejor ajuste del grupo (con banda IC 95 %) · "
+                  "línea punteada fina = techo estimado K")
     for col, grupo in enumerate(grupos, start=1):
         ultimo = max(datos[variable][grupo])
         encabezado_panel(fig, col, f"<b>({'ab'[col - 1]}) {texto_grupo(grupo)}</b> · {NOMBRE_GRUPO[grupo]} — "
@@ -1282,7 +1312,9 @@ def fig_tasas_crecimiento(datos, RES, variable, modelos, fuente_datos="simulado"
         fig.add_trace(go.Scatter(x=[t_fino[k]], y=[agr[k]], mode="markers", showlegend=False,
                                  marker=dict(symbol="diamond", size=11, color="white",
                                              line=dict(color=G_INK, width=2)), hoverinfo="skip"), row=1, col=col)
+        pos = (t_fino[k] - t_fino[0]) / max(t_fino[-1] - t_fino[0], 1e-9)
         fig.add_annotation(x=t_fino[k], y=agr[k], xref=xr, yref=yr, showarrow=False, yanchor="bottom", yshift=8,
+                           xanchor="right" if pos > 0.85 else ("left" if pos < 0.15 else "center"),
                            text=f"máx. día {t_fino[k]:.0f}: {agr[k]:.3g} {unidad}/día",
                            font=dict(family=FUENTE_PUBLICACION, size=11.5, color=G_INK))
         fig.add_annotation(x=1, y=0.02, xref=f"{_ref_ejes(n + col)[0]} domain",
@@ -1311,7 +1343,12 @@ def fig_tasas_crecimiento(datos, RES, variable, modelos, fuente_datos="simulado"
         g0 = next(iter(maximos))
         titulo = (f"{NOMBRE_VARIABLE[variable]}: velocidad máxima de {texto_grupo(g0)} = "
                   f"{maximos[g0][1]:.3g} {unidad}/día (día {maximos[g0][0]:.0f})")
-    estilo_publicacion(fig, width=1200, height=820, titulo=titulo, mostrar_leyenda=False, left_margin=90,
+    for grupo in grupos_validos:
+        entrada_leyenda(fig, f"{texto_grupo(grupo)} · {NOMBRE_GRUPO[grupo]} ({mejores[grupo]})", mode="lines",
+                        line=dict(color=COLOR_GRUPO[grupo], width=3, dash=MODELO_ESTILO[mejores[grupo]]["dash"]))
+    entrada_leyenda(fig, "Día de crecimiento más rápido", marker=dict(symbol="diamond", size=12, color="white",
+                                                                      line=dict(color=G_INK, width=2)))
+    estilo_publicacion(fig, width=1200, height=880, titulo=titulo, left_margin=90, leyenda_sobre_px=50,
                        subtitulo="Arriba, AGR: cuánto crece la planta cada día · abajo, RGR: cuánto crece en "
                                  "proporción a su tamaño · ◇ = día de crecimiento más rápido")
     for col, grupo in enumerate(grupos_validos, start=1):
@@ -1461,9 +1498,15 @@ def fig_residuos_dia(RES, variable, grupo, modelos):
                   f"({'patrón sistemático' if len(malos) == 1 else 'patrones sistemáticos'})")
     else:
         titulo = f"{g_txt}: ningún modelo deja patrón en los residuos (el error es solo ruido)"
-    estilo_publicacion(fig, width=1200, height=520, titulo=titulo, mostrar_leyenda=False, left_margin=90,
+    entrada_leyenda(fig, "Residuo de cada planta", marker=dict(size=9, color=color))
+    entrada_leyenda(fig, "Caja = mitad central", marker=dict(symbol="square-open", size=14,
+                                                             color=color, line=dict(width=2)))
+    entrada_leyenda(fig, "Residuo medio del día", mode="lines+markers", line=dict(color=G_INK, width=2),
+                    marker=dict(symbol="diamond", size=9, color=G_INK))
+    entrada_leyenda(fig, "0 = sin error", mode="lines", line=dict(color=G_INK, width=1))
+    estilo_publicacion(fig, width=1200, height=580, titulo=titulo, left_margin=90, leyenda_sobre_px=44,
                        subtitulo=f"{NOMBRE_VARIABLE[variable]} · {NOMBRE_GRUPO[grupo]} · ANOVA de un factor sobre "
-                                 "los residuos (respuesta = residuo, factor = día) · ◆ = residuo medio del día")
+                                 "los residuos (respuesta = residuo = medido − predicho; factor = día)")
     return fig, filas, frases
 
 
@@ -1533,9 +1576,13 @@ def fig_residuos_modelos(RES, variable, modelos, grupos):
         titulo = "Los modelos se equivocan en promedio lo mismo"
     else:
         titulo = "¿Qué modelo se equivoca menos?"
-    estilo_publicacion(fig, width=1200, height=540, titulo=titulo, mostrar_leyenda=False, left_margin=90,
+    entrada_leyenda(fig, "Error de cada planta", marker=dict(size=9, color=G_MUTED))
+    entrada_leyenda(fig, "Mediana", mode="lines", line=dict(color=G_INK, width=2))
+    entrada_leyenda(fig, "Promedio", mode="lines", line=dict(color=G_INK, width=2, dash="dash"))
+    estilo_publicacion(fig, width=1200, height=600, titulo=titulo, left_margin=90, leyenda_sobre_px=44,
                        subtitulo=f"{NOMBRE_VARIABLE[variable]} · ANOVA de un factor sobre los residuos (respuesta = "
-                                 "|residuo|, el tamaño del error; factor = modelo) · letras = prueba de Tukey")
+                                 "|residuo|, el tamaño del error; factor = modelo) · más abajo = mejor · letras a, b = prueba de "
+                                 "Tukey (misma letra = sin diferencia)")
     return fig, filas, frases
 
 
@@ -1545,13 +1592,13 @@ def tabla_anova_df(filas, primera_col, texto_ok, texto_mal):
     for etiqueta, a in filas:
         ok = a["p"] >= 0.05
         registros += [
-            {primera_col: etiqueta, "Fuente de variación": a["fuente_e"], "SC": a["ss_e"], "gl": a["gl_e"],
-             "CM": a["cm_e"], "F": a["F"], "Valor p": formatear_p(a["p"]),
+            {primera_col: etiqueta, "Fuente de variación": a["fuente_e"], "SC": fmt_num(a["ss_e"]),
+             "gl": str(a["gl_e"]), "CM": fmt_num(a["cm_e"]), "F": f"{a['F']:.2f}", "Valor p": formatear_p(a["p"]),
              "Interpretación": ("✓ " + texto_ok) if ok else ("✗ " + texto_mal)},
-            {primera_col: "", "Fuente de variación": a["fuente_d"], "SC": a["ss_d"], "gl": a["gl_d"],
-             "CM": a["cm_d"], "F": np.nan, "Valor p": "", "Interpretación": ""},
-            {primera_col: "", "Fuente de variación": "Total", "SC": a["ss_t"], "gl": a["gl_t"],
-             "CM": np.nan, "F": np.nan, "Valor p": "", "Interpretación": ""},
+            {primera_col: "", "Fuente de variación": a["fuente_d"], "SC": fmt_num(a["ss_d"]),
+             "gl": str(a["gl_d"]), "CM": fmt_num(a["cm_d"]), "F": "", "Valor p": "", "Interpretación": ""},
+            {primera_col: "", "Fuente de variación": "Total", "SC": fmt_num(a["ss_t"]), "gl": str(a["gl_t"]),
+             "CM": "", "F": "", "Valor p": "", "Interpretación": ""},
         ]
     return pd.DataFrame(registros)
 
@@ -2497,10 +2544,10 @@ def ve_fig_predicho_vs_real(var, series, ventana, t_max, cita):
                        subtitulo=f"Modelos ajustados a <b>sus datos</b>, sin cambiar parámetros, predicen un experimento "
                                  f"que <b>nunca vieron</b> ({cita})<br>{chips}", espacio_leyenda_px=40)
     simbolo = {"-M": ("●", "○"), "+M": ("▲", "△")}
-    leyenda_b = "   ".join(f"<span style='color:{ve_color(g)}; font-size:14px'>{simbolo[g][0]}</span> "
-                           f"<span style='color:{G_INK}'>{texto_grupo(g)} · {NOMBRE_GRUPO[g]}</span>" for g in series)
-    leyenda_a = "   ".join(f"<span style='color:{ve_color(g)}; font-size:14px'>━ {simbolo[g][1]}</span> "
-                           f"<span style='color:{G_INK}'>{texto_grupo(g)} · {NOMBRE_GRUPO[g]}</span>"
+    leyenda_b = "   ".join(f"<span style='color:{ve_color(g)}; font-size:17px'>{simbolo[g][0]}</span> "
+                           f"<span style='color:{G_INK}; font-size:13.5px'>{texto_grupo(g)} · {NOMBRE_GRUPO[g]}</span>" for g in series)
+    leyenda_a = "   ".join(f"<span style='color:{ve_color(g)}; font-size:17px'>━ {simbolo[g][1]}</span> "
+                           f"<span style='color:{G_INK}; font-size:13.5px'>{texto_grupo(g)} · {NOMBRE_GRUPO[g]}</span>"
                            for g in series)
     for col, txt, sub in ((1, "(a) Curva predicha vs datos del paper",
                            f"línea = predicción · marcador = media publicada ± DE · punteado = error<br>{leyenda_a}"),
@@ -2603,7 +2650,7 @@ def ve_render():
             fig = ve_figura(
                 f"El día {dia1}, el modelo predice {pred1['+M']:.3g} {VE_UNIDAD[var1]} con micorriza y "
                 f"{pred1['-M']:.3g} sin ella ({_fmt_signo(efecto1, 0)} %)",
-                "Días después del trasplante", f"{VE_NOMBRE[var1]} ({VE_UNIDAD[var1]})", leyenda=False,
+                "Días después del trasplante", f"{VE_NOMBRE[var1]} ({VE_UNIDAD[var1]})", leyenda=True, alto=580,
                 subtitulo="Líneas = lo que predice el modelo ajustado a sus datos · marcadores = media ± DE de sus "
                           "datos · ✕ = el día que usted eligió")
             t = np.linspace(0, max(ventana[1] + 18, dia1 + 10), 300)
@@ -2620,12 +2667,13 @@ def ve_render():
                                          hovertemplate=f"{VE_GRUPO_TXT[g]}<br>día {dia1}: {pred1[g]:.2f} "
                                                        f"{VE_UNIDAD[var1]}<extra></extra>"))
                 etiquetas1.append((f"<b>{texto_grupo(g)}</b> · {m}", t[-1], float(y_t[-1])))
+            entrada_leyenda(fig, f"Predicción del día {dia1}", marker=dict(symbol="x", size=12, color=G_INK))
             y_vals = [v for g in modelos1 for v in ve_predecir(*modelos1[g], t)]
             etiquetas_fin_de_linea(fig, 1, etiquetas1, (0, max(y_vals)), separacion_frac=0.06)
             if t[-1] > ventana[1]:
                 ve_zona(fig, ventana[1], t[-1], "extrapolación<br>(fuera de sus datos)")
             fig.update_layout(margin=dict(r=130))
-            st.plotly_chart(fig, width="stretch")
+            st.plotly_chart(fig, width="stretch", theme=None)
 
     # --- 2 · El modelo ajustado predice el paper (validación externa estricta) --------------
     with tab2:
@@ -2668,7 +2716,7 @@ def ve_render():
                     series2[g] = dict(m=m, r=r, x=x, real=real, pred=pred, de=ve_barras(serie, dias), dias=dias)
                 fig, _ = ve_fig_predicho_vs_real(var2, series2, ventana, t_max,
                                                  ve_cita_corta(paper["cita"]))
-                st.plotly_chart(fig, width="stretch")
+                st.plotly_chart(fig, width="stretch", theme=None)
                 ve_tabla(pd.DataFrame(filas), {"Día paper": "{:g}", f"Predicho ({VE_UNIDAD[var2]})": "{:.3f}",
                                                f"Real ({VE_UNIDAD[var2]})": "{:.3f}", "Error (%)": "{:+.1f}"})
                 st.markdown("**Resumen del error**")
@@ -2749,7 +2797,7 @@ def ve_render():
                            f"error medio de hasta {max(errores3):.0f} %" if errores3 else
                            f"{VE_NOMBRE[var3]}: predicción de fechas no vistas")
                 fig = ve_figura(titulo3, "Días después del trasplante (alineado)",
-                                f"{VE_NOMBRE[var3]} ({VE_UNIDAD[var3]})", leyenda=False,
+                                f"{VE_NOMBRE[var3]} ({VE_UNIDAD[var3]})", leyenda=True, alto=600,
                                 subtitulo="Marcadores huecos = fechas usadas para ajustar · rellenos = fechas que el "
                                           "modelo <b>no vio</b> y tuvo que predecir · punteado = error de la predicción")
                 corte, x_fin, etiquetas3 = None, None, []
@@ -2776,7 +2824,7 @@ def ve_render():
                     y_max3 = max(max(serie_["media"] for serie_ in dp[var3][g].values()) for g in ajustes3)
                     etiquetas_fin_de_linea(fig, 1, etiquetas3, (0, y_max3), separacion_frac=0.06)
                     fig.update_layout(margin=dict(r=130))
-                st.plotly_chart(fig, width="stretch")
+                st.plotly_chart(fig, width="stretch", theme=None)
 
     # --- 4 · Efecto del hongo: real vs. modelado ------------------------------------------
     with tab4:
@@ -2832,7 +2880,7 @@ def ve_render():
                 y = {g: ve_predecir(m, r, t) for g, (m, r) in ajustes4.items()}
                 fig = ve_figura(f"{VE_NOMBRE[var4]} en el paper: datos reales y curvas ajustadas por la app",
                                 "Días después del trasplante (alineado)", f"{VE_NOMBRE[var4]} ({VE_UNIDAD[var4]})",
-                                leyenda=False,
+                                leyenda=True, alto=580,
                                 subtitulo="Marcadores = media publicada ± DE · líneas = modelo ajustado a todas las "
                                           "fechas del paper, por grupo")
                 etiquetas4 = []
@@ -2845,7 +2893,7 @@ def ve_render():
                 etiquetas_fin_de_linea(fig, 1, etiquetas4, (0, max(float(np.max(v)) for v in y.values())),
                                        separacion_frac=0.06)
                 fig.update_layout(margin=dict(r=130))
-                st.plotly_chart(fig, width="stretch")
+                st.plotly_chart(fig, width="stretch", theme=None)
 
                 efecto_t = 100 * (y["+M"] - y["-M"]) / y["-M"]
                 if not df4.empty:
@@ -2855,6 +2903,7 @@ def ve_render():
                 else:
                     titulo4 = "Efecto del hongo (+M sobre −M) modelado por la app"
                 fig2 = ve_figura(titulo4, "Días después del trasplante (alineado)", "+M sobre −M (%)", leyenda=True,
+                                 alto=560,
                                  subtitulo="Cuánto más (o menos) crece +M que −M · línea = lo que calcula la app · "
                                            "puntos = lo que midieron los autores · * = diferencia real significativa")
                 fig2.add_hline(y=0, line=dict(color=G_INK, width=1))
@@ -2872,7 +2921,7 @@ def ve_render():
                         textfont=dict(size=18, color=G_INK),
                         hovertemplate="Día %{x:.0f}: %{y:+.1f} %<extra>real</extra>"))
                 fig2.update_yaxes(rangemode="normal", ticksuffix=" %")
-                st.plotly_chart(fig2, width="stretch")
+                st.plotly_chart(fig2, width="stretch", theme=None)
                 st.caption("\\* = diferencia real significativa (prueba t de Welch con la DE y el n del Excel). "
                            "Si el Excel no trae DE y n, no se calcula.")
 
@@ -3185,10 +3234,10 @@ elif seccion == "Ajustar modelos":
                 if todos_x:
                     fig.update_layout(xaxis_title=f"Valor real ({UNIDADES[variable]})",
                                        yaxis_title=f"Valor predicho ({UNIDADES[variable]})")
-                    estilo_publicacion(fig, height=400, titulo=f"Real vs. predicho — {NOMBRE_VARIABLE[variable]}",
+                    estilo_publicacion(fig, height=450, titulo=f"Real vs. predicho — {NOMBRE_VARIABLE[variable]}",
                                        subtitulo="Cada punto = una planta, con el mejor modelo de su grupo · "
                                                  "mientras más cerca de la línea, mejor predice")
-                    st.plotly_chart(fig, width='stretch')
+                    st.plotly_chart(fig, width='stretch', theme=None)
                 else:
                     st.info(
                         f"No se dibuja el gráfico Real vs. predicho para **{NOMBRE_VARIABLE[variable]}**: "
@@ -3329,7 +3378,7 @@ elif seccion == "Resultados":
             continue
 
         fig, pie = fig_curvas_publicacion(DATOS, RES, variable, modelos_a_mostrar, st.session_state.fuente_datos)
-        st.plotly_chart(fig, width='stretch')
+        st.plotly_chart(fig, width='stretch', theme=None)
         mostrar_pie_streamlit(pie)
         st.download_button(
             f"Descargar PNG — Curvas {NOMBRE_VARIABLE[variable]}",
@@ -3347,7 +3396,7 @@ elif seccion == "Resultados":
             if fig_tasas is None:
                 st.info(pie_tasas_o_motivo)
             else:
-                st.plotly_chart(fig_tasas, width='stretch')
+                st.plotly_chart(fig_tasas, width='stretch', theme=None)
                 mostrar_pie_streamlit(pie_tasas_o_motivo)
                 st.download_button(
                     f"Descargar PNG — Tasas {NOMBRE_VARIABLE[variable]}",
@@ -3393,7 +3442,7 @@ elif seccion == "Gráficas de barras":
 
     for variable in variables_a_mostrar:
         fig_var, pie_var = fig_barras_variable(DATOS, variable, st.session_state.fuente_datos)
-        st.plotly_chart(fig_var, width='stretch')
+        st.plotly_chart(fig_var, width='stretch', theme=None)
         mostrar_pie_streamlit(pie_var)
         st.download_button(
             f"Descargar PNG — {NOMBRE_VARIABLE[variable]}",
@@ -3408,7 +3457,7 @@ elif seccion == "Gráficas de barras":
     if fig_resumen is None:
         st.info(pie_resumen)
     else:
-        st.plotly_chart(fig_resumen, width='stretch')
+        st.plotly_chart(fig_resumen, width='stretch', theme=None)
         mostrar_pie_streamlit(pie_resumen)
         st.download_button(
             "Descargar PNG — Resumen del efecto",
@@ -3419,7 +3468,7 @@ elif seccion == "Gráficas de barras":
     st.markdown('<hr class="rule">', unsafe_allow_html=True)
     st.markdown("### Comparación de R² por modelo")
     fig_r2, pie_r2 = fig_barras_r2_comparacion(RES, DATOS, variables_a_mostrar, modelos_a_mostrar)
-    st.plotly_chart(fig_r2, width='stretch')
+    st.plotly_chart(fig_r2, width='stretch', theme=None)
     mostrar_pie_streamlit(pie_r2)
     st.download_button(
         "Descargar PNG — Comparación de R²",
@@ -3609,7 +3658,6 @@ elif seccion == "Residuos":
             st.markdown('<span class="field-label">Tabla ANOVA</span>', unsafe_allow_html=True)
             df = tabla_anova_df(filas, primera_col, ANOVA_TEXTOS[tipo]["ok"], ANOVA_TEXTOS[tipo]["mal"])
             estilo_df = (df.style
-                         .format({"SC": fmt_num, "CM": fmt_num, "F": "{:.2f}"}, na_rep="")
                          .map(lambda v: f"color: {T['VERDE']}; font-weight: 600;" if str(v).startswith("✓")
                               else (f"color: {T['ROJO']}; font-weight: 600;" if str(v).startswith("✗") else ""),
                               subset=["Interpretación"]))
@@ -3636,7 +3684,7 @@ elif seccion == "Residuos":
                     st.info(f"{texto_grupo(grupo)}: ningún modelo convergió, no hay residuos que analizar.")
                     continue
                 fig, filas, frases = salida
-                st.plotly_chart(fig, width="stretch")
+                st.plotly_chart(fig, width="stretch", theme=None)
                 mostrar_explicacion_anova("dia", frases, filas, "Modelo")
                 if filas:
                     tabla = fig_tabla_anova(filas, "Modelo", ANOVA_TEXTOS["dia"]["ok"], ANOVA_TEXTOS["dia"]["mal"],
@@ -3656,7 +3704,7 @@ elif seccion == "Residuos":
                 st.info("Hacen falta al menos dos modelos ajustados en un grupo para compararlos.")
             else:
                 fig, filas, frases = salida
-                st.plotly_chart(fig, width="stretch")
+                st.plotly_chart(fig, width="stretch", theme=None)
                 mostrar_explicacion_anova("modelo", frases, filas, "Grupo")
                 if filas:
                     tabla = fig_tabla_anova(filas, "Grupo", ANOVA_TEXTOS["modelo"]["ok"],
