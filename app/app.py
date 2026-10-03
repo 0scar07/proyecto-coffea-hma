@@ -1279,6 +1279,8 @@ def fig_tasas_crecimiento(datos, RES, variable, modelos, fuente_datos="simulado"
                            showarrow=False, text=f"modelo: {modelo} (mejor R²)",
                            font=dict(family=FUENTE_PUBLICACION, size=11, color=G_MUTED))
         fig.update_yaxes(rangemode="tozero", row=1, col=col)
+        rgr_max = float(np.nanmax(rgr)) if np.any(np.isfinite(rgr)) else 0.0
+        fig.update_yaxes(range=[0, rgr_max * 1.15 if rgr_max > 0 else 1], row=2, col=col)
         if col == 1:
             fig.update_yaxes(title_text=f"AGR ({unidad}/día)<br><span style='font-size:11px'>cuánto crece por día</span>",
                              row=1, col=col)
@@ -1375,6 +1377,12 @@ def fmt_num(v):
     return f"{v:.4g}"
 
 
+def _unir(elementos):
+    """['a', 'b', 'c'] -> 'a, b y c'."""
+    elementos = list(elementos)
+    return elementos[0] if len(elementos) == 1 else ", ".join(elementos[:-1]) + " y " + elementos[-1]
+
+
 def _fmt_signo(v, dec=1):
     return f"{v:+.{dec}f}".replace("-", "−")
 
@@ -1410,23 +1418,23 @@ def fig_residuos_dia(RES, variable, grupo, modelos):
                            showarrow=False, text=f"<b>{m}</b>",
                            font=dict(family=FUENTE_PUBLICACION, size=15, color=COLOR_MODELO_TEXTO[m]))
         a = anova_un_factor(r, t)
-        rango_txt = (f"los residuos medios van de **{_fmt_signo(medias.min())} {unidad}** (día {dd[np.argmin(medias)]:.0f}) "
+        rango_txt = (f"residuo medio de **{_fmt_signo(medias.min())} {unidad}** (día {dd[np.argmin(medias)]:.0f}) "
                      f"a **{_fmt_signo(medias.max())} {unidad}** (día {dd[np.argmax(medias)]:.0f})")
         if a is None:
             sello_veredicto(fig, col, True, "sin prueba", "faltan réplicas por día")
-            frases.append(f"**{m}**: {rango_txt}. No se puede hacer el ANOVA (hace falta más de una planta por día).")
+            frases.append(dict(titulo=m, ok=None, etiqueta="sin prueba",
+                               detalle=f"{rango_txt}; hace falta más de una planta por día para el ANOVA."))
             continue
         a["fuente_e"], a["fuente_d"] = "Entre días", "Dentro de días (réplicas)"
         filas.append((m, a))
         ok = a["p"] >= 0.05
         sello_veredicto(fig, col, ok, "sin patrón" if ok else "patrón sistemático",
                         f"F = {a['F']:.2f} · {formatear_p(a['p'])}")
-        if ok:
-            frases.append(f"**{m}** ({formatear_p(a['p'])}): {rango_txt}, pero esas diferencias son del mismo tamaño "
-                          "que el ruido entre plantas. **Sin patrón:** el modelo sigue bien la curva.")
-        else:
-            frases.append(f"**{m}** ({formatear_p(a['p'])}): {rango_txt}. Esa diferencia es mayor que el ruido "
-                          "entre plantas: **el modelo se equivoca de forma sistemática** según la etapa.")
+        frases.append(dict(
+            titulo=m, ok=ok, etiqueta="sin patrón" if ok else "patrón sistemático",
+            detalle=(f"{formatear_p(a['p'])} · {rango_txt}. " +
+                     ("Esas diferencias son solo ruido entre plantas: **sigue bien la curva**." if ok else
+                      "Es más que el ruido entre plantas: **se equivoca igual en ciertas etapas**."))))
     for col in range(1, len(validos) + 1):
         fig.update_xaxes(title_text="Días después del trasplante", row=1, col=col,
                          **({"tickvals": dias_todos} if len(dias_todos) <= 8 else {}))
@@ -1438,7 +1446,7 @@ def fig_residuos_dia(RES, variable, grupo, modelos):
     if not filas:
         titulo = f"{g_txt}: residuos por día (sin réplicas suficientes para el ANOVA)"
     elif malos:
-        titulo = (f"{g_txt}: los residuos de {' y '.join(malos)} cambian según el día "
+        titulo = (f"{g_txt}: los residuos de {_unir(malos)} cambian según el día "
                   f"({'patrón sistemático' if len(malos) == 1 else 'patrones sistemáticos'})")
     else:
         titulo = f"{g_txt}: ningún modelo deja patrón en los residuos (el error es solo ruido)"
@@ -1494,23 +1502,22 @@ def fig_residuos_modelos(RES, variable, modelos, grupos):
         empatados = [m for m in orden if letras[m] == letras[mejor]]
         peores = [m for m in orden if letras[m] != letras[mejor]]
         peores_global.update(peores)
+        errores_txt = " · ".join(f"{m} **{medias[m]:.2f} {unidad}** ({letras[m]})" for m in orden)
         if ok or not peores:
-            frases.append(f"**{texto_grupo(g)}** ({formatear_p(a['p'])}): los modelos se equivocan en promedio lo "
-                          f"mismo (error medio de {', '.join(f'{medias[m]:.2f}' for m in orden)} {unidad}).")
+            frases.append(dict(titulo=f"{texto_grupo(g)} · {NOMBRE_GRUPO[g]}", ok=True, etiqueta="sin diferencias",
+                               detalle=f"{formatear_p(a['p'])} · error medio: {errores_txt}. "
+                                       "**Los modelos se equivocan lo mismo.**"))
         else:
-            frases.append(
-                f"**{texto_grupo(g)}** ({formatear_p(a['p'])}): {' y '.join(empatados)} "
-                f"{'comparten' if len(empatados) > 1 else 'tiene'} la letra **{letras[mejor]}** (error medio de "
-                f"{' y '.join(f'{medias[m]:.2f}' for m in empatados)} {unidad}); {' y '.join(peores)} "
-                f"{'lleva' if len(peores) == 1 else 'llevan'} otra letra, con "
-                f"{' y '.join(f'{medias[m]:.2f}' for m in peores)} {unidad}: **se equivoca"
-                f"{'' if len(peores) == 1 else 'n'} significativamente más.**")
+            frases.append(dict(
+                titulo=f"{texto_grupo(g)} · {NOMBRE_GRUPO[g]}", ok=False, etiqueta="los modelos difieren",
+                detalle=f"{formatear_p(a['p'])} · error medio: {errores_txt}. **{_unir(peores)} se "
+                        f"equivoca{'' if len(peores) == 1 else 'n'} más** que {_unir(empatados)}."))
     fig.update_yaxes(title_text=f"Error absoluto |residuo| ({unidad})", row=1, col=1)
     fig.update_xaxes(showline=False, ticks="")
     if peores_global and len(peores_global) < len(modelos):
         mejores_txt = [m for m in modelos if m not in peores_global]
-        titulo = (f"{' y '.join(mejores_txt)} se {'equivoca' if len(mejores_txt) == 1 else 'equivocan'} "
-                  f"menos que {' y '.join(sorted(peores_global, key=modelos.index))}")
+        titulo = (f"{_unir(mejores_txt)} se {'equivoca' if len(mejores_txt) == 1 else 'equivocan'} "
+                  f"menos que {_unir(sorted(peores_global, key=modelos.index))}")
     elif filas and all(a["p"] >= 0.05 for _, a in filas):
         titulo = "Los modelos se equivocan en promedio lo mismo"
     else:
@@ -1577,100 +1584,205 @@ ANOVA_TEXTOS = {
         "ok": "El residuo medio no cambia entre días: el modelo sigue bien la curva",
         "mal": "El residuo medio cambia según el día: el modelo se desvía en ciertas etapas",
         "como_leer": [
-            "Cada panel es un modelo. El **residuo** es cuánto se equivocó el modelo con cada planta: "
-            "**medido − predicho**. Si es positivo, la planta midió más de lo que el modelo predijo (el modelo "
-            "**subestima**); si es negativo, el modelo **sobreestima**.",
-            "- **Puntos:** el residuo de cada planta medida ese día.\n"
-            "- **Caja:** dónde cae la mitad central de esos residuos; la raya de adentro es la mediana.\n"
-            "- **Rombo negro ◆ y línea:** el residuo promedio de cada día.\n"
-            "- **Línea horizontal en 0:** el error cero. Un buen modelo deja los rombos pegados a esta línea, "
-            "subiendo y bajando al azar.",
-            "**Qué buscar:** si la línea de rombos dibuja una forma clara (una «U», una onda, una subida), el "
-            "modelo se equivoca siempre igual en ciertas etapas. El **ANOVA** confirma si esa forma es real o solo "
-            "azar: compara cuánto cambia el residuo **entre días** con cuánto varía **entre plantas del mismo día**.",
+            ("Residuo", "medido − predicho. Positivo = el modelo se quedó corto (subestima); negativo = se pasó "
+                        "(sobreestima)."),
+            ("Puntos y caja", "el residuo de cada planta ese día; la caja es la mitad central de esos valores."),
+            ("◆ y línea", "el residuo promedio de cada día."),
+            ("Línea en 0", "error cero. Un buen modelo deja los ◆ cerca de ella, subiendo y bajando al azar."),
+            ("Qué buscar", "si los ◆ dibujan una forma (una «U», una onda, una subida), el modelo falla siempre "
+                           "igual en ciertas etapas. El ANOVA dice si esa forma es real (p < 0.05) o puro azar."),
         ],
-        "glosario": {
-            "e": "Entre días", "d": "Dentro de días",
-            "e_def": "cuánto cambia el residuo promedio de un día a otro (lo que delataría un patrón).",
-            "d_def": "cuánto varían entre sí las plantas del mismo día (ruido natural; ningún modelo lo puede "
-                     "eliminar).",
-            "gl_def": "Entre días = nº de días − 1. Dentro de días = nº de plantas − nº de días.",
-            "f_def": "la variación entre días",
-            "primera": ("Modelo", "la curva de crecimiento evaluada (Exponencial, Logístico o Gompertz)."),
-        },
+        "glosario": [
+            ("Modelo", "la curva evaluada."),
+            ("Fuente de variación", "**Entre días** = cuánto cambia el residuo promedio de un día a otro (el "
+                                    "patrón). **Dentro de días** = cuánto varían las plantas del mismo día (ruido "
+                                    "natural). **Total** = la suma de las dos."),
+            ("SC", "suma de cuadrados: cuánta variación aporta cada fuente."),
+            ("gl", "grados de libertad: entre días = nº de días − 1; dentro = nº de plantas − nº de días."),
+            ("CM", "cuadrado medio = SC ÷ gl (la variación «promedio» de cada fuente)."),
+            ("F", "CM entre días ÷ CM dentro de días. F ≈ 1 → sin patrón; F mucho mayor que 1 → hay patrón."),
+            ("Valor p", "probabilidad de que sea azar. **p < 0.05** → el patrón es real; **p ≥ 0.05** → no hay "
+                        "evidencia de patrón."),
+            ("Interpretación", "el resultado en palabras (✓ bien · ✗ revisar)."),
+        ],
     },
     "modelo": {
         "ok": "Los modelos se equivocan en promedio lo mismo",
         "mal": "Al menos un modelo se equivoca más que los otros (ver letras de Tukey)",
         "como_leer": [
-            "Aquí se usa el residuo **sin signo**, |residuo|: solo importa **de qué tamaño** fue el error con cada "
-            "planta, no si fue por arriba o por abajo. Cada panel es un grupo y cada caja, un modelo.",
-            "- **Puntos:** el error de cada planta medida (todas las fechas juntas).\n"
-            "- **Caja:** la mitad central de los errores. Raya continua = mediana; **raya punteada = promedio** "
-            "(también escrito abajo: «media …»).\n"
-            "- **Más abajo = mejor:** una caja baja significa que el modelo se equivoca poco.\n"
-            "- **Letras (a, b…):** prueba de **Tukey**, que compara los modelos de dos en dos. **Misma letra = no "
-            "hay diferencia real** entre esos modelos; letra distinta = sí la hay.",
-            "**Qué buscar:** el recuadro de arriba (ANOVA) dice si **al menos un** modelo se equivoca distinto a "
-            "los demás; las letras dicen **cuál**.",
+            ("|residuo|", "el tamaño del error de cada planta, sin importar si fue por arriba o por abajo."),
+            ("Puntos y caja", "el error de cada planta (todas las fechas); la caja es la mitad central. "
+                              "Raya punteada = promedio, escrito abajo como «media»."),
+            ("Más abajo = mejor", "una caja baja significa que el modelo se equivoca poco."),
+            ("Letras (a, b…)", "prueba de Tukey: **misma letra = sin diferencia real**; letra distinta = sí "
+                               "la hay."),
+            ("Qué buscar", "el recuadro de cada panel (ANOVA) dice si algún modelo difiere; las letras dicen "
+                           "cuál."),
         ],
-        "glosario": {
-            "e": "Entre modelos", "d": "Dentro de modelos",
-            "e_def": "cuánto difiere el error promedio de un modelo a otro.",
-            "d_def": "cuánto varía el error de planta a planta dentro de un mismo modelo.",
-            "gl_def": "Entre modelos = nº de modelos − 1. Dentro de modelos = nº de errores − nº de modelos.",
-            "f_def": "la diferencia entre modelos",
-            "primera": ("Grupo", "−M (sin micorriza) o +M (inoculado con HMA); se hace un ANOVA por grupo."),
-        },
+        "glosario": [
+            ("Grupo", "−M (sin micorriza) o +M (inoculado); un ANOVA por grupo."),
+            ("Fuente de variación", "**Entre modelos** = cuánto difiere el error promedio de un modelo a otro. "
+                                    "**Dentro de modelos** = cuánto varía el error de planta a planta. "
+                                    "**Total** = la suma de las dos."),
+            ("SC", "suma de cuadrados: cuánta variación aporta cada fuente."),
+            ("gl", "grados de libertad: entre modelos = nº de modelos − 1; dentro = nº de errores − nº de "
+                   "modelos."),
+            ("CM", "cuadrado medio = SC ÷ gl (la variación «promedio» de cada fuente)."),
+            ("F", "CM entre modelos ÷ CM dentro de modelos. F ≈ 1 → se equivocan igual; F mucho mayor que 1 → "
+                  "no."),
+            ("Valor p", "probabilidad de que sea azar. **p < 0.05** → la diferencia es real; **p ≥ 0.05** → no "
+                        "hay evidencia de diferencia."),
+            ("Interpretación", "el resultado en palabras (✓ bien · ✗ revisar)."),
+        ],
     },
 }
 
 
 def glosario_anova(tipo):
     """Lista (término, definición en markdown) de las columnas de la tabla ANOVA."""
-    g = ANOVA_TEXTOS[tipo]["glosario"]
-    return [
-        g["primera"],
-        ("Fuente de variación", f"de dónde viene la variación de los residuos. **{g['e']}** = {g['e_def']} "
-                                f"**{g['d']}** = {g['d_def']} **Total** = toda la variación junta (la suma de "
-                                "las dos)."),
-        ("SC", "**Suma de cuadrados.** Cuánta variación hay en esa fuente. Mientras más grande, más se dispersan "
-               "los residuos por esa causa."),
-        ("gl", f"**Grados de libertad.** Cuántos datos independientes aportan a esa fila. {g['gl_def']}"),
-        ("CM", "**Cuadrado medio = SC ÷ gl.** La variación «promedio» de cada fuente; sirve para comparar fuentes "
-               "con distinta cantidad de datos."),
-        ("F", f"**F = CM {g['e'].lower()} ÷ CM {g['d'].lower()}.** Cuántas veces es mayor {g['f_def']} que el ruido "
-              "natural. F ≈ 1 → no hay diferencia; F mucho mayor que 1 → sí la hay."),
-        ("Valor p", "Probabilidad de obtener un F así de grande **solo por azar**. **p < 0.05** → la diferencia es "
-                    "real (estadísticamente significativa); **p ≥ 0.05** → no hay evidencia de diferencia."),
-        ("Interpretación", "El resultado traducido a palabras: ✓ = todo bien, ✗ = hay que revisar."),
-    ]
+    return ANOVA_TEXTOS[tipo]["glosario"]
 
 
 def _sin_markdown(texto):
     return texto.replace("**", "")
 
 
-def pie_anova(tipo, frases):
-    """Pie para el PNG descargable: qué dice aquí + cómo leer + glosario, en texto plano."""
-    notas = [_sin_markdown(f) for f in frases]
-    como = " ".join(_sin_markdown(p).replace("\n- ", " · ").lstrip("- ") for p in ANOVA_TEXTOS[tipo]["como_leer"])
-    glos = " · ".join(f"{t}: {_sin_markdown(d)}" for t, d in glosario_anova(tipo))
-    return construir_pie(f"Cómo leer esta gráfica: {como}", notas=notas, extra=f"Columnas de la tabla — {glos}",
-                         titulo_notas="Qué dice aquí:")
+# --- Composición del PNG descargable del ANOVA (PIL): bloques ordenados, no texto corrido ---
+_FUENTES_PNG = {}
 
 
-def png_figura_y_tabla(fig, fig_tabla, pie, scale=2):
-    """PNG final: gráfica + tabla ANOVA (apiladas) + pie de texto (componer_png_con_pie)."""
+def _fuente_png(tam, negrita=False):
+    clave = (tam, negrita)
+    if clave not in _FUENTES_PNG:
+        import matplotlib.font_manager as fm
+        ruta = fm.findfont(fm.FontProperties(family="DejaVu Sans", weight="bold" if negrita else "normal"))
+        _FUENTES_PNG[clave] = ImageFont.truetype(ruta, tam)
+    return _FUENTES_PNG[clave]
+
+
+def _rgb(hex_color):
+    return tuple(int(hex_color[k:k + 2], 16) for k in (1, 3, 5))
+
+
+def _lineas_rich(texto, ancho, tam, draw):
+    """Parte un texto con **negritas** en líneas que caben en `ancho` px. Cada línea es una
+    lista de (palabra, fuente)."""
+    f_r, f_b = _fuente_png(tam), _fuente_png(tam, True)
+    tokens = []
+    for k, seg in enumerate(re.split(r"\*\*", texto)):
+        if seg[:1].isspace() and tokens:
+            tokens[-1] = (tokens[-1][0] + " ", tokens[-1][1])
+        for w in re.findall(r"\S+\s*", seg):
+            tokens.append((w, f_b if k % 2 else f_r))
+    lineas, linea, x = [], [], 0
+    for w, f in tokens:
+        wl = draw.textlength(w, font=f)
+        if linea and x + wl - draw.textlength(" ", font=f) > ancho:
+            lineas.append(linea)
+            linea, x = [], 0
+        linea.append((w, f))
+        x += wl
+    if linea:
+        lineas.append(linea)
+    return lineas
+
+
+def _dibujar_rich(draw, lineas, x, y, interlineado, color):
+    for linea in lineas:
+        xx = x
+        for w, f in linea:
+            draw.text((xx, y), w, font=f, fill=color)
+            xx += draw.textlength(w, font=f)
+        y += interlineado
+    return y
+
+
+def _bloque_tarjetas(veredictos, ancho, margen):
+    """Fila de tarjetas «Qué dice aquí»: una por modelo (o grupo), borde verde/rojo con ✓/✗."""
+    tmp = ImageDraw.Draw(Image.new("RGB", (10, 10)))
+    n = max(len(veredictos), 1)
+    gap = 24
+    ancho_t = (ancho - 2 * margen - gap * (n - 1)) // n
+    pad, tam = 26, 25
+    inter = int(tam * 1.45)
+    contenidos = [_lineas_rich(v["detalle"], ancho_t - 2 * pad, tam, tmp) for v in veredictos]
+    alto_t = pad + 40 + max(len(c) for c in contenidos) * inter + pad
+    titulo_h = 58
+    img = Image.new("RGB", (ancho, titulo_h + alto_t + 30), "white")
+    d = ImageDraw.Draw(img)
+    d.text((margen, 8), "Qué dice aquí", font=_fuente_png(30, True), fill=_rgb(G_INK))
+    for k, (v, lineas) in enumerate(zip(veredictos, contenidos)):
+        x0 = margen + k * (ancho_t + gap)
+        y0 = titulo_h
+        color = _rgb(T["VERDE"] if v["ok"] else (T["ROJO"] if v["ok"] is False else G_MUTED))
+        fondo = tuple(int(c * 0.07 + 255 * 0.93) for c in color)
+        d.rounded_rectangle([x0, y0, x0 + ancho_t, y0 + alto_t], radius=14, fill=fondo, outline=color, width=3)
+        icono = "✓" if v["ok"] else ("✗" if v["ok"] is False else "•")
+        d.text((x0 + pad, y0 + pad - 4), f"{icono} {v['titulo']}", font=_fuente_png(27, True), fill=color)
+        ancho_tit = d.textlength(f"{icono} {v['titulo']}", font=_fuente_png(27, True))
+        d.text((x0 + pad + ancho_tit + 14, y0 + pad), v["etiqueta"], font=_fuente_png(23), fill=color)
+        _dibujar_rich(d, lineas, x0 + pad, y0 + pad + 44, inter, _rgb(G_INK))
+    return img
+
+
+def _bloque_dos_columnas(izq, der, ancho, margen):
+    """Dos recuadros lado a lado: «Cómo leer esta gráfica» y «Qué significa cada columna».
+    Cada lado es (título, [(término, texto)])."""
+    tmp = ImageDraw.Draw(Image.new("RGB", (10, 10)))
+    gap, pad, tam = 28, 30, 23
+    inter = int(tam * 1.45)
+    ancho_c = (ancho - 2 * margen - gap) // 2
+    sang = 250
+
+    def preparar(items):
+        return [(t, _lineas_rich(txt, ancho_c - 2 * pad - sang, tam, tmp)) for t, txt in items]
+
+    lados = [(izq[0], preparar(izq[1])), (der[0], preparar(der[1]))]
+    alto = max(pad + 52 + sum(max(len(l), 1) * inter + 12 for _, l in items) + pad for _, items in lados)
+    img = Image.new("RGB", (ancho, alto + 30), "white")
+    d = ImageDraw.Draw(img)
+    for k, (titulo, items) in enumerate(lados):
+        x0 = margen + k * (ancho_c + gap)
+        d.rounded_rectangle([x0, 0, x0 + ancho_c, alto], radius=14, fill=_rgb("#FAF8F5"),
+                            outline=_rgb("#E4DFD6"), width=2)
+        d.rectangle([x0, 12, x0 + 7, alto - 12], fill=_rgb(T["ACCENT"] if k == 0 else G_MUTED))
+        d.text((x0 + pad, pad - 4), titulo, font=_fuente_png(28, True), fill=_rgb(G_INK))
+        y = pad + 52
+        for termino, lineas in items:
+            tl = _lineas_rich(f"**{termino}**", sang - 16, tam, d)
+            _dibujar_rich(d, tl, x0 + pad, y, inter, _rgb(G_INK))
+            y_fin = _dibujar_rich(d, lineas, x0 + pad + sang, y, inter, _rgb("#3C3832"))
+            y = max(y_fin, y + len(tl) * inter) + 12
+    return img
+
+
+def png_anova_explicado(fig, fig_tabla, tipo, veredictos, nota=None, scale=2, incluir_guia=True):
+    """PNG descargable del ANOVA, ordenado en bloques: gráfica → «Qué dice aquí» (tarjetas
+    ✓/✗) → tabla ANOVA → «Cómo leer esta gráfica» | «Qué significa cada columna»."""
     im_fig = Image.open(io.BytesIO(fig.to_image(format="png", scale=scale))).convert("RGB")
     im_tab = Image.open(io.BytesIO(fig_tabla.to_image(format="png", scale=scale))).convert("RGB")
-    ancho = max(im_fig.width, im_tab.width)
-    lienzo = Image.new("RGB", (ancho, im_fig.height + im_tab.height), "white")
-    lienzo.paste(im_fig, (0, 0))
-    lienzo.paste(im_tab, (0, im_fig.height))
+    ancho = im_fig.width
+    margen = int(80 * scale)
+    partes = [im_fig, Image.new("RGB", (ancho, 20), "white"),
+              _bloque_tarjetas(veredictos, ancho, margen), im_tab, Image.new("RGB", (ancho, 24), "white")]
+    if incluir_guia:
+        partes.append(_bloque_dos_columnas(("Cómo leer esta gráfica", ANOVA_TEXTOS[tipo]["como_leer"]),
+                                           ("Qué significa cada columna de la tabla", glosario_anova(tipo)),
+                                           ancho, margen))
+    if nota:
+        tmp = ImageDraw.Draw(Image.new("RGB", (10, 10)))
+        lineas = _lineas_rich(nota, ancho - 2 * margen, 21, tmp)
+        img_n = Image.new("RGB", (ancho, len(lineas) * 31 + 30), "white")
+        _dibujar_rich(ImageDraw.Draw(img_n), lineas, margen, 6, 31, _rgb(G_MUTED))
+        partes.append(img_n)
+    lienzo = Image.new("RGB", (ancho, sum(p.height for p in partes)), "white")
+    y = 0
+    for p_ in partes:
+        lienzo.paste(p_, ((ancho - p_.width) // 2, y))
+        y += p_.height
     buf = io.BytesIO()
     lienzo.save(buf, format="PNG")
-    return componer_png_con_pie(buf.getvalue(), pie, scale=scale)
+    return buf.getvalue()
 
 
 def calcular_banda_confianza(func, popt, pcov, t_eval, n_muestras=400, semilla_mc=7):
@@ -3458,15 +3570,22 @@ elif seccion == "Residuos":
     )
 
     def mostrar_explicacion_anova(tipo, frases, filas, primera_col):
-        """Debajo de cada gráfica: qué dice, cómo leerla, la tabla ANOVA y qué significa cada columna."""
-        with st.container(border=True):
-            st.markdown('<span class="ficha-marca"></span>', unsafe_allow_html=True)
-            st.markdown('<span class="field-label">Qué dice aquí</span>', unsafe_allow_html=True)
-            st.markdown("\n".join(f"- {f}" for f in frases))
-        with st.expander("Cómo leer esta gráfica", expanded=True):
-            for parrafo in ANOVA_TEXTOS[tipo]["como_leer"]:
-                st.markdown(parrafo)
+        """Debajo de cada gráfica, en orden: «Qué dice aquí» (una tarjeta ✓/✗ por modelo o grupo),
+        la tabla ANOVA, y lado a lado «Cómo leer esta gráfica» | «Qué significa cada columna»."""
+        st.markdown('<span class="field-label">Qué dice aquí</span>', unsafe_allow_html=True)
+        for col_st, v in zip(st.columns(len(frases)), frases):
+            color = T["VERDE"] if v["ok"] else (T["ROJO"] if v["ok"] is False else T["INK_MUTED"])
+            icono = "✓" if v["ok"] else ("✗" if v["ok"] is False else "•")
+            detalle = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", v["detalle"])
+            col_st.markdown(
+                f"<div style='border:2px solid {color}; background:{color}10; border-radius:10px; "
+                f"padding:0.7rem 0.9rem; height:100%;'>"
+                f"<div style='color:{color}; font-weight:700; margin-bottom:0.3rem;'>{icono} {v['titulo']} "
+                f"<span style='font-weight:500; font-size:0.85rem;'>· {v['etiqueta']}</span></div>"
+                f"<div style='font-size:0.9rem; line-height:1.45;'>{detalle}</div></div>",
+                unsafe_allow_html=True)
         if filas:
+            st.write("")
             st.markdown('<span class="field-label">Tabla ANOVA</span>', unsafe_allow_html=True)
             df = tabla_anova_df(filas, primera_col, ANOVA_TEXTOS[tipo]["ok"], ANOVA_TEXTOS[tipo]["mal"])
             estilo_df = (df.style
@@ -3475,7 +3594,14 @@ elif seccion == "Residuos":
                               else (f"color: {T['ROJO']}; font-weight: 600;" if str(v).startswith("✗") else ""),
                               subset=["Interpretación"]))
             st.dataframe(estilo_df, hide_index=True, width="stretch")
-            with st.expander("Qué significa cada columna de la tabla", expanded=True):
+        c_leer, c_glos = st.columns(2)
+        with c_leer.container(border=True):
+            st.markdown('<span class="field-label">Cómo leer esta gráfica</span>', unsafe_allow_html=True)
+            st.markdown("\n".join(f"- **{t}:** {d}" for t, d in ANOVA_TEXTOS[tipo]["como_leer"]))
+        if filas:
+            with c_glos.container(border=True):
+                st.markdown('<span class="field-label">Qué significa cada columna de la tabla</span>',
+                            unsafe_allow_html=True)
                 st.markdown("\n".join(f"- **{t}:** {d}" for t, d in glosario_anova(tipo)))
 
     tabs_var = st.tabs([NOMBRE_VARIABLE[v] for v in variables_a_mostrar])
@@ -3497,7 +3623,7 @@ elif seccion == "Residuos":
                                             "Tabla ANOVA · residuo ~ día")
                     st.download_button(
                         f"Descargar PNG — Residuos por día {texto_grupo(grupo)}",
-                        data=png_figura_y_tabla(fig, tabla, pie_anova("dia", frases)),
+                        data=png_anova_explicado(fig, tabla, "dia", frases),
                         file_name=f"anova_residuos_dia_{variable}_{'control' if grupo == '-M' else 'inoculado'}.png",
                         mime="image/png", key=f"png_anova_dia_{variable}_{grupo}")
                 st.write("")
@@ -3517,7 +3643,7 @@ elif seccion == "Residuos":
                                             ANOVA_TEXTOS["modelo"]["mal"], "Tabla ANOVA · |residuo| ~ modelo")
                     st.download_button(
                         "Descargar PNG — Comparación de modelos",
-                        data=png_figura_y_tabla(fig, tabla, pie_anova("modelo", frases)),
+                        data=png_anova_explicado(fig, tabla, "modelo", frases),
                         file_name=f"anova_residuos_modelos_{variable}.png", mime="image/png",
                         key=f"png_anova_modelos_{variable}")
             st.caption(
@@ -4045,7 +4171,7 @@ elif seccion == "Exportar reporte":
 
             # --- Analisis de residuos (ANOVA sobre los residuos) -- mismas figuras y tablas que la
             # seccion Residuos de la app, con su explicacion en texto. ---
-            pdf.add_page()
+            asegurar_espacio(pdf, 60)
             titulo_seccion(pdf, "Analisis de residuos (ANOVA)")
             pdf.set_font("Helvetica", "", 10)
             pdf.multi_cell(0, 5.5, limpiar_texto(
@@ -4055,49 +4181,34 @@ elif seccion == "Exportar reporte":
                 "(2) |residuo| ~ modelo: que modelo se equivoca menos? (letras de Tukey: misma letra = sin "
                 "diferencia real)."
             ), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-            pdf.ln(2)
-            pdf.set_font("Helvetica", "B", 9.5)
-            pdf.cell(0, 6, limpiar_texto("Que significa cada columna de las tablas ANOVA"), new_x=XPos.LMARGIN,
-                     new_y=YPos.NEXT)
-            pdf.set_font("Helvetica", "", 8.5)
-            for termino, definicion in glosario_anova("dia"):
-                pdf.multi_cell(0, 4.6, limpiar_texto(f"- {termino}: {_sin_markdown(definicion)}"),
-                               new_x=XPos.LMARGIN, new_y=YPos.NEXT)
             pdf.ln(3)
-
-            def frases_pdf(frases):
-                pdf.set_font("Helvetica", "B", 9)
-                pdf.cell(0, 5, limpiar_texto("Que dice aqui:"), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-                pdf.set_font("Helvetica", "", 9)
-                for f in frases:
-                    pdf.multi_cell(0, 5, limpiar_texto(f"- {_sin_markdown(f)}".replace("✓", "").replace("✗", "")),
-                                   new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-                pdf.ln(3)
-
+            guia_mostrada = set()
             for variable in variables_a_mostrar:
-                asegurar_espacio(pdf, 100)
-                subtitulo_variable(pdf, NOMBRE_VARIABLE[variable])
                 grupos_v = [g for g in ("-M", "+M") if g in DATOS[variable]]
-                for grupo in grupos_v:
-                    salida = fig_residuos_dia(RES, variable, grupo, modelos_a_mostrar)
-                    if salida is None:
+                salidas = [("dia", "Modelo", "Tabla ANOVA - residuo ~ dia", fig_residuos_dia(RES, variable, g,
+                                                                                         modelos_a_mostrar))
+                           for g in grupos_v]
+                salidas.append(("modelo", "Grupo", "Tabla ANOVA - |residuo| ~ modelo",
+                                fig_residuos_modelos(RES, variable, modelos_a_mostrar, grupos_v)))
+                imagenes = []
+                for tipo, primera, titulo_tabla, salida in salidas:
+                    if salida is None or not salida[1]:
                         continue
                     fig_r, filas_r, frases_r = salida
-                    insertar_imagen_png(pdf, fig_r.to_image(format="png", scale=3))
-                    if filas_r:
-                        insertar_imagen_png(pdf, fig_tabla_anova(
-                            filas_r, "Modelo", ANOVA_TEXTOS["dia"]["ok"], ANOVA_TEXTOS["dia"]["mal"],
-                            "Tabla ANOVA - residuo ~ dia").to_image(format="png", scale=3))
-                    frases_pdf(frases_r)
-                salida = fig_residuos_modelos(RES, variable, modelos_a_mostrar, grupos_v)
-                if salida is not None:
-                    fig_r, filas_r, frases_r = salida
-                    insertar_imagen_png(pdf, fig_r.to_image(format="png", scale=3))
-                    if filas_r:
-                        insertar_imagen_png(pdf, fig_tabla_anova(
-                            filas_r, "Grupo", ANOVA_TEXTOS["modelo"]["ok"], ANOVA_TEXTOS["modelo"]["mal"],
-                            "Tabla ANOVA - |residuo| ~ modelo").to_image(format="png", scale=3))
-                    frases_pdf(frases_r)
+                    tabla_r = fig_tabla_anova(filas_r, primera, ANOVA_TEXTOS[tipo]["ok"], ANOVA_TEXTOS[tipo]["mal"],
+                                              titulo_tabla)
+                    imagenes.append(png_anova_explicado(fig_r, tabla_r, tipo, frases_r, scale=2,
+                                                        incluir_guia=tipo not in guia_mostrada))
+                    guia_mostrada.add(tipo)
+                if not imagenes:
+                    continue
+                # El subtítulo de la variable va en la misma página que su primera imagen.
+                with Image.open(io.BytesIO(imagenes[0])) as im0:
+                    alto_primera_mm = 190 * im0.height / im0.width
+                asegurar_espacio(pdf, alto_primera_mm + 16)
+                subtitulo_variable(pdf, NOMBRE_VARIABLE[variable])
+                for png_r in imagenes:
+                    insertar_imagen_png(pdf, png_r)
 
             # --- Resultados esperados (modelo que mejor describe cada variable + efecto +M vs -M) ---
             pdf.add_page()
