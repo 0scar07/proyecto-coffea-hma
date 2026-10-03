@@ -2461,7 +2461,11 @@ def ve_cita_corta(cita):
         return "paper cargado"
     m = re.search(r"\(\d{4}[a-z]?\)", cita)
     corta = cita[:m.end()] if m else cita
-    return corta if len(corta) <= 90 else corta[:87] + "…"
+    if len(corta) > 60:
+        # Muchos autores: primer autor + «et al.» + año.
+        anio = re.search(r"\(\d{4}[a-z]?\)", corta)
+        corta = (corta.split(",")[0].strip() + " et al. " + anio.group(0)) if anio else corta[:57] + "…"
+    return corta
 
 
 def ve_texto_calidad(mape):
@@ -2470,12 +2474,28 @@ def ve_texto_calidad(mape):
     return f"<span style='color:{color}'>({q})</span>"
 
 
+def ve_errores_por_tramo(x, real, pred, ventana):
+    """Error porcentual medio (MAPE) separado en fechas DENTRO del rango de días de sus datos
+    (donde el modelo interpola) y FUERA de él (extrapolación). Devuelve
+    dict(total, dentro, fuera, n_dentro, n_fuera); un tramo sin fechas queda en NaN."""
+    x, real, pred = (np.asarray(v, dtype=float) for v in (x, real, pred))
+    err = np.abs((pred - real) / real) * 100
+    dentro = (x >= ventana[0]) & (x <= ventana[1])
+    return dict(total=float(np.mean(err)) if len(err) else np.nan,
+                dentro=float(np.mean(err[dentro])) if dentro.any() else np.nan,
+                fuera=float(np.mean(err[~dentro])) if (~dentro).any() else np.nan,
+                n_dentro=int(dentro.sum()), n_fuera=int((~dentro).sum()), mascara=dentro)
+
+
 def ve_fig_predicho_vs_real(var, series, ventana, t_max, cita):
     """Pestaña 2 en una sola figura: (a) curva predicha vs medias del paper, con el error de cada
     fecha y la zona de extrapolación; (b) predicho vs real, con la diagonal de predicción perfecta
-    y una franja de ±10 %. `series` = {g: dict(m, r, x, real, pred, de, dias)}."""
+    y una franja de ±10 %. El error se informa por separado DENTRO del rango de días de sus datos
+    y en la EXTRAPOLACIÓN (fuera de ese rango), porque significan cosas distintas.
+    `series` = {g: dict(m, r, x, real, pred, de, dias)}."""
     unidad = VE_UNIDAD[var]
-    fig = make_subplots(rows=1, cols=2, column_widths=[0.58, 0.42], horizontal_spacing=0.11)
+    # Separación amplia: las etiquetas al final de las curvas de (a) no deben chocar con el eje Y de (b).
+    fig = make_subplots(rows=1, cols=2, column_widths=[0.56, 0.44], horizontal_spacing=0.17)
     t0 = min(0, min(float(np.min(d["x"])) for d in series.values()))
     t = np.linspace(t0, t_max, 300)
     todos, mapes, etiquetas, peor = [], {}, [], None
@@ -2486,14 +2506,18 @@ def ve_fig_predicho_vs_real(var, series, ventana, t_max, cita):
                  for dp_, xd, y, p in zip(d["dias"], d["x"], d["real"], d["pred"])]
         ve_trazar_real(fig, g, d["x"], d["real"], d["de"], "media publicada ± DE", hover, row=1, col=1)
         err = (d["pred"] - d["real"]) / d["real"] * 100
-        mapes[g] = float(np.mean(np.abs(err)))
+        mapes[g] = ve_errores_por_tramo(d["x"], d["real"], d["pred"], ventana)
+        dentro = mapes[g]["mascara"]
         k = int(np.argmax(np.abs(err)))
         if peor is None or abs(err[k]) > abs(peor[3]):
             peor = (g, d["x"][k], d["real"][k], err[k])
         etiquetas.append((f"<b>{texto_grupo(g)}</b> · {d['m']}", t[-1], float(ve_predecir(d["m"], d["r"], t[-1]))))
         fig.add_trace(go.Scatter(
             x=d["real"], y=d["pred"], mode="markers+text", showlegend=False,
-            marker=dict(symbol=VE_SIMBOLO[g], size=12, color=ve_color(g), line=dict(color="white", width=1.5)),
+            # relleno = fecha dentro del rango de sus datos · hueco = extrapolación
+            marker=dict(symbol=VE_SIMBOLO[g], size=12,
+                        color=[ve_color(g) if dn else "white" for dn in dentro],
+                        line=dict(color=[("white" if dn else ve_color(g)) for dn in dentro], width=2)),
             text=[f"{xd:.0f} d" for xd in d["x"]], textposition="middle right" if g == "-M" else "middle left",
             textfont=dict(family=FUENTE_PUBLICACION, size=10.5, color=G_MUTED),
             hovertemplate=f"{texto_grupo(g)}<br>real %{{x:.3g}} · predicho %{{y:.3g}} {unidad}<extra></extra>"),
@@ -2525,24 +2549,38 @@ def ve_fig_predicho_vs_real(var, series, ventana, t_max, cita):
                              line=dict(color=G_INK, width=1.2, dash="dash")), row=1, col=2)
     for x, y, txt, anc, color in ((0.03, 0.97, "▲ por encima: el modelo <b>sobreestima</b>", "left", G_MUTED),
                                   (0.97, 0.04, "▼ por debajo: el modelo <b>subestima</b>", "right", G_MUTED),
-                                  (0.97, 0.97, "franja verde = error < 10 %", "right", T["VERDE"])):
+                                  (0.97, 0.12, "franja verde = error < 10 %", "right", T["VERDE"])):
         fig.add_annotation(x=x, y=y, xref="x2 domain", yref="y2 domain", xanchor=anc, showarrow=False, text=txt,
                            yanchor="top" if y > 0.5 else "bottom",
                            font=dict(family=FUENTE_PUBLICACION, size=11, color=color))
     fig.update_xaxes(title_text=f"Real, medido en el paper ({unidad})", range=[0, tope], row=1, col=2)
     fig.update_yaxes(title_text=f"Predicho por el modelo ({unidad})", range=[0, tope], row=1, col=2)
 
-    peor_mape = max(mapes.values())
-    titulo = (f"El modelo predice {VE_NOMBRE[var].lower()} de otro experimento con un error menor al 10 %"
-              if peor_mape < 10 else
-              f"El modelo predice {VE_NOMBRE[var].lower()} de otro experimento con un error medio de hasta "
-              f"{peor_mape:.0f} %")
-    chips = "   ·   ".join(f"<b>{texto_grupo(g)}</b> error medio <b>{v:.0f} %</b> {ve_texto_calidad(v)}"
-                           for g, v in mapes.items())
+    nombre = VE_NOMBRE[var].lower()
+    dentros = [v["dentro"] for v in mapes.values() if np.isfinite(v["dentro"])]
+    fueras = [v["fuera"] for v in mapes.values() if np.isfinite(v["fuera"])]
+    if dentros:
+        titulo = (f"Dentro del rango de sus datos, el modelo predice {nombre} de otro experimento con un error "
+                  f"medio de hasta {max(dentros):.0f} %")
+        if fueras:
+            titulo += f"; fuera de él (extrapolación), hasta {max(fueras):.0f} %"
+    else:
+        titulo = (f"El modelo predice {nombre} de otro experimento con un error medio de hasta "
+                  f"{max(v['total'] for v in mapes.values()):.0f} % (todas las fechas están fuera de sus datos)")
+
+    def chip(g, v):
+        partes = []
+        if np.isfinite(v["dentro"]):
+            partes.append(f"dentro de sus datos <b>{v['dentro']:.0f} %</b> {ve_texto_calidad(v['dentro'])}")
+        if np.isfinite(v["fuera"]):
+            partes.append(f"extrapolación <b>{v['fuera']:.0f} %</b> {ve_texto_calidad(v['fuera'])}")
+        return f"<b>{texto_grupo(g)}</b> error medio: " + " · ".join(partes)
+
+    chips = "      ".join(chip(g, v) for g, v in mapes.items())
     estilo_publicacion(fig, width=1200, height=640, titulo=titulo, right_margin=110, left_margin=80,
                        mostrar_leyenda=False,
-                       subtitulo=f"Modelos ajustados a <b>sus datos</b>, sin cambiar parámetros, predicen un experimento "
-                                 f"que <b>nunca vieron</b> ({cita})<br>{chips}", espacio_leyenda_px=40)
+                       subtitulo=f"Modelos ajustados a <b>sus datos</b> predicen un experimento que <b>nunca vieron</b> "
+                                 f"({cita})<br>{chips}", espacio_leyenda_px=40)
     simbolo = {"-M": ("●", "○"), "+M": ("▲", "△")}
     leyenda_b = "   ".join(f"<span style='color:{ve_color(g)}; font-size:17px'>{simbolo[g][0]}</span> "
                            f"<span style='color:{G_INK}; font-size:13.5px'>{texto_grupo(g)} · {NOMBRE_GRUPO[g]}</span>" for g in series)
@@ -2550,14 +2588,15 @@ def ve_fig_predicho_vs_real(var, series, ventana, t_max, cita):
                            f"<span style='color:{G_INK}; font-size:13.5px'>{texto_grupo(g)} · {NOMBRE_GRUPO[g]}</span>"
                            for g in series)
     for col, txt, sub in ((1, "(a) Curva predicha vs datos del paper",
-                           f"línea = predicción · marcador = media publicada ± DE · punteado = error<br>{leyenda_a}"),
+                           f"línea = predicción · marcador = media publicada ± DE<br>punteado = error en cada fecha<br>{leyenda_a}"),
                           (2, "(b) Predicho vs real",
-                           f"cada punto = una fecha del paper (el número es su día)<br>{leyenda_b}")):
+                           f"cada punto = una fecha del paper (el número es su día)<br>relleno = dentro de sus datos · "
+                           f"hueco = extrapolación<br>{leyenda_b}")):
         xr, yr = _ref_ejes(col)
         fig.add_annotation(xref=f"{xr} domain", yref=f"{yr} domain", x=0, y=1.03, xanchor="left", yanchor="bottom",
                            showarrow=False, align="left", font=dict(family=FUENTE_PUBLICACION, size=14, color=G_INK),
                            text=f"<b>{txt}</b><br><span style='font-size:11.5px;color:{G_MUTED}'>{sub}</span>")
-    fig.update_layout(margin=dict(t=fig.layout.margin.t + 58))
+    fig.update_layout(margin=dict(t=fig.layout.margin.t + 78))
     return fig, mapes
 
 
@@ -2694,7 +2733,7 @@ def ve_render():
             if not modelos2:
                 st.warning("El modelo elegido no tiene un ajuste válido para esta variable. Pruebe con «Mejor R²».")
             else:
-                filas, resumen, series2 = [], [], {}
+                filas, resumen, series2, sesgos_dentro = [], [], {}, []
                 t_max = max(max(max(dp[var2][g]) for g in modelos2) + desfase, ventana[1]) + 10
                 sesgos = []
                 for g, (m, r) in modelos2.items():
@@ -2709,10 +2748,16 @@ def ve_render():
                                       "Error (%)": 100 * (p - y) / y,
                                       "Tramo": "medido" if ventana[0] <= xd <= ventana[1] else "extrapolación"})
                     mt = ve_metricas(real, pred)
+                    tramos = ve_errores_por_tramo(x, real, pred, ventana)
                     sesgos.append(mt["sesgo"])
+                    if tramos["mascara"].any():
+                        sesgos_dentro.append(float(np.mean((pred - real)[tramos["mascara"]])))
                     resumen.append({"Grupo": VE_GRUPO_TXT[g], "Modelo": m, "Fechas": mt["n"], "R²": mt["r2"],
-                                    "RMSE": mt["rmse"], "MAE": mt["mae"], "Error medio (%)": mt["mape"],
-                                    "Calidad": ve_calidad(mt["mape"])})
+                                    "RMSE": mt["rmse"], "MAE": mt["mae"],
+                                    "Error dentro de sus datos (%)": tramos["dentro"],
+                                    "Calidad (dentro)": ve_calidad(tramos["dentro"]),
+                                    "Error en extrapolación (%)": tramos["fuera"],
+                                    "Error medio total (%)": mt["mape"]})
                     series2[g] = dict(m=m, r=r, x=x, real=real, pred=pred, de=ve_barras(serie, dias), dias=dias)
                 fig, _ = ve_fig_predicho_vs_real(var2, series2, ventana, t_max,
                                                  ve_cita_corta(paper["cita"]))
@@ -2721,13 +2766,36 @@ def ve_render():
                                                f"Real ({VE_UNIDAD[var2]})": "{:.3f}", "Error (%)": "{:+.1f}"})
                 st.markdown("**Resumen del error**")
                 ve_tabla(pd.DataFrame(resumen), {"R²": "{:.3f}", "RMSE": "{:.3f}", "MAE": "{:.3f}",
-                                                 "Error medio (%)": "{:.1f}"})
-                peor = max(r_["Error medio (%)"] for r_ in resumen)
-                if peor < 10:
-                    st.success("**Lectura:** el modelo ajustado a sus datos predice este experimento independiente "
-                               "con un error menor al 10%: **los parámetros se transfieren** a estas condiciones.")
-                elif peor < 20:
-                    st.info("**Lectura:** el modelo predice este experimento con un error aceptable (10-20%).")
+                                                 "Error dentro de sus datos (%)": "{:.1f}",
+                                                 "Error en extrapolación (%)": "{:.1f}",
+                                                 "Error medio total (%)": "{:.1f}"})
+                st.caption("«Dentro de sus datos» = fechas del paper que caen en el rango de días que usted midió "
+                           f"({ventana[0]:.0f}–{ventana[1]:.0f} ddt): ahí el modelo interpola. «Extrapolación» = "
+                           "fechas fuera de ese rango: el modelo nunca vio esa etapa, así que se espera más error.")
+                dentros_r = [r_["Error dentro de sus datos (%)"] for r_ in resumen
+                             if np.isfinite(r_["Error dentro de sus datos (%)"])]
+                fueras_r = [r_["Error en extrapolación (%)"] for r_ in resumen
+                            if np.isfinite(r_["Error en extrapolación (%)"])]
+                peor = max(dentros_r) if dentros_r else max(r_["Error medio total (%)"] for r_ in resumen)
+                extra_txt = (f" Fuera de ese rango (extrapolación) el error llega a {max(fueras_r):.0f} %: es "
+                             "esperable, porque el modelo no vio esa etapa del crecimiento." if fueras_r else "")
+                if dentros_r and peor < 10:
+                    st.success("**Lectura:** dentro del rango de días de sus datos, el modelo predice este experimento "
+                               f"independiente con un error menor al 10 %: **los parámetros se transfieren** a estas "
+                               f"condiciones.{extra_txt}")
+                elif dentros_r and peor < 20:
+                    st.info("**Lectura:** dentro del rango de días de sus datos, el modelo predice este experimento "
+                            f"con un error aceptable (10–20 %).{extra_txt}")
+                elif dentros_r:
+                    peor_g = max(resumen, key=lambda r_: r_["Error dentro de sus datos (%)"]
+                                 if np.isfinite(r_["Error dentro de sus datos (%)"]) else -1)["Grupo"]
+                    sentido = "sobreestima" if np.mean(sesgos_dentro) > 0 else "subestima"
+                    st.info(f"**Lectura:** incluso dentro del rango de días de sus datos el error es alto (hasta "
+                            f"{peor:.0f} %, en {peor_g}): ahí el modelo **{sentido}** este experimento. Las "
+                            "condiciones (variedad, sustrato, manejo) difieren de las de sus datos, así que **los "
+                            "parámetros no se transfieren tal cual** a otro vivero; el modelo sí puede reproducir la "
+                            f"dirección del efecto de la micorriza.{extra_txt} Revise también la alineación del tiempo "
+                            "y la pestaña 3.")
                 else:
                     sentido = "sobreestima" if np.mean(sesgos) > 0 else "subestima"
                     st.info(f"**Lectura:** el modelo ajustado a sus datos **{sentido}** este experimento. Es "
