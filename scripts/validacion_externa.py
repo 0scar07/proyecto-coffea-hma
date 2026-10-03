@@ -31,6 +31,7 @@ import pandas as pd
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import matplotlib.ticker
 from scipy.optimize import curve_fit
 from scipy.stats import t as t_dist, ttest_ind_from_stats
 
@@ -53,7 +54,50 @@ TINTA = "#201C18"
 TERRACOTA = "#A8432B"
 BORDE = "#E4DFD6"
 GRIS = "#8A8277"
-COLOR_MODELO = {"Exponencial": "#2E7D9A", "Logístico": "#C9962B", "Gompertz": "#3F8F6B"}
+# Mismos colores y tipos de línea por modelo que la app (paleta Okabe-Ito, distinguible con
+# daltonismo); también se distinguen en blanco y negro por el tipo de línea.
+COLOR_MODELO = {"Exponencial": "#0072B2", "Logístico": "#E69F00", "Gompertz": "#009E73"}
+LINEA_MODELO = {"Exponencial": ":", "Logístico": "--", "Gompertz": "-"}
+TINTA_SUAVE = "#6B6459"
+CUADRICULA = "#ECE7DF"
+EJE = "#B9B1A4"
+# Paleta categórica para más de 3 series (Okabe-Ito, en orden fijo)
+CATEGORICA = ["#0072B2", "#E69F00", "#009E73", "#CC79A7", "#56B4E9", "#D55E00", "#000000"]
+NOMBRE_VARIABLE_VT = {"altura": "Altura", "numero_ramas": "N.º de ramas", "numero_hojas": "N.º de hojas",
+                      "diametro_tallo": "Diámetro del tallo"}
+
+plt.rcParams.update({
+    "font.family": "DejaVu Sans", "font.size": 9.5, "axes.edgecolor": EJE, "axes.labelcolor": TINTA_SUAVE,
+    "xtick.color": TINTA_SUAVE, "ytick.color": TINTA_SUAVE, "axes.titlesize": 12,
+})
+
+
+def estilo_figura(fig, ax, titulo, subtitulo):
+    """Mismo lenguaje visual que las gráficas de la app: título que dice la conclusión,
+    subtítulo que explica cómo leerla, solo línea base en X y cuadrícula tenue en Y."""
+    fig.patch.set_facecolor("white")
+    ax.set_facecolor("white")
+    for lado in ("top", "right", "left"):
+        ax.spines[lado].set_visible(False)
+    ax.spines["bottom"].set_color(EJE)
+    ax.tick_params(axis="y", length=0)
+    ax.grid(axis="y", color=CUADRICULA, linewidth=0.8)
+    ax.set_axisbelow(True)
+    fig.text(0.012, 0.975, titulo, fontsize=12, fontweight="bold", color=TINTA, ha="left", va="top")
+    fig.text(0.012, 0.915, subtitulo, fontsize=8.8, color=TINTA_SUAVE, ha="left", va="top", wrap=True)
+    fig.tight_layout(rect=(0, 0, 1, 0.86))
+
+
+def etiquetas_directas(ax, etiquetas, separacion):
+    """Etiquetas al final de cada línea (sin leyenda aparte), separadas si chocan."""
+    etiquetas = sorted([list(e) for e in etiquetas], key=lambda e: e[2])
+    for k in range(1, len(etiquetas)):
+        if etiquetas[k][2] - etiquetas[k - 1][2] < separacion:
+            etiquetas[k][2] = etiquetas[k - 1][2] + separacion
+    for texto, x, y, negrita, *color in etiquetas:
+        ax.annotate(texto, (x, y), xytext=(6, 0), textcoords="offset points", va="center", fontsize=8.5,
+                    color=color[0] if color else TINTA, fontweight="bold" if negrita else "normal",
+                    annotation_clip=False)
 
 
 # =============================================================================
@@ -182,37 +226,52 @@ def logistico_a_parametrizacion_paper(K, k, Ti):
 
 def fig_publicacion_leon_burgos(variable, dias, medias, RES, modelos_orden, dia_min, dia_max,
                                   y_max_obs, app_ns, nombre_archivo, etiqueta_y):
-    """Figura estilo publicación (fondo blanco, paleta de la app, ticks en los
-    días medidos). El pie de figura NO se dibuja aquí (va en informe.md)."""
-    fig, ax = plt.subplots(figsize=(7.5, 5.0), dpi=200)
-    fig.patch.set_facecolor("white")
-    ax.set_facecolor("white")
-    ax.scatter(dias, medias, s=42, facecolors="none", edgecolors=TINTA, linewidths=1.3,
-               zorder=5, label="Media publicada")
+    """Figura con el estilo de la app: título-conclusión, subtítulo de lectura, etiquetas
+    directas al final de cada línea (★ = mejor R²) y asíntota K solo si es plausible. El pie de
+    figura largo NO se dibuja aquí (va en informe.md)."""
+    fig, ax = plt.subplots(figsize=(8.2, 5.2), dpi=200)
+    ax.scatter(dias, medias, s=46, facecolors="white", edgecolors=TINTA, linewidths=1.4, zorder=5)
     t_fino = np.linspace(min(dias), max(dias), 300)
-    for modelo in modelos_orden:
-        res = RES[variable]["unico"][modelo]
-        estado = app_ns["estado_de_ajuste"](res)
-        if estado != "OK":
-            continue
-        func = {"Exponencial": app_ns["modelo_exponencial"],
-                "Logístico": app_ns["modelo_logistico"],
-                "Gompertz": app_ns["modelo_gompertz"]}[modelo]
-        y_fino = func(t_fino, *res["params"])
-        ax.plot(t_fino, y_fino, color=COLOR_MODELO[modelo], linewidth=2.0,
-                label=f"{modelo} (R²={res['r2']:.3f})")
+    funcs = {"Exponencial": app_ns["modelo_exponencial"], "Logístico": app_ns["modelo_logistico"],
+             "Gompertz": app_ns["modelo_gompertz"]}
+    validos = {m: RES[variable]["unico"][m] for m in modelos_orden
+               if app_ns["estado_de_ajuste"](RES[variable]["unico"][m]) == "OK"}
+    mejor = max(validos, key=lambda m: validos[m]["r2"]) if validos else None
+    etiquetas = []
+    for modelo, res in validos.items():
+        y_fino = funcs[modelo](t_fino, *res["params"])
+        es_mejor = modelo == mejor
+        ax.plot(t_fino, y_fino, color=COLOR_MODELO[modelo], linestyle=LINEA_MODELO[modelo],
+                linewidth=2.6 if es_mejor else 1.6, zorder=3)
+        etiquetas.append((f"{'★ ' if es_mejor else ''}{modelo}  R²={res['r2']:.3f}", t_fino[-1], y_fino[-1], es_mejor))
         if modelo in ("Logístico", "Gompertz"):
+            # Igual que antes: la asíntota de CADA modelo que pasa el criterio de plausibilidad
+            # (el pie de figura del informe se refiere a ellas).
             dibujar_k, K, _motivo = app_ns["_asintota_k_plausible"](res, y_max_obs, dia_min, dia_max)
             if dibujar_k:
-                ax.axhline(K, color=COLOR_MODELO[modelo], linestyle=":", linewidth=1.2, alpha=0.8)
-    ax.set_xticks(sorted(set(dias)))
-    ax.tick_params(axis="x", rotation=45)
-    ax.set_xlabel("Día después del trasplante (ddt)")
+                ax.axhline(K, color=COLOR_MODELO[modelo], linestyle=":", linewidth=1.1, alpha=0.9)
+                ax.annotate(f"K ≈ {K:.3g} ({modelo}) · techo estimado", (t_fino[0], K), xytext=(0, 3),
+                            textcoords="offset points", fontsize=8, color=TINTA_SUAVE)
+    rango = max(medias) - min(min(medias), 0)
+    etiquetas_directas(ax, etiquetas, rango * 0.055)
+    pasos = sorted(set(dias))
+    ax.set_xticks(pasos if len(pasos) <= 8 else pasos[::2])
+    ax.set_xlabel("Días después del trasplante")
     ax.set_ylabel(etiqueta_y)
-    ax.spines["top"].set_visible(False)
-    ax.spines["right"].set_visible(False)
-    ax.legend(frameon=False, fontsize=9, loc="upper left")
-    fig.tight_layout()
+    base_nombre = etiqueta_y.split(" (")[0]
+    nombre = {"Área foliar": "el área foliar", "Área foliar total": "el área foliar total",
+              "Número de hojas": "el número de hojas",
+              "Altura": "la altura"}.get(base_nombre, base_nombre.lower())
+    if validos:
+        r2s = [r["r2"] for r in validos.values()]
+        publicado = "publicado" if nombre.startswith("el número") else "publicada"
+        titulo = (f"Los {len(validos)} modelos reproducen {nombre} {publicado} (R² {min(r2s):.2f}–{max(r2s):.2f})"
+                  if min(r2s) >= 0.9 else f"{etiqueta_y.split(' (')[0]}: el mejor ajuste es {mejor} (R² {validos[mejor]['r2']:.2f})")
+    else:
+        titulo = f"{etiqueta_y.split(' (')[0]}: ningún modelo convergió"
+    estilo_figura(fig, ax, titulo, "León-Burgos et al. (2022) · círculos = media publicada (n = 20) · "
+                                   "líneas = modelos de la app · ★ = mejor R²")
+    fig.subplots_adjust(right=0.78)
     ruta = os.path.join(FIG_DIR, nombre_archivo)
     fig.savefig(ruta, facecolor="white")
     plt.close(fig)
@@ -401,22 +460,33 @@ def fase_2b_siqueira(app_ns):
         print(f"    {f['modelo']:12s} estado={f['estado']:20s} R²={f['r2']}")
 
     # 3) Figura: % de incremento sobre el control en el tiempo, una linea por tratamiento
-    fig, ax = plt.subplots(figsize=(7.5, 5.0), dpi=200)
-    fig.patch.set_facecolor("white")
-    ax.set_facecolor("white")
+    fig, ax = plt.subplots(figsize=(8.2, 5.2), dpi=200)
     altura_efecto = df_efecto_siqueira[df_efecto_siqueira["variable"] == "altura"]
-    cmap = plt.get_cmap("tab10")
+    etiquetas, primeros, ultimos = [], [], []
     for i, tratamiento in enumerate(sorted(altura_efecto["tratamiento"].unique())):
         sub = altura_efecto[altura_efecto["tratamiento"] == tratamiento].sort_values("mat")
-        ax.plot(sub["mat"], sub["incremento_pct"], marker="o", color=cmap(i), label=tratamiento, linewidth=1.8)
-    ax.axhline(0, color=GRIS, linewidth=1, linestyle="--")
+        color = CATEGORICA[i % len(CATEGORICA)]
+        ax.plot(sub["mat"], sub["incremento_pct"], marker="o", markersize=5, color=color, linewidth=1.8,
+                markeredgecolor="white", markeredgewidth=1)
+        etiquetas.append((tratamiento, sub["mat"].iloc[-1], sub["incremento_pct"].iloc[-1], True, color))
+        primeros.append(sub["incremento_pct"].iloc[0])
+        ultimos.append(sub["incremento_pct"].iloc[-1])
+    ax.axhline(0, color=TINTA, linewidth=1)
+    ax.annotate("0 % = igual que el control", (0, 0), xycoords=("axes fraction", "data"), xytext=(4, 3),
+                textcoords="offset points", ha="left", fontsize=8, color=TINTA_SUAVE)
+    rango = altura_efecto["incremento_pct"].max() - min(altura_efecto["incremento_pct"].min(), 0)
+    etiquetas_directas(ax, etiquetas, rango * 0.035)
     ax.set_xticks(sorted(altura_efecto["mat"].unique()))
-    ax.set_xlabel("Meses después del trasplante (MAT)")
-    ax.set_ylabel("% de incremento en altura sobre el control (Ni)")
-    ax.spines["top"].set_visible(False)
-    ax.spines["right"].set_visible(False)
-    ax.legend(frameon=False, fontsize=9, ncol=2, loc="upper right")
-    fig.tight_layout()
+    ax.set_xlabel("Meses después del trasplante")
+    ax.set_ylabel("Altura: % de incremento sobre el control")
+    ax.yaxis.set_major_formatter(matplotlib.ticker.FuncFormatter(lambda v, _: f"{v:.0f} %"))
+    se_reduce = sum(u < p for p, u in zip(primeros, ultimos))
+    titulo = (f"El efecto de la micorriza sobre la altura se reduce con el tiempo ({se_reduce} de {len(primeros)} "
+              "tratamientos)" if se_reduce > len(primeros) / 2 else
+              "Efecto de la micorriza sobre la altura a lo largo del tiempo")
+    estilo_figura(fig, ax, titulo, "Siqueira et al. (1998) · cada línea = un tratamiento · % que crecen más (o menos) "
+                                   "que el control sin inocular (Ni)")
+    fig.subplots_adjust(right=0.84)
     fig.savefig(os.path.join(FIG_DIR, "siqueira_efecto_altura.png"), facecolor="white")
     plt.close(fig)
 
@@ -508,24 +578,30 @@ def fase_2c_vallejos_torres(app_ns):
     print("   magnitud y significancia; no son comparables en cifra por edad/sustrato/unidades distintos.)")
 
     # Figura de apoyo (no pedida explícitamente, pero barata y clarifica el paso 1)
-    fig, ax = plt.subplots(figsize=(7.5, 5.0), dpi=200)
-    fig.patch.set_facecolor("white")
-    ax.set_facecolor("white")
+    fig, ax = plt.subplots(figsize=(8.2, 5.2), dpi=200)
     variables_orden = ["altura", "numero_ramas", "numero_hojas", "diametro_tallo"]
     x = np.arange(len(tratamientos))
     ancho = 0.2
-    cmap = plt.get_cmap("tab10")
+    positivos, total = 0, 0
     for i, variable in enumerate(variables_orden):
         vals = [df_incremento[(df_incremento["tratamiento"] == t) & (df_incremento["variable"] == variable)]["incremento_pct"].iloc[0] for t in tratamientos]
-        ax.bar(x + (i - 1.5) * ancho, vals, width=ancho, label=variable, color=cmap(i))
+        barras = ax.bar(x + (i - 1.5) * ancho, vals, width=ancho * 0.92, color=CATEGORICA[i],
+                        label=NOMBRE_VARIABLE_VT.get(variable, variable), edgecolor="white", linewidth=0.8)
+        ax.bar_label(barras, labels=[f"{v:+.0f}" for v in vals], fontsize=7, color=TINTA_SUAVE, padding=2)
+        positivos += sum(v > 0 for v in vals)
+        total += len(vals)
     ax.axhline(0, color=TINTA, linewidth=1)
     ax.set_xticks(x)
     ax.set_xticklabels(tratamientos)
+    ax.tick_params(axis="x", length=0)
     ax.set_ylabel("% de incremento sobre el control sin HMA")
-    ax.spines["top"].set_visible(False)
-    ax.spines["right"].set_visible(False)
-    ax.legend(frameon=False, fontsize=9)
-    fig.tight_layout()
+    ax.yaxis.set_major_formatter(matplotlib.ticker.FuncFormatter(lambda v, _: f"{v:.0f} %"))
+    ax.legend(frameon=False, fontsize=8.5, ncol=4, loc="upper center", bbox_to_anchor=(0.5, -0.1))
+    titulo = (f"Los consorcios de HMA superan al control en {positivos} de {total} comparaciones"
+              if positivos else "Ningún consorcio supera al control")
+    estilo_figura(fig, ax, titulo, "Vallejos-Torres et al. (2021) · barra = cuánto más (en %) crece cada consorcio "
+                                   "que el control sin HMA, por variable")
+    fig.subplots_adjust(bottom=0.2)
     fig.savefig(os.path.join(FIG_DIR, "vallejos_torres_incremento.png"), facecolor="white")
     plt.close(fig)
 
