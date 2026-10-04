@@ -189,12 +189,12 @@ section[data-testid="stSidebar"] div[data-testid="stButton"] button {{ text-alig
 pio.templates["cuaderno"] = go.layout.Template(
     layout=go.Layout(
         paper_bgcolor=T["CARD"], plot_bgcolor=T["CARD"],
-        font=dict(family="Inter, sans-serif", color=T["INK"], size=13),
+        font=dict(family="Inter, sans-serif", color=T["INK"], size=17),
         xaxis=dict(gridcolor=T["BORDER"], zeroline=False, showline=True, linecolor=T["BORDER"],
-                    tickfont=dict(family="IBM Plex Mono, monospace", size=11, color=T["INK_MUTED"])),
+                    tickfont=dict(family="IBM Plex Mono, monospace", size=14.5, color=T["INK_MUTED"])),
         yaxis=dict(gridcolor=T["BORDER"], zeroline=False, showline=True, linecolor=T["BORDER"],
-                    tickfont=dict(family="IBM Plex Mono, monospace", size=11, color=T["INK_MUTED"])),
-        legend=dict(bgcolor="rgba(0,0,0,0)", font=dict(size=11)),
+                    tickfont=dict(family="IBM Plex Mono, monospace", size=14.5, color=T["INK_MUTED"])),
+        legend=dict(bgcolor="rgba(0,0,0,0)", font=dict(size=14.5)),
         margin=dict(l=10, r=10, t=40, b=10),
     )
 )
@@ -215,7 +215,9 @@ pio.templates.default = "cuaderno"
 # ==============================================================================
 FUENTE_PUBLICACION = "Inter, Arial, Helvetica, sans-serif"
 # Tinta de las gráficas: el texto nunca usa el color de una serie (la identidad la lleva la marca).
-G_INK, G_MUTED, G_GRID, G_EJE = T["INK"], T["INK_MUTED"], "#ECE7DF", "#B9B1A4"
+# Texto de gráficas casi negro (se lee bien impreso o pegado en un documento); el gris secundario
+# es oscuro a propósito.
+G_INK, G_MUTED, G_GRID, G_EJE = "#1A1714", "#4A443D", "#E6E0D6", "#8F877B"
 COLOR_GRUPO = {"-M": T["CONTROL"], "+M": T["ACCENT"]}
 NOMBRE_GRUPO = {"-M": "sin micorriza (control)", "+M": "inoculado con HMA"}
 
@@ -223,6 +225,42 @@ NOMBRE_GRUPO = {"-M": "sin micorriza (control)", "+M": "inoculado con HMA"}
 def texto_grupo(g):
     """'-M' -> '−M' (signo menos tipográfico) para títulos y etiquetas."""
     return g.replace("-", "−")
+
+
+def _envolver_html(texto, max_chars):
+    """Parte un texto con etiquetas HTML simples (<b>, <span …>) en líneas de ~max_chars
+    caracteres VISIBLES, cortando solo en espacios fuera de las etiquetas (Plotly no envuelve
+    títulos ni subtítulos por su cuenta). Respeta los <br> que ya traiga."""
+    salida = []
+    for parrafo in texto.split("<br>"):
+        piezas = re.split(r"(<[^>]+>)", parrafo)
+        linea, visibles, lineas = "", 0, []
+        for pieza in piezas:
+            if pieza.startswith("<"):
+                linea += pieza
+                continue
+            for k, palabra in enumerate(pieza.split(" ")):
+                sep = " " if k > 0 else ""
+                if visibles and visibles + len(sep) + len(palabra) > max_chars and sep:
+                    lineas.append(linea.rstrip())
+                    linea, visibles, sep = "", 0, ""
+                linea += sep + palabra
+                visibles += len(sep) + len(palabra)
+        lineas.append(linea)
+        salida.extend(lineas)
+    # Las etiquetas abiertas que cruzan un corte se reabren en la línea siguiente.
+    resultado, abiertas = [], []
+    for linea in salida:
+        prefijo = "".join(abiertas)
+        for etiqueta in re.findall(r"<(/?)(b|span)([^>]*)>", linea):
+            if etiqueta[0]:
+                if abiertas:
+                    abiertas.pop()
+            else:
+                abiertas.append(f"<{etiqueta[1]}{etiqueta[2]}>")
+        cierre = "".join("</b>" if t.startswith("<b") else "</span>" for t in reversed(abiertas))
+        resultado.append(prefijo + linea + cierre)
+    return "<br>".join(resultado)
 
 
 def estilo_publicacion(fig, width=None, height=420, left_margin=70, top_margin=None,
@@ -239,37 +277,38 @@ def estilo_publicacion(fig, width=None, height=420, left_margin=70, top_margin=N
     fig_*(), antes de construir_pie(). Si no se pasa `titulo`, se conserva el que ya tuviera."""
     if titulo is None and fig.layout.title is not None and fig.layout.title.text:
         titulo = fig.layout.title.text.replace("<b>", "").replace("</b>", "").split("<br><span")[0]
-    if titulo and "<br>" not in titulo and len(titulo) > 78:
-        # Un título largo se parte en dos líneas: en pantallas angostas Plotly no lo envuelve solo.
-        corte = titulo.rfind(" ", 0, len(titulo) // 2 + 12)
-        if corte > 20:
-            titulo = titulo[:corte] + "<br>" + titulo[corte + 1:]
+    ancho_ref = width or fig.layout.width or 1000
+    if titulo and "<br>" not in titulo:
+        # Títulos y subtítulos largos se parten según el ancho: Plotly no los envuelve solo.
+        titulo = _envolver_html(titulo, max(int(ancho_ref / 14), 40))
+    if subtitulo:
+        subtitulo = _envolver_html(subtitulo, max(int(ancho_ref / 8.6), 50))
     lineas_titulo = titulo.count("<br>") + 1 if titulo else 0
     lineas_sub = (subtitulo or "").count("<br>") + 1 if subtitulo else 0
     if top_margin is None:
-        top_margin = ((38 + 24 * lineas_titulo) if titulo else 24) + 22 * lineas_sub + (18 if mostrar_leyenda else 34)
+        top_margin = ((42 + 31 * lineas_titulo) if titulo else 24) + 27 * lineas_sub + (18 if mostrar_leyenda else 34)
         if mostrar_leyenda:
-            top_margin += 44 + max(leyenda_sobre_px - 14, 0)
+            top_margin += 56 + max(leyenda_sobre_px - 14, 0)
     texto_titulo = ""
     if titulo:
         texto_titulo = f"<b>{titulo}</b>"
         if subtitulo:
-            texto_titulo += f"<br><span style='font-size:13.5px;color:{G_MUTED}'>{subtitulo}</span>"
+            texto_titulo += f"<br><span style='font-size:17.5px;color:{G_MUTED}'>{subtitulo}</span>"
 
     margen_b = espacio_eje_x_px + 14
     alto_trazado = max(height - top_margin - margen_b, 50)
     y_leyenda = 1 + leyenda_sobre_px / alto_trazado
 
     layout_kwargs = dict(
-        font=dict(family=FUENTE_PUBLICACION, size=13, color=G_INK),
+        font=dict(family=FUENTE_PUBLICACION, size=17, color=G_INK),
         paper_bgcolor="white", plot_bgcolor="white",
-        title=dict(text=texto_titulo, font=dict(family=FUENTE_PUBLICACION, size=19, color=G_INK, weight=400),
+        title=dict(text=texto_titulo, font=dict(family=FUENTE_PUBLICACION, size=24.5, color=G_INK, weight=400),
                    x=0.012, xanchor="left", y=1, yref="container", yanchor="top", pad=dict(t=24)),
         showlegend=mostrar_leyenda,
         legend=dict(orientation="h", xanchor="left", x=0, yanchor="bottom", y=y_leyenda,
                     bgcolor="#FAF8F5", bordercolor=G_EJE, borderwidth=1, itemsizing="constant",
                     itemwidth=40, tracegroupgap=6,
-                    font=dict(family=FUENTE_PUBLICACION, size=14, color=G_INK)),
+                    font=dict(family=FUENTE_PUBLICACION, size=18, color=G_INK)),
         margin=dict(l=left_margin, r=right_margin, t=top_margin, b=margen_b),
         height=height,
         hoverlabel=dict(font=dict(family=FUENTE_PUBLICACION)),
@@ -280,20 +319,20 @@ def estilo_publicacion(fig, width=None, height=420, left_margin=70, top_margin=N
     fig.update_xaxes(
         showgrid=False, zeroline=False, showline=True, linewidth=1, linecolor=G_EJE, mirror=False,
         ticks="outside", tickwidth=1, ticklen=4, tickcolor=G_EJE,
-        tickfont=dict(family=FUENTE_PUBLICACION, size=12, color=G_MUTED),
-        title_font=dict(family=FUENTE_PUBLICACION, size=13, color=G_MUTED),
+        tickfont=dict(family=FUENTE_PUBLICACION, size=15.5, color=G_INK),
+        title_font=dict(family=FUENTE_PUBLICACION, size=17, color=G_INK),
         automargin=True, title_standoff=12,
     )
     fig.update_yaxes(
         showgrid=True, gridcolor=G_GRID, gridwidth=1, zeroline=False, showline=False, ticks="", nticks=7,
-        tickfont=dict(family=FUENTE_PUBLICACION, size=12, color=G_MUTED),
-        title_font=dict(family=FUENTE_PUBLICACION, size=13, color=G_MUTED),
+        tickfont=dict(family=FUENTE_PUBLICACION, size=15.5, color=G_INK),
+        title_font=dict(family=FUENTE_PUBLICACION, size=17, color=G_INK),
         automargin=True, title_standoff=12,
     )
     return fig
 
 
-def alinear_titulos_panel_izquierda(fig, n_paneles, tam_fuente=14):
+def alinear_titulos_panel_izquierda(fig, n_paneles, tam_fuente=18):
     """Los subplot_titles de Plotly se centran por defecto; el diseño los pide arriba a la
     IZQUIERDA de cada panel, en negrita. Reposiciona las primeras `n_paneles` anotaciones (que
     son exactamente los subplot_titles, en el mismo orden en que se crearon)."""
@@ -312,7 +351,7 @@ def _ref_ejes(i):
     return ("x", "y") if i == 1 else (f"x{i}", f"y{i}")
 
 
-def encabezado_panel(fig, panel, texto, color, alto_px=28):
+def encabezado_panel(fig, panel, texto, color, alto_px=36):
     """Franja de color suave con borde izquierdo sólido sobre un panel: identifica el grupo
     (−M/+M) con color Y con texto, sin depender de una leyenda. Llamar DESPUÉS de
     estilo_publicacion (necesita el alto final de la figura para medir la franja en píxeles)."""
@@ -328,7 +367,7 @@ def encabezado_panel(fig, panel, texto, color, alto_px=28):
                   fillcolor=color, line_width=0)
     fig.add_annotation(xref=f"{xr} domain", yref=f"{yr} domain", x=0.022, y=(y0 + y1) / 2, text=texto,
                        showarrow=False, xanchor="left", yanchor="middle",
-                       font=dict(family=FUENTE_PUBLICACION, size=13.5, color=G_INK))
+                       font=dict(family=FUENTE_PUBLICACION, size=17.5, color=G_INK))
     return fig
 
 
@@ -339,7 +378,7 @@ def sello_veredicto(fig, panel, ok, linea1, linea2, x=0.98, y=0.97):
     color = T["VERDE"] if ok else T["ROJO"]
     fig.add_annotation(xref=f"{xr} domain", yref=f"{yr} domain", x=x, y=y, xanchor="right", yanchor="top",
                        showarrow=False, align="right", bgcolor="white", bordercolor=color, borderwidth=1.2,
-                       borderpad=4, font=dict(family=FUENTE_PUBLICACION, size=11.5, color=color),
+                       borderpad=4, font=dict(family=FUENTE_PUBLICACION, size=15, color=color),
                        text=f"<b>{'✓' if ok else '✗'} {linea1}</b><br>{linea2}")
 
 
@@ -350,7 +389,7 @@ def entrada_leyenda(fig, nombre, **kw):
     fig.add_trace(go.Scatter(x=[None], y=[None], name=nombre, showlegend=True, hoverinfo="skip", **kw))
 
 
-def etiquetas_fin_de_linea(fig, panel, etiquetas, rango_y, separacion_frac=0.065, tam=13):
+def etiquetas_fin_de_linea(fig, panel, etiquetas, rango_y, separacion_frac=0.075, tam=17):
     """Etiquetas directas al final de cada línea (en vez de una leyenda aparte). `etiquetas` es
     una lista de (texto, x, y); se separan verticalmente cuando chocan."""
     xr, yr = _ref_ejes(panel)
@@ -453,6 +492,19 @@ def componer_png_con_pie(png_bytes, pie, scale=3):
     return buf.getvalue()
 
 
+ESCALA_DESCARGA = 4  # PNG descargable = 4× el tamaño de la gráfica (≈ 4800 px de ancho): nítido en Word/PDF
+
+
+def boton_descarga_png(fig, etiqueta, archivo, clave, pie=None):
+    """Botón «Descargar PNG (alta resolución)». La imagen se genera SOLO al hacer clic (descarga
+    diferida), a ESCALA_DESCARGA, con el pie de figura debajo cuando se pasa `pie`."""
+    def generar():
+        png = fig.to_image(format="png", scale=ESCALA_DESCARGA)
+        return componer_png_con_pie(png, pie, scale=ESCALA_DESCARGA) if pie else png
+    st.download_button(f"⬇ Descargar PNG en alta resolución — {etiqueta}", data=generar, file_name=archivo,
+                       mime="image/png", key=clave)
+
+
 def formatear_p(p):
     """Evita el 'p = 0.0000' enganoso: por debajo de 0.0001 se reporta como cota superior."""
     if p < 0.0001:
@@ -501,7 +553,7 @@ def agregar_pie_figura(fig, lineas, altura_linea_px=17, espacio_eje_x_px=70):
         fig.add_annotation(
             text=linea, xref="paper", yref="paper", x=0, y=-(y_px / alto_trazado),
             showarrow=False, align="left", xanchor="left", yanchor="top",
-            font=dict(family=FUENTE_PUBLICACION, size=10.5, color=T["INK_MUTED"]),
+            font=dict(family=FUENTE_PUBLICACION, size=13.5, color=T["INK_MUTED"]),
         )
     fig.update_layout(margin=dict(b=margen_b_nuevo))
     return fig
@@ -875,11 +927,11 @@ def fig_barras_variable(datos, variable, fuente_datos="simulado"):
             texto = f"<b>{efecto}%</b><br>{estrellas}" if sig else f"{efecto}%<br>ns"
         else:
             texto = (f"<b>{efecto} %</b> {estrellas}" if sig else f"{efecto} % · ns") + (
-                f"<br><span style='font-size:11px;color:{G_MUTED}'>"
+                f"<br><span style='font-size:14.5px;color:{G_MUTED}'>"
                 f"{f['media_control']:.3g} → {f['media_tratado']:.3g} {unidad}</span>")
         fig.add_annotation(x=x[i], y=y_c, yanchor="bottom", showarrow=False, text=texto,
-                           font=dict(family=FUENTE_PUBLICACION, size=(10.5 if denso else 13) if sig else
-                                     (10 if denso else 12), color=color))
+                           font=dict(family=FUENTE_PUBLICACION, size=(13.5 if denso else 17) if sig else
+                                     (13 if denso else 15.5), color=color))
 
     # Leyenda (arriba): las barras de cada grupo ya tienen nombre; se agregan los círculos y el corchete.
     entrada_leyenda(fig, "Cada planta medida", marker=dict(size=9, color="white", line=dict(color=G_INK, width=1.2)))
@@ -946,15 +998,15 @@ def fig_resumen_efecto_final(datos, variables, fuente_datos="simulado"):
         fig.add_annotation(
             y=f["nombre"], x=max(f["hi"], f["inc"], 0), xshift=10, xanchor="left", showarrow=False, align="left",
             text=(f"<b>{_fmt_signo(f['inc'], 0)} %</b> {texto_significancia(f['p'])}<br>"
-                  f"<span style='font-size:11px;color:{G_MUTED}'>{f['ma']:.3g} → {f['mb']:.3g} {f['u']} "
+                  f"<span style='font-size:14.5px;color:{G_MUTED}'>{f['ma']:.3g} → {f['mb']:.3g} {f['u']} "
                   f"(día {f['dia']:g})</span>"),
-            font=dict(family=FUENTE_PUBLICACION, size=13, color=G_INK if f["sig"] else G_MUTED))
+            font=dict(family=FUENTE_PUBLICACION, size=17, color=G_INK if f["sig"] else G_MUTED))
     fig.add_vline(x=0, line=dict(color=G_INK, width=1))
     x_min = min(0.0, min(f["lo"] for f in filas)) - 5
     x_max = max(max(f["hi"] for f in filas), 5) * 1.4
     fig.update_xaxes(ticksuffix=" %", range=[x_min, x_max], showgrid=True, gridcolor=G_GRID,
                      title_text="Cuánto más crece +M que −M al final del ensayo")
-    fig.update_yaxes(showgrid=False, tickfont=dict(family=FUENTE_PUBLICACION, size=14, color=G_INK))
+    fig.update_yaxes(showgrid=False, tickfont=dict(family=FUENTE_PUBLICACION, size=18, color=G_INK))
     n_sig = sum(f["sig"] and f["inc"] > 0 for f in filas)
     titulo = (f"Al final del ensayo, la micorriza aumenta {n_sig} de {len(filas)} variables de forma significativa"
               if n_sig else "Al final del ensayo, la micorriza no aumenta ninguna variable de forma significativa")
@@ -991,10 +1043,10 @@ def fig_barras_r2_comparacion(RES, datos, variables, modelos):
                 r2 = res["r2"]
                 if res.get("insuficiente"):
                     fila_z.append(None)
-                    fila_t.append(f"—<br><span style='font-size:10px'>{ESTADO_SIN_DIAS.lower()}</span>")
+                    fila_t.append(f"—<br><span style='font-size:13px'>{ESTADO_SIN_DIAS.lower()}</span>")
                 elif r2 is None or (isinstance(r2, float) and np.isnan(r2)):
                     fila_z.append(None)
-                    fila_t.append(f"—<br><span style='font-size:10px'>{ESTADO_NO_CONVERGIO.lower()}</span>")
+                    fila_t.append(f"—<br><span style='font-size:13px'>{ESTADO_NO_CONVERGIO.lower()}</span>")
                 else:
                     fila_z.append(float(r2))
                     fila_t.append(f"★ <b>{r2:.3f}</b>" if m == mejores[grupo] else f"{r2:.3f}")
@@ -1010,7 +1062,7 @@ def fig_barras_r2_comparacion(RES, datos, variables, modelos):
         colorscale=[[0, "#F7EFE9"], [0.5, "#D9A08C"], [1, "#8E3520"]], zmin=z_min, zmax=1,
         colorbar=dict(title=dict(text="R²", font=dict(color=G_MUTED)), thickness=12, len=0.8,
                       tickfont=dict(color=G_MUTED)),
-        textfont=dict(family=FUENTE_PUBLICACION, size=14),
+        textfont=dict(family=FUENTE_PUBLICACION, size=18),
         hovertemplate="%{y} · %{x}<br>R² = %{z:.3f}<extra></extra>"))
     if ganadores:
         top = max(set(ganadores), key=ganadores.count)
@@ -1022,9 +1074,9 @@ def fig_barras_r2_comparacion(RES, datos, variables, modelos):
                        subtitulo=f"Cada celda = R² del modelo (1 = ajuste perfecto) · más oscuro = mejor · ★ = mejor "
                                  f"modelo de la fila · escala de color de {z_min:.2f} a 1")
     fig.update_xaxes(side="top", showline=False, showgrid=False, ticks="",
-                     tickfont=dict(family=FUENTE_PUBLICACION, size=14, color=G_INK))
+                     tickfont=dict(family=FUENTE_PUBLICACION, size=18, color=G_INK))
     fig.update_yaxes(autorange="reversed", showgrid=False, tickmode="array", tickvals=filas_txt,
-                     ticktext=filas_txt, tickfont=dict(family=FUENTE_PUBLICACION, size=13, color=G_INK))
+                     ticktext=filas_txt, tickfont=dict(family=FUENTE_PUBLICACION, size=17, color=G_INK))
     pie = construir_pie(
         "R² de cada modelo (Exponencial, Logístico, Gompertz) por variable y grupo. ★ = mayor R² de la fila. "
         "Las celdas con «—» indican que el modelo no convergió o no tuvo días suficientes.")
@@ -1183,7 +1235,7 @@ def fig_curvas_publicacion(datos, RES, variable, modelos, fuente_datos="simulado
                     fig.add_hline(y=K, line=dict(color=G_MUTED, dash="dot", width=1), row=1, col=col)
                     fig.add_annotation(x=0.01, y=K, xref=f"{xr} domain", yref=yr, showarrow=False, xanchor="left",
                                        yanchor="bottom", text=f"K ≈ {K:.3g} {unidad} · techo estimado",
-                                       font=dict(family=FUENTE_PUBLICACION, size=11, color=G_MUTED))
+                                       font=dict(family=FUENTE_PUBLICACION, size=14.5, color=G_MUTED))
                     Ti = res["params"][2]
                     y_ti = float(func(Ti, *res["params"]))
                     fig.add_trace(go.Scatter(x=[Ti], y=[y_ti], mode="markers", showlegend=False,
@@ -1194,7 +1246,7 @@ def fig_curvas_publicacion(datos, RES, variable, modelos, fuente_datos="simulado
                     fig.add_annotation(x=Ti, y=y_ti, xref=xr, yref=yr, ax=-70, ay=-46, showarrow=True,
                                        arrowhead=0, arrowcolor=G_MUTED, arrowwidth=1, align="right",
                                        text=f"Día {Ti:.0f}: crece<br>más rápido",
-                                       font=dict(family=FUENTE_PUBLICACION, size=11, color=G_INK))
+                                       font=dict(family=FUENTE_PUBLICACION, size=14.5, color=G_INK))
 
             visible = np.where((y_fino > y_top_cap) | (y_fino < y_bottom_cap), np.nan, y_fino)
             fig.add_trace(go.Scatter(
@@ -1316,18 +1368,18 @@ def fig_tasas_crecimiento(datos, RES, variable, modelos, fuente_datos="simulado"
         fig.add_annotation(x=t_fino[k], y=agr[k], xref=xr, yref=yr, showarrow=False, yanchor="bottom", yshift=8,
                            xanchor="right" if pos > 0.85 else ("left" if pos < 0.15 else "center"),
                            text=f"máx. día {t_fino[k]:.0f}: {agr[k]:.3g} {unidad}/día",
-                           font=dict(family=FUENTE_PUBLICACION, size=11.5, color=G_INK))
+                           font=dict(family=FUENTE_PUBLICACION, size=15, color=G_INK))
         fig.add_annotation(x=1, y=0.02, xref=f"{_ref_ejes(n + col)[0]} domain",
                            yref=f"{_ref_ejes(n + col)[1]} domain", xanchor="right", yanchor="bottom",
                            showarrow=False, text=f"modelo: {modelo} (mejor R²)",
-                           font=dict(family=FUENTE_PUBLICACION, size=11, color=G_MUTED))
+                           font=dict(family=FUENTE_PUBLICACION, size=14.5, color=G_MUTED))
         fig.update_yaxes(rangemode="tozero", row=1, col=col)
         rgr_max = float(np.nanmax(rgr)) if np.any(np.isfinite(rgr)) else 0.0
         fig.update_yaxes(range=[0, rgr_max * 1.15 if rgr_max > 0 else 1], row=2, col=col)
         if col == 1:
-            fig.update_yaxes(title_text=f"AGR ({unidad}/día)<br><span style='font-size:11px'>cuánto crece por día</span>",
+            fig.update_yaxes(title_text=f"AGR ({unidad}/día)<br><span style='font-size:14.5px'>cuánto crece por día</span>",
                              row=1, col=col)
-            fig.update_yaxes(title_text="RGR (día⁻¹)<br><span style='font-size:11px'>crecimiento relativo a su tamaño</span>",
+            fig.update_yaxes(title_text="RGR (día⁻¹)<br><span style='font-size:14.5px'>crecimiento relativo a su tamaño</span>",
                              row=2, col=col)
         rango_x = [dias_todos[0], dias_todos[-1]]
         ticks = dict(tickvals=dias_todos) if len(dias_todos) <= 8 else {}
@@ -1464,7 +1516,7 @@ def fig_residuos_dia(RES, variable, grupo, modelos):
         xr, yr = _ref_ejes(col)
         fig.add_annotation(xref=f"{xr} domain", yref=f"{yr} domain", x=0, y=1.02, xanchor="left", yanchor="bottom",
                            showarrow=False, text=f"<b>{m}</b>",
-                           font=dict(family=FUENTE_PUBLICACION, size=15, color=COLOR_MODELO_TEXTO[m]))
+                           font=dict(family=FUENTE_PUBLICACION, size=19.5, color=COLOR_MODELO_TEXTO[m]))
         a = anova_un_factor(r, t)
         rango_txt = (f"residuo medio de **{_fmt_signo(medias.min())} {unidad}** (día {dd[np.argmin(medias)]:.0f}) "
                      f"a **{_fmt_signo(medias.max())} {unidad}** (día {dd[np.argmax(medias)]:.0f})")
@@ -1487,7 +1539,7 @@ def fig_residuos_dia(RES, variable, grupo, modelos):
         fig.update_xaxes(title_text="Días después del trasplante", row=1, col=col,
                          **({"tickvals": dias_todos} if len(dias_todos) <= 8 else {}))
         fig.update_yaxes(range=[-lim, lim * 1.45], row=1, col=col)
-    fig.update_yaxes(title_text=f"Residuo ({unidad})<br><span style='font-size:11px'>medido − predicho</span>",
+    fig.update_yaxes(title_text=f"Residuo ({unidad})<br><span style='font-size:14.5px'>medido − predicho</span>",
                      row=1, col=1)
     malos = [m for m, a in filas if a["p"] < 0.05]
     g_txt = texto_grupo(grupo)
@@ -1536,12 +1588,12 @@ def fig_residuos_modelos(RES, variable, modelos, grupos):
                                  boxpoints="all", jitter=0.45, pointpos=0, boxmean=True, showlegend=False,
                                  hovertemplate=f"{m}<br>|residuo| %{{y:.2f}} {unidad}<extra></extra>"), row=1, col=col)
             fig.add_annotation(x=m, y=float(v.max()), yshift=14, xref=xr, yref=yr, showarrow=False,
-                               font=dict(family=FUENTE_PUBLICACION, size=14, color=G_INK), text=f"<b>{letras[m]}</b>")
+                               font=dict(family=FUENTE_PUBLICACION, size=18, color=G_INK), text=f"<b>{letras[m]}</b>")
             fig.add_annotation(x=m, y=0, yshift=-2, yanchor="top", xref=xr, yref=yr, showarrow=False,
-                               font=dict(family=FUENTE_PUBLICACION, size=11, color=G_MUTED),
+                               font=dict(family=FUENTE_PUBLICACION, size=14.5, color=G_MUTED),
                                text=f"media {medias[m]:.3g} {unidad}")
         fig.add_annotation(xref=f"{xr} domain", yref=f"{yr} domain", x=0, y=1.02, xanchor="left", yanchor="bottom",
-                           showarrow=False, font=dict(family=FUENTE_PUBLICACION, size=15, color=COLOR_GRUPO[g]),
+                           showarrow=False, font=dict(family=FUENTE_PUBLICACION, size=19.5, color=COLOR_GRUPO[g]),
                            text=f"<b>({'ab'[col - 1]}) {texto_grupo(g)} · {NOMBRE_GRUPO[g]}</b>")
         fig.update_yaxes(range=[-ymax * 0.08, ymax], row=1, col=col)
         if a is None:
@@ -1627,13 +1679,13 @@ def fig_tabla_anova(filas, primera_col, texto_ok, texto_mal, titulo):
         header=dict(values=[f"<b>{primera_col}</b>", "<b>Fuente de variación</b>", "<b>SC</b>", "<b>gl</b>",
                             "<b>CM</b>", "<b>F</b>", "<b>Valor p</b>", "<b>Interpretación</b>"],
                     fill_color="#F1ECE4", line_color="white", align=alinear,
-                    font=dict(family=FUENTE_PUBLICACION, size=12.5, color=G_INK), height=30),
-        cells=dict(values=cols, align=alinear, height=27, fill_color=[fondo], line_color="#EEE9E1",
-                   font=dict(family=FUENTE_PUBLICACION, size=12.5, color=[[G_INK] * len(fondo)] * 7 + [color_v]))))
-    fig.update_layout(width=1200, height=30 + 27 * 3 * len(filas) + 22 * len(filas) + 70,
+                    font=dict(family=FUENTE_PUBLICACION, size=16, color=G_INK), height=38),
+        cells=dict(values=cols, align=alinear, height=34, fill_color=[fondo], line_color="#EEE9E1",
+                   font=dict(family=FUENTE_PUBLICACION, size=16, color=[[G_INK] * len(fondo)] * 7 + [color_v]))))
+    fig.update_layout(width=1200, height=38 + 34 * 3 * len(filas) + 34 * len(filas) + 80,
                       margin=dict(l=80, r=80, t=50, b=6), paper_bgcolor="white",
                       title=dict(text=f"<b>{titulo}</b>", x=0.067, xanchor="left", y=0.985, yanchor="top",
-                                 font=dict(family=FUENTE_PUBLICACION, size=16, color=G_INK)))
+                                 font=dict(family=FUENTE_PUBLICACION, size=21, color=G_INK)))
     return fig
 
 
@@ -1755,62 +1807,66 @@ def _dibujar_rich(draw, lineas, x, y, interlineado, color):
     return y
 
 
-def _bloque_tarjetas(veredictos, ancho, margen):
+def _bloque_tarjetas(veredictos, ancho, margen, z=1.0):
     """Fila de tarjetas «Qué dice aquí»: una por modelo (o grupo), borde verde/rojo con ✓/✗."""
     tmp = ImageDraw.Draw(Image.new("RGB", (10, 10)))
     n = max(len(veredictos), 1)
-    gap = 24
+    def Z(v):
+        return int(round(v * z))
+    gap = Z(24)
     ancho_t = (ancho - 2 * margen - gap * (n - 1)) // n
-    pad, tam = 26, 25
+    pad, tam = Z(26), Z(25)
     inter = int(tam * 1.45)
     contenidos = [_lineas_rich(v["detalle"], ancho_t - 2 * pad, tam, tmp) for v in veredictos]
-    alto_t = pad + 40 + max(len(c) for c in contenidos) * inter + pad
-    titulo_h = 58
-    img = Image.new("RGB", (ancho, titulo_h + alto_t + 30), "white")
+    alto_t = pad + Z(40) + max(len(c) for c in contenidos) * inter + pad
+    titulo_h = Z(58)
+    img = Image.new("RGB", (ancho, titulo_h + alto_t + Z(30)), "white")
     d = ImageDraw.Draw(img)
-    d.text((margen, 8), "Qué dice aquí", font=_fuente_png(30, True), fill=_rgb(G_INK))
+    d.text((margen, Z(8)), "Qué dice aquí", font=_fuente_png(Z(30), True), fill=_rgb(G_INK))
     for k, (v, lineas) in enumerate(zip(veredictos, contenidos)):
         x0 = margen + k * (ancho_t + gap)
         y0 = titulo_h
         color = _rgb(T["VERDE"] if v["ok"] else (T["ROJO"] if v["ok"] is False else G_MUTED))
         fondo = tuple(int(c * 0.07 + 255 * 0.93) for c in color)
-        d.rounded_rectangle([x0, y0, x0 + ancho_t, y0 + alto_t], radius=14, fill=fondo, outline=color, width=3)
+        d.rounded_rectangle([x0, y0, x0 + ancho_t, y0 + alto_t], radius=Z(14), fill=fondo, outline=color, width=max(Z(3), 2))
         icono = "✓" if v["ok"] else ("✗" if v["ok"] is False else "•")
-        d.text((x0 + pad, y0 + pad - 4), f"{icono} {v['titulo']}", font=_fuente_png(27, True), fill=color)
-        ancho_tit = d.textlength(f"{icono} {v['titulo']}", font=_fuente_png(27, True))
-        d.text((x0 + pad + ancho_tit + 14, y0 + pad), v["etiqueta"], font=_fuente_png(23), fill=color)
-        _dibujar_rich(d, lineas, x0 + pad, y0 + pad + 44, inter, _rgb(G_INK))
+        d.text((x0 + pad, y0 + pad - Z(4)), f"{icono} {v['titulo']}", font=_fuente_png(Z(27), True), fill=color)
+        ancho_tit = d.textlength(f"{icono} {v['titulo']}", font=_fuente_png(Z(27), True))
+        d.text((x0 + pad + ancho_tit + Z(14), y0 + pad), v["etiqueta"], font=_fuente_png(Z(23)), fill=color)
+        _dibujar_rich(d, lineas, x0 + pad, y0 + pad + Z(44), inter, _rgb(G_INK))
     return img
 
 
-def _bloque_dos_columnas(izq, der, ancho, margen):
+def _bloque_dos_columnas(izq, der, ancho, margen, z=1.0):
     """Dos recuadros lado a lado: «Cómo leer esta gráfica» y «Qué significa cada columna».
     Cada lado es (título, [(término, texto)])."""
     tmp = ImageDraw.Draw(Image.new("RGB", (10, 10)))
-    gap, pad, tam = 28, 30, 23
+    def Z(v):
+        return int(round(v * z))
+    gap, pad, tam = Z(28), Z(30), Z(23)
     inter = int(tam * 1.45)
     ancho_c = (ancho - 2 * margen - gap) // 2
-    sang = 250
+    sang = Z(250)
 
     def preparar(items):
         return [(t, _lineas_rich(txt, ancho_c - 2 * pad - sang, tam, tmp)) for t, txt in items]
 
     lados = [(izq[0], preparar(izq[1])), (der[0], preparar(der[1]))]
-    alto = max(pad + 52 + sum(max(len(l), 1) * inter + 12 for _, l in items) + pad for _, items in lados)
-    img = Image.new("RGB", (ancho, alto + 30), "white")
+    alto = max(pad + Z(52) + sum(max(len(l), 1) * inter + Z(12) for _, l in items) + pad for _, items in lados)
+    img = Image.new("RGB", (ancho, alto + Z(30)), "white")
     d = ImageDraw.Draw(img)
     for k, (titulo, items) in enumerate(lados):
         x0 = margen + k * (ancho_c + gap)
-        d.rounded_rectangle([x0, 0, x0 + ancho_c, alto], radius=14, fill=_rgb("#FAF8F5"),
+        d.rounded_rectangle([x0, 0, x0 + ancho_c, alto], radius=Z(14), fill=_rgb("#FAF8F5"),
                             outline=_rgb("#E4DFD6"), width=2)
-        d.rectangle([x0, 12, x0 + 7, alto - 12], fill=_rgb(T["ACCENT"] if k == 0 else G_MUTED))
-        d.text((x0 + pad, pad - 4), titulo, font=_fuente_png(28, True), fill=_rgb(G_INK))
-        y = pad + 52
+        d.rectangle([x0, Z(12), x0 + Z(7), alto - Z(12)], fill=_rgb(T["ACCENT"] if k == 0 else G_MUTED))
+        d.text((x0 + pad, pad - Z(4)), titulo, font=_fuente_png(Z(28), True), fill=_rgb(G_INK))
+        y = pad + Z(52)
         for termino, lineas in items:
-            tl = _lineas_rich(f"**{termino}**", sang - 16, tam, d)
+            tl = _lineas_rich(f"**{termino}**", sang - Z(16), tam, d)
             _dibujar_rich(d, tl, x0 + pad, y, inter, _rgb(G_INK))
             y_fin = _dibujar_rich(d, lineas, x0 + pad + sang, y, inter, _rgb("#3C3832"))
-            y = max(y_fin, y + len(tl) * inter) + 12
+            y = max(y_fin, y + len(tl) * inter) + Z(12)
     return img
 
 
@@ -1821,17 +1877,18 @@ def png_anova_explicado(fig, fig_tabla, tipo, veredictos, nota=None, scale=2, in
     im_tab = Image.open(io.BytesIO(fig_tabla.to_image(format="png", scale=scale))).convert("RGB")
     ancho = im_fig.width
     margen = int(80 * scale)
+    z = scale / 2 * 1.3  # bloques de texto proporcionales a la escala y más grandes para documentos
     partes = [im_fig, Image.new("RGB", (ancho, 20), "white"),
-              _bloque_tarjetas(veredictos, ancho, margen), im_tab, Image.new("RGB", (ancho, 24), "white")]
+              _bloque_tarjetas(veredictos, ancho, margen, z), im_tab, Image.new("RGB", (ancho, 24), "white")]
     if incluir_guia:
         partes.append(_bloque_dos_columnas(("Cómo leer esta gráfica", ANOVA_TEXTOS[tipo]["como_leer"]),
                                            ("Qué significa cada columna de la tabla", glosario_anova(tipo)),
-                                           ancho, margen))
+                                           ancho, margen, z))
     if nota:
         tmp = ImageDraw.Draw(Image.new("RGB", (10, 10)))
-        lineas = _lineas_rich(nota, ancho - 2 * margen, 21, tmp)
-        img_n = Image.new("RGB", (ancho, len(lineas) * 31 + 30), "white")
-        _dibujar_rich(ImageDraw.Draw(img_n), lineas, margen, 6, 31, _rgb(G_MUTED))
+        lineas = _lineas_rich(nota, ancho - 2 * margen, int(21 * z), tmp)
+        img_n = Image.new("RGB", (ancho, len(lineas) * int(31 * z) + int(30 * z)), "white")
+        _dibujar_rich(ImageDraw.Draw(img_n), lineas, margen, int(6 * z), int(31 * z), _rgb(G_MUTED))
         partes.append(img_n)
     lienzo = Image.new("RGB", (ancho, sum(p.height for p in partes)), "white")
     y = 0
@@ -2403,7 +2460,7 @@ def ve_figura(titulo, eje_x, eje_y, alto=520, subtitulo=None, leyenda=True):
     fig = go.Figure()
     fig.update_xaxes(title_text=eje_x)
     fig.update_yaxes(title_text=eje_y, rangemode="tozero")
-    estilo_publicacion(fig, height=alto, titulo=titulo, subtitulo=subtitulo, mostrar_leyenda=leyenda,
+    estilo_publicacion(fig, width=1000, height=alto, titulo=titulo, subtitulo=subtitulo, mostrar_leyenda=leyenda,
                        espacio_leyenda_px=40)
     return fig
 
@@ -2452,7 +2509,7 @@ def ve_zona(fig, x0, x1, texto, row=None, col=None):
     xr = "x" if not col or col == 1 else f"x{col}"
     yr = "y" if not col or col == 1 else f"y{col}"
     fig.add_annotation(x=(x0 + x1) / 2, y=1, xref=xr, yref=f"{yr} domain", yanchor="top", showarrow=False,
-                       text=texto, font=dict(family=FUENTE_PUBLICACION, size=11, color=G_MUTED))
+                       text=texto, font=dict(family=FUENTE_PUBLICACION, size=14.5, color=G_MUTED))
 
 
 def ve_cita_corta(cita):
@@ -2519,14 +2576,14 @@ def ve_fig_predicho_vs_real(var, series, ventana, t_max, cita):
                         color=[ve_color(g) if dn else "white" for dn in dentro],
                         line=dict(color=[("white" if dn else ve_color(g)) for dn in dentro], width=2)),
             text=[f"{xd:.0f} d" for xd in d["x"]], textposition="middle right" if g == "-M" else "middle left",
-            textfont=dict(family=FUENTE_PUBLICACION, size=10.5, color=G_MUTED),
+            textfont=dict(family=FUENTE_PUBLICACION, size=13.5, color=G_MUTED),
             hovertemplate=f"{texto_grupo(g)}<br>real %{{x:.3g}} · predicho %{{y:.3g}} {unidad}<extra></extra>"),
             row=1, col=2)
         todos += list(d["real"]) + list(d["pred"])
     if peor is not None and abs(peor[3]) >= 10:
         fig.add_annotation(x=peor[1], y=peor[2], xref="x", yref="y", ax=-60, ay=-40, showarrow=True, arrowhead=0,
                            arrowcolor=G_MUTED, arrowwidth=1, bgcolor="rgba(255,255,255,0.85)",
-                           font=dict(family=FUENTE_PUBLICACION, size=11, color=G_INK),
+                           font=dict(family=FUENTE_PUBLICACION, size=14.5, color=G_INK),
                            text=f"día {peor[1]:.0f}: el modelo<br>{'sobreestima' if peor[3] > 0 else 'subestima'} "
                                 f"{abs(peor[3]):.0f} %")
     y_max = max(todos) * 1.15
@@ -2536,7 +2593,7 @@ def ve_fig_predicho_vs_real(var, series, ventana, t_max, cita):
         ve_zona(fig, ventana[1], t_max, "extrapolación<br>(fuera de sus datos)", row=1, col=1)
     fig.add_annotation(x=(ventana[0] + ventana[1]) / 2, y=1, xref="x", yref="y domain", yanchor="top",
                        showarrow=False, text=f"rango de sus datos ({ventana[0]:.0f}–{ventana[1]:.0f} ddt)",
-                       font=dict(family=FUENTE_PUBLICACION, size=11, color=G_MUTED))
+                       font=dict(family=FUENTE_PUBLICACION, size=14.5, color=G_MUTED))
     fig.update_xaxes(title_text="Días después del trasplante", range=[t0, t_max], row=1, col=1)
     fig.update_yaxes(title_text=f"{VE_NOMBRE[var]} ({unidad})", range=[0, y_max], row=1, col=1)
 
@@ -2552,7 +2609,7 @@ def ve_fig_predicho_vs_real(var, series, ventana, t_max, cita):
                                   (0.97, 0.12, "franja verde = error < 10 %", "right", T["VERDE"])):
         fig.add_annotation(x=x, y=y, xref="x2 domain", yref="y2 domain", xanchor=anc, showarrow=False, text=txt,
                            yanchor="top" if y > 0.5 else "bottom",
-                           font=dict(family=FUENTE_PUBLICACION, size=11, color=color))
+                           font=dict(family=FUENTE_PUBLICACION, size=14.5, color=color))
     fig.update_xaxes(title_text=f"Real, medido en el paper ({unidad})", range=[0, tope], row=1, col=2)
     fig.update_yaxes(title_text=f"Predicho por el modelo ({unidad})", range=[0, tope], row=1, col=2)
 
@@ -2582,10 +2639,10 @@ def ve_fig_predicho_vs_real(var, series, ventana, t_max, cita):
                        subtitulo=f"Modelos ajustados a <b>sus datos</b> predicen un experimento que <b>nunca vieron</b> "
                                  f"({cita})<br>{chips}", espacio_leyenda_px=40)
     simbolo = {"-M": ("●", "○"), "+M": ("▲", "△")}
-    leyenda_b = "   ".join(f"<span style='color:{ve_color(g)}; font-size:17px'>{simbolo[g][0]}</span> "
-                           f"<span style='color:{G_INK}; font-size:13.5px'>{texto_grupo(g)} · {NOMBRE_GRUPO[g]}</span>" for g in series)
-    leyenda_a = "   ".join(f"<span style='color:{ve_color(g)}; font-size:17px'>━ {simbolo[g][1]}</span> "
-                           f"<span style='color:{G_INK}; font-size:13.5px'>{texto_grupo(g)} · {NOMBRE_GRUPO[g]}</span>"
+    leyenda_b = "   ".join(f"<span style='color:{ve_color(g)}; font-size:22px'>{simbolo[g][0]}</span> "
+                           f"<span style='color:{G_INK}; font-size:17.5px'>{texto_grupo(g)} · {NOMBRE_GRUPO[g]}</span>" for g in series)
+    leyenda_a = "   ".join(f"<span style='color:{ve_color(g)}; font-size:22px'>━ {simbolo[g][1]}</span> "
+                           f"<span style='color:{G_INK}; font-size:17.5px'>{texto_grupo(g)} · {NOMBRE_GRUPO[g]}</span>"
                            for g in series)
     for col, txt, sub in ((1, "(a) Curva predicha vs datos del paper",
                            f"línea = predicción · marcador = media publicada ± DE<br>punteado = error en cada fecha<br>{leyenda_a}"),
@@ -2594,8 +2651,8 @@ def ve_fig_predicho_vs_real(var, series, ventana, t_max, cita):
                            f"hueco = extrapolación<br>{leyenda_b}")):
         xr, yr = _ref_ejes(col)
         fig.add_annotation(xref=f"{xr} domain", yref=f"{yr} domain", x=0, y=1.03, xanchor="left", yanchor="bottom",
-                           showarrow=False, align="left", font=dict(family=FUENTE_PUBLICACION, size=14, color=G_INK),
-                           text=f"<b>{txt}</b><br><span style='font-size:11.5px;color:{G_MUTED}'>{sub}</span>")
+                           showarrow=False, align="left", font=dict(family=FUENTE_PUBLICACION, size=18, color=G_INK),
+                           text=f"<b>{txt}</b><br><span style='font-size:15px;color:{G_MUTED}'>{sub}</span>")
     fig.update_layout(margin=dict(t=fig.layout.margin.t + 78))
     return fig, mapes
 
@@ -2702,7 +2759,7 @@ def ve_render():
                 fig.add_trace(go.Scatter(x=[dia1], y=[pred1[g]], mode="markers+text", showlegend=False,
                                          marker=dict(symbol="x", size=13, color=ve_color(g)),
                                          text=[f"{pred1[g]:.3g}"], textposition="middle left",
-                                         textfont=dict(family=FUENTE_PUBLICACION, size=11, color=G_INK),
+                                         textfont=dict(family=FUENTE_PUBLICACION, size=14.5, color=G_INK),
                                          hovertemplate=f"{VE_GRUPO_TXT[g]}<br>día {dia1}: {pred1[g]:.2f} "
                                                        f"{VE_UNIDAD[var1]}<extra></extra>"))
                 etiquetas1.append((f"<b>{texto_grupo(g)}</b> · {m}", t[-1], float(y_t[-1])))
@@ -2713,6 +2770,8 @@ def ve_render():
                 ve_zona(fig, ventana[1], t[-1], "extrapolación<br>(fuera de sus datos)")
             fig.update_layout(margin=dict(r=130))
             st.plotly_chart(fig, width="stretch", theme=None)
+            boton_descarga_png(fig, f"Predicción de {VE_NOMBRE[var1].lower()}", f"validacion_prediccion_{var1}.png",
+                               f"png_ve1_{var1}")
 
     # --- 2 · El modelo ajustado predice el paper (validación externa estricta) --------------
     with tab2:
@@ -2762,6 +2821,8 @@ def ve_render():
                 fig, _ = ve_fig_predicho_vs_real(var2, series2, ventana, t_max,
                                                  ve_cita_corta(paper["cita"]))
                 st.plotly_chart(fig, width="stretch", theme=None)
+                boton_descarga_png(fig, f"Predicho vs real ({VE_NOMBRE[var2]})", f"validacion_predicho_vs_real_{var2}.png",
+                                   f"png_ve2_{var2}")
                 ve_tabla(pd.DataFrame(filas), {"Día paper": "{:g}", f"Predicho ({VE_UNIDAD[var2]})": "{:.3f}",
                                                f"Real ({VE_UNIDAD[var2]})": "{:.3f}", "Error (%)": "{:+.1f}"})
                 st.markdown("**Resumen del error**")
@@ -2893,6 +2954,8 @@ def ve_render():
                     etiquetas_fin_de_linea(fig, 1, etiquetas3, (0, y_max3), separacion_frac=0.06)
                     fig.update_layout(margin=dict(r=130))
                 st.plotly_chart(fig, width="stretch", theme=None)
+                boton_descarga_png(fig, f"Fechas no vistas ({VE_NOMBRE[var3]})", f"validacion_fechas_no_vistas_{var3}.png",
+                                   f"png_ve3_{var3}")
 
     # --- 4 · Efecto del hongo: real vs. modelado ------------------------------------------
     with tab4:
@@ -2962,6 +3025,8 @@ def ve_render():
                                        separacion_frac=0.06)
                 fig.update_layout(margin=dict(r=130))
                 st.plotly_chart(fig, width="stretch", theme=None)
+                boton_descarga_png(fig, f"Datos del paper ({VE_NOMBRE[var4]})", f"validacion_curvas_paper_{var4}.png",
+                                   f"png_ve4a_{var4}")
 
                 efecto_t = 100 * (y["+M"] - y["-M"]) / y["-M"]
                 if not df4.empty:
@@ -2977,7 +3042,7 @@ def ve_render():
                 fig2.add_hline(y=0, line=dict(color=G_INK, width=1))
                 fig2.add_annotation(x=1, y=0, xref="x domain", yref="y", xanchor="right", yanchor="bottom",
                                     showarrow=False, text="0 % = sin efecto",
-                                    font=dict(family=FUENTE_PUBLICACION, size=11, color=G_MUTED))
+                                    font=dict(family=FUENTE_PUBLICACION, size=14.5, color=G_MUTED))
                 fig2.add_trace(go.Scatter(x=t, y=efecto_t, mode="lines", name="efecto modelado por la app",
                                           line=dict(color=T["ACCENT"], width=2.6),
                                           hovertemplate="Día %{x:.0f}: %{y:+.1f} %<extra>modelado</extra>"))
@@ -2986,10 +3051,12 @@ def ve_render():
                         x=df4["Día paper"] + desfase, y=df4["Efecto real (%)"], mode="markers+text",
                         name="efecto real (paper)", marker=dict(size=11, color=G_INK, line=dict(color="white", width=1.5)),
                         text=["*" if s_ == "sí" else "" for s_ in df4["¿Significativo?"]], textposition="top center",
-                        textfont=dict(size=18, color=G_INK),
+                        textfont=dict(size=23.5, color=G_INK),
                         hovertemplate="Día %{x:.0f}: %{y:+.1f} %<extra>real</extra>"))
                 fig2.update_yaxes(rangemode="normal", ticksuffix=" %")
                 st.plotly_chart(fig2, width="stretch", theme=None)
+                boton_descarga_png(fig2, f"Efecto del hongo ({VE_NOMBRE[var4]})", f"validacion_efecto_{var4}.png",
+                                   f"png_ve4b_{var4}")
                 st.caption("\\* = diferencia real significativa (prueba t de Welch con la DE y el n del Excel). "
                            "Si el Excel no trae DE y n, no se calcula.")
 
@@ -3302,10 +3369,13 @@ elif seccion == "Ajustar modelos":
                 if todos_x:
                     fig.update_layout(xaxis_title=f"Valor real ({UNIDADES[variable]})",
                                        yaxis_title=f"Valor predicho ({UNIDADES[variable]})")
-                    estilo_publicacion(fig, height=450, titulo=f"Real vs. predicho — {NOMBRE_VARIABLE[variable]}",
+                    estilo_publicacion(fig, width=1000, height=480,
+                                       titulo=f"Real vs. predicho — {NOMBRE_VARIABLE[variable]}",
                                        subtitulo="Cada punto = una planta, con el mejor modelo de su grupo · "
                                                  "mientras más cerca de la línea, mejor predice")
                     st.plotly_chart(fig, width='stretch', theme=None)
+                    boton_descarga_png(fig, f"Real vs. predicho {NOMBRE_VARIABLE[variable]}",
+                                       f"real_vs_predicho_{variable}.png", f"png_real_pred_{variable}")
                 else:
                     st.info(
                         f"No se dibuja el gráfico Real vs. predicho para **{NOMBRE_VARIABLE[variable]}**: "
@@ -3448,11 +3518,8 @@ elif seccion == "Resultados":
         fig, pie = fig_curvas_publicacion(DATOS, RES, variable, modelos_a_mostrar, st.session_state.fuente_datos)
         st.plotly_chart(fig, width='stretch', theme=None)
         mostrar_pie_streamlit(pie)
-        st.download_button(
-            f"Descargar PNG — Curvas {NOMBRE_VARIABLE[variable]}",
-            data=componer_png_con_pie(fig.to_image(format="png", scale=3), pie),
-            file_name=f"curvas_{variable}.png", mime="image/png", key=f"png_curvas_{variable}",
-        )
+        boton_descarga_png(fig, f"Curvas {NOMBRE_VARIABLE[variable]}", f"curvas_{variable}.png",
+                           f"png_curvas_{variable}", pie)
 
         with st.expander(f"Tasas de crecimiento (AGR/RGR) — {NOMBRE_VARIABLE[variable]}"):
             st.caption(
@@ -3466,11 +3533,8 @@ elif seccion == "Resultados":
             else:
                 st.plotly_chart(fig_tasas, width='stretch', theme=None)
                 mostrar_pie_streamlit(pie_tasas_o_motivo)
-                st.download_button(
-                    f"Descargar PNG — Tasas {NOMBRE_VARIABLE[variable]}",
-                    data=componer_png_con_pie(fig_tasas.to_image(format="png", scale=3), pie_tasas_o_motivo),
-                    file_name=f"tasas_{variable}.png", mime="image/png", key=f"png_tasas_{variable}",
-                )
+                boton_descarga_png(fig_tasas, f"Tasas {NOMBRE_VARIABLE[variable]}", f"tasas_{variable}.png",
+                                   f"png_tasas_{variable}", pie_tasas_o_motivo)
 
         filas = []
         for grupo in DATOS[variable]:
@@ -3512,11 +3576,8 @@ elif seccion == "Gráficas de barras":
         fig_var, pie_var = fig_barras_variable(DATOS, variable, st.session_state.fuente_datos)
         st.plotly_chart(fig_var, width='stretch', theme=None)
         mostrar_pie_streamlit(pie_var)
-        st.download_button(
-            f"Descargar PNG — {NOMBRE_VARIABLE[variable]}",
-            data=componer_png_con_pie(fig_var.to_image(format="png", scale=3), pie_var),
-            file_name=f"barras_{variable}.png", mime="image/png", key=f"png_barras_{variable}",
-        )
+        boton_descarga_png(fig_var, NOMBRE_VARIABLE[variable], f"barras_{variable}.png", f"png_barras_{variable}",
+                           pie_var)
         st.write("")
 
     st.markdown('<hr class="rule">', unsafe_allow_html=True)
@@ -3527,22 +3588,15 @@ elif seccion == "Gráficas de barras":
     else:
         st.plotly_chart(fig_resumen, width='stretch', theme=None)
         mostrar_pie_streamlit(pie_resumen)
-        st.download_button(
-            "Descargar PNG — Resumen del efecto",
-            data=componer_png_con_pie(fig_resumen.to_image(format="png", scale=3), pie_resumen),
-            file_name="barras_resumen_efecto.png", mime="image/png", key="png_barras_resumen",
-        )
+        boton_descarga_png(fig_resumen, "Resumen del efecto", "barras_resumen_efecto.png", "png_barras_resumen",
+                           pie_resumen)
 
     st.markdown('<hr class="rule">', unsafe_allow_html=True)
     st.markdown("### Comparación de R² por modelo")
     fig_r2, pie_r2 = fig_barras_r2_comparacion(RES, DATOS, variables_a_mostrar, modelos_a_mostrar)
     st.plotly_chart(fig_r2, width='stretch', theme=None)
     mostrar_pie_streamlit(pie_r2)
-    st.download_button(
-        "Descargar PNG — Comparación de R²",
-        data=componer_png_con_pie(fig_r2.to_image(format="png", scale=3), pie_r2),
-        file_name="barras_r2_comparacion.png", mime="image/png", key="png_barras_r2",
-    )
+    boton_descarga_png(fig_r2, "Comparación de R²", "barras_r2_comparacion.png", "png_barras_r2", pie_r2)
     st.caption("Estas gráficas también se incluyen en el reporte PDF (sección Exportar reporte).")
 
 
@@ -3758,8 +3812,9 @@ elif seccion == "Residuos":
                     tabla = fig_tabla_anova(filas, "Modelo", ANOVA_TEXTOS["dia"]["ok"], ANOVA_TEXTOS["dia"]["mal"],
                                             "Tabla ANOVA · residuo ~ día")
                     st.download_button(
-                        f"Descargar PNG — Residuos por día {texto_grupo(grupo)}",
-                        data=png_anova_explicado(fig, tabla, "dia", frases),
+                        f"⬇ Descargar PNG en alta resolución — Residuos por día {texto_grupo(grupo)}",
+                        data=lambda fig=fig, tabla=tabla, frases=frases: png_anova_explicado(
+                            fig, tabla, "dia", frases, scale=3),
                         file_name=f"anova_residuos_dia_{variable}_{'control' if grupo == '-M' else 'inoculado'}.png",
                         mime="image/png", key=f"png_anova_dia_{variable}_{grupo}")
                 st.write("")
@@ -3778,8 +3833,9 @@ elif seccion == "Residuos":
                     tabla = fig_tabla_anova(filas, "Grupo", ANOVA_TEXTOS["modelo"]["ok"],
                                             ANOVA_TEXTOS["modelo"]["mal"], "Tabla ANOVA · |residuo| ~ modelo")
                     st.download_button(
-                        "Descargar PNG — Comparación de modelos",
-                        data=png_anova_explicado(fig, tabla, "modelo", frases),
+                        "⬇ Descargar PNG en alta resolución — Comparación de modelos",
+                        data=lambda fig=fig, tabla=tabla, frases=frases: png_anova_explicado(
+                            fig, tabla, "modelo", frases, scale=3),
                         file_name=f"anova_residuos_modelos_{variable}.png", mime="image/png",
                         key=f"png_anova_modelos_{variable}")
             st.caption(
@@ -4094,15 +4150,25 @@ elif seccion == "Exportar reporte":
         if pdf.get_y() + alto_mm_necesario > pdf.page_break_trigger:
             pdf.add_page()
 
-    def insertar_imagen_png(pdf, png_bytes, ancho_mm=190):
+    def insertar_imagen_png(pdf, png_bytes, ancho_mm=190, subtitulo=None):
+        """Inserta la imagen; si se pasa `subtitulo`, se escribe justo antes y siempre en la misma
+        página que la imagen (nunca queda un subtítulo solo al final de una página)."""
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp_img:
             tmp_img.write(png_bytes)
             ruta_img = tmp_img.name
         with Image.open(ruta_img) as im:
             proporcion = im.height / im.width
         alto_mm = ancho_mm * proporcion
-        asegurar_espacio(pdf, alto_mm + 6)
-        pdf.image(ruta_img, w=ancho_mm)
+        # Una figura muy alta se reduce para que imagen + pie (2-4 líneas, ~30 mm) quepan en una página.
+        alto_max = pdf.page_break_trigger - pdf.t_margin - 30
+        if alto_mm > alto_max:
+            alto_mm = alto_max
+            ancho_mm = alto_mm / proporcion
+        # +24 mm: el pie de figura (2-4 líneas) cabe en la misma página que su imagen.
+        asegurar_espacio(pdf, alto_mm + 24 + (10 if subtitulo else 0))
+        if subtitulo:
+            subtitulo_variable(pdf, subtitulo)
+        pdf.image(ruta_img, x=(pdf.w - ancho_mm) / 2, w=ancho_mm)
         pdf.ln(5)
 
     def insertar_pie_pdf(pdf, pie):
@@ -4251,27 +4317,23 @@ elif seccion == "Exportar reporte":
             pdf.add_page()
             titulo_seccion(pdf, "Graficas de barras")
             for variable in variables_a_mostrar:
-                asegurar_espacio(pdf, 100)
-                subtitulo_variable(pdf, NOMBRE_VARIABLE[variable])
                 fig_barra_pdf, pie_barra_pdf = fig_barras_variable(DATOS, variable, st.session_state.fuente_datos)
                 fig_barra_pdf.update_layout(paper_bgcolor="white", plot_bgcolor="white")
-                insertar_imagen_png(pdf, fig_barra_pdf.to_image(format="png", scale=3))
+                insertar_imagen_png(pdf, fig_barra_pdf.to_image(format="png", scale=3),
+                                    subtitulo=NOMBRE_VARIABLE[variable])
                 insertar_pie_pdf(pdf, pie_barra_pdf)
 
             fig_resumen_pdf, pie_resumen_pdf = fig_resumen_efecto_final(
                 DATOS, variables_a_mostrar, st.session_state.fuente_datos)
             if fig_resumen_pdf is not None:
-                asegurar_espacio(pdf, 90)
-                subtitulo_variable(pdf, "Resumen: efecto de la micorriza al final del ensayo")
-                insertar_imagen_png(pdf, fig_resumen_pdf.to_image(format="png", scale=3))
+                insertar_imagen_png(pdf, fig_resumen_pdf.to_image(format="png", scale=3),
+                                    subtitulo="Resumen: efecto de la micorriza al final del ensayo")
                 insertar_pie_pdf(pdf, pie_resumen_pdf)
 
-            asegurar_espacio(pdf, 100)
-            subtitulo_variable(pdf, "Comparacion de R2 por modelo")
             fig_r2_pdf, pie_r2_pdf = fig_barras_r2_comparacion(RES, DATOS, variables_a_mostrar, modelos_a_mostrar)
             # No se fuerza "height": la tabla de calor calcula su alto segun el numero de filas.
             fig_r2_pdf.update_layout(paper_bgcolor="white", plot_bgcolor="white")
-            insertar_imagen_png(pdf, fig_r2_pdf.to_image(format="png", scale=3))
+            insertar_imagen_png(pdf, fig_r2_pdf.to_image(format="png", scale=3), subtitulo="Comparacion de R2 por modelo")
             insertar_pie_pdf(pdf, pie_r2_pdf)
 
             # --- Tasas de crecimiento (AGR y RGR) -- mismas figuras que el expander opcional
@@ -4287,11 +4349,11 @@ elif seccion == "Exportar reporte":
             ), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
             pdf.ln(3)
             for variable in variables_a_mostrar:
-                asegurar_espacio(pdf, 100)
-                subtitulo_variable(pdf, NOMBRE_VARIABLE[variable])
                 fig_tasas_pdf, pie_tasas_pdf_o_motivo = fig_tasas_crecimiento(
                     DATOS, RES, variable, modelos_a_mostrar, st.session_state.fuente_datos)
                 if fig_tasas_pdf is None:
+                    asegurar_espacio(pdf, 30)
+                    subtitulo_variable(pdf, NOMBRE_VARIABLE[variable])
                     pdf.set_font("Helvetica", "I", 9)
                     pdf.set_text_color(*PDF_MUTED)
                     pdf.multi_cell(0, 5.5, limpiar_texto(pie_tasas_pdf_o_motivo), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
@@ -4299,7 +4361,8 @@ elif seccion == "Exportar reporte":
                     pdf.ln(3)
                 else:
                     fig_tasas_pdf.update_layout(paper_bgcolor="white", plot_bgcolor="white")
-                    insertar_imagen_png(pdf, fig_tasas_pdf.to_image(format="png", scale=3))
+                    insertar_imagen_png(pdf, fig_tasas_pdf.to_image(format="png", scale=3),
+                                        subtitulo=NOMBRE_VARIABLE[variable])
                     insertar_pie_pdf(pdf, pie_tasas_pdf_o_motivo)
 
             # --- Analisis de residuos (ANOVA sobre los residuos) -- mismas figuras y tablas que la
@@ -4336,12 +4399,8 @@ elif seccion == "Exportar reporte":
                 if not imagenes:
                     continue
                 # El subtítulo de la variable va en la misma página que su primera imagen.
-                with Image.open(io.BytesIO(imagenes[0])) as im0:
-                    alto_primera_mm = 190 * im0.height / im0.width
-                asegurar_espacio(pdf, alto_primera_mm + 16)
-                subtitulo_variable(pdf, NOMBRE_VARIABLE[variable])
-                for png_r in imagenes:
-                    insertar_imagen_png(pdf, png_r)
+                for i_r, png_r in enumerate(imagenes):
+                    insertar_imagen_png(pdf, png_r, subtitulo=NOMBRE_VARIABLE[variable] if i_r == 0 else None)
 
             # --- Resultados esperados (modelo que mejor describe cada variable + efecto +M vs -M) ---
             pdf.add_page()
