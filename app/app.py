@@ -3221,11 +3221,15 @@ def cc_lista(texto, entero=False):
     return [p.lower() for p in partes]
 
 
+def _cc_nulo(x):
+    return x is None or (isinstance(x, float) and np.isnan(x))
+
+
 def cc_render():
     st.markdown("### Concordancia con el paper de origen")
-    st.markdown("Compara lo que **concluyeron los autores** del paper del que salen los datos reales con lo que "
+    st.markdown("Compara lo que **reportaron los autores** del paper del que salen los datos reales con lo que "
                 "**obtiene la app** a partir de esos mismos datos. No es una validación externa (los datos son "
-                "los mismos): comprueba que la app los procesa sin distorsionarlos y llega a las mismas conclusiones.")
+                "los mismos): comprueba que la app los describe bien y llega a las mismas conclusiones.")
     datos, paper, origen = cc_fuente()
     if datos is None:
         st.info("No hay datos reales. Cárgalos en «Datos de prueba».")
@@ -3238,66 +3242,103 @@ def cc_render():
                 "`datos_reales/datos_reales_coffea_2023.xlsx`, y vuelve a cargarlo.")
         return
 
-    # --- 1 · Resultados por variable y día: letras del paper vs prueba t de la app ----------
+    resultados = ajustar_todos_los_modelos(datos)
     res = paper["resultados"]
     if res is not None and not res.empty:
-        st.markdown("#### 1 · Diferencias −M vs +M: paper vs app")
+        res = res[res["variable"].isin([v for v in datos if v in resultados])]
+    if res is not None and not res.empty:
+        # ---- filas por variable y día (se usan en la tabla, la gráfica y el resumen) ----
         filas = []
         for r in res.itertuples():
             v, d = r.variable, int(r.dia)
-            if v not in datos or d not in datos[v].get("-M", {}) or d not in datos[v].get("+M", {}):
+            if d not in datos[v].get("-M", {}) or d not in datos[v].get("+M", {}):
                 continue
-            pm, pp = float(r.media_menos), float(r.media_mas)
-            am, ap = float(np.mean(datos[v]["-M"][d])), float(np.mean(datos[v]["+M"][d]))
+            fila = {"variable": v, "dia": d, "nota": _cc_texto(r.nota),
+                    "paper_-M": float(r.media_menos), "paper_+M": float(r.media_mas),
+                    "letra_-M": _cc_texto(r.letra_menos), "letra_+M": _cc_texto(r.letra_mas)}
+            for g in ("-M", "+M"):
+                m, ajuste = ve_elegir(resultados[v].get(g, {}), "Mejor R²")
+                fila[f"modelo_{g}"] = m
+                fila[f"curva_{g}"] = float(ve_predecir(m, ajuste, d)) if m else np.nan
             prueba = prueba_t_independiente(datos, v, d)
-            sig_paper = cc_difieren(r.letra_menos, r.letra_mas)
-            sig_app = None if prueba is None else bool(prueba["significativo"])
-            if sig_paper is None or sig_app is None:
-                concuerda = "— sin letra en el paper" if sig_paper is None else "— sin prueba en la app"
-            else:
-                concuerda = "✔ coinciden" if sig_paper == sig_app else "✗ difieren"
-            letras = f"{_cc_texto(r.letra_menos) or '—'} / {_cc_texto(r.letra_mas) or '—'}"
-            filas.append({
-                "Variable": VE_NOMBRE.get(v, v), "Día (ddt)": d,
-                "−M paper": pm, "+M paper": pp, "Efecto paper (%)": 100 * (pp - pm) / pm,
-                "−M app": am, "+M app": ap, "Efecto app (%)": 100 * (ap - am) / am,
-                "Letras paper (−M / +M)": letras,
-                "¿Significativo en el paper?": "—" if sig_paper is None else ("sí" if sig_paper else "no"),
-                "p app (Welch)": np.nan if prueba is None else prueba["p"],
-                "¿Significativo en la app?": "—" if sig_app is None else ("sí" if sig_app else "no"),
-                "Concordancia": concuerda,
-                "Nota del paper": _cc_texto(r.nota),
-            })
-        if not filas:
-            st.info("Las variables y días de «paper_resultados» no coinciden con los datos cargados.")
-        else:
-            df = pd.DataFrame(filas)
-            evaluables = df[df["Concordancia"].isin(["✔ coinciden", "✗ difieren"])]
-            misma_dir = (np.sign(df["Efecto paper (%)"]) == np.sign(df["Efecto app (%)"])).sum()
-            medias_ok = ((df["−M app"] - df["−M paper"]).abs() <= 0.01 * df["−M paper"].abs()).sum() + \
-                        ((df["+M app"] - df["+M paper"]).abs() <= 0.01 * df["+M paper"].abs()).sum()
-            k1, k2, k3 = st.columns(3)
-            k1.metric("Significancia: coincide", f"{(evaluables['Concordancia'] == '✔ coinciden').sum()} de {len(evaluables)}",
-                      help="Casos con letra en el paper y prueba t en la app.")
-            k2.metric("Dirección del efecto: coincide", f"{misma_dir} de {len(df)}")
-            k3.metric("Medias iguales al paper (±1 %)", f"{medias_ok} de {2 * len(df)}")
-            ve_tabla(df.drop(columns=["−M app", "+M app"]),
-                     {"−M paper": "{:g}", "+M paper": "{:g}", "Efecto paper (%)": "{:+.1f}",
-                      "Efecto app (%)": "{:+.1f}", "p app (Welch)": "{:.4f}"})
-            st.caption("Significancia del paper: dos tratamientos difieren si no comparten ninguna letra. "
-                       "El paper compara 7 tratamientos con Tukey; la app compara solo −M y +M con la prueba t de "
-                       "Welch sobre réplicas sintéticas (que reproducen la media y el CV publicados). Por eso pueden "
-                       "diferir en los casos límite.")
-            difieren = df[df["Concordancia"] == "✗ difieren"]
-            if not difieren.empty:
-                st.info("**Dónde difieren:** " + "; ".join(
-                    f"{x['Variable']} a {x['Día (ddt)']} ddt (paper: {x['¿Significativo en el paper?']}, "
-                    f"app: {x['¿Significativo en la app?']})" for _, x in difieren.iterrows()) + ".")
+            fila["sig_paper"] = cc_difieren(r.letra_menos, r.letra_mas)
+            fila["p_app"] = np.nan if prueba is None else prueba["p"]
+            fila["sig_app"] = None if prueba is None else bool(prueba["significativo"])
+            filas.append(fila)
+        base = pd.DataFrame(filas)
 
-    # --- 2 · Conclusiones de los autores vs evidencia de la app -----------------------------
+        # ---- resumen general ------------------------------------------------------------
+        st.markdown("#### Resumen")
+        error_curva = pd.concat([(base[f"curva_{g}"] - base[f"paper_{g}"]).abs() / base[f"paper_{g}"].abs()
+                                 for g in ("-M", "+M")]) * 100
+        evaluables = base[base["sig_paper"].notna() & base["sig_app"].notna()]
+        coinciden = (evaluables["sig_paper"] == evaluables["sig_app"]).sum()
+        misma_dir = (np.sign(base["paper_+M"] - base["paper_-M"]) == np.sign(base["curva_+M"] - base["curva_-M"])).sum()
+        k1, k2, k3 = st.columns(3)
+        k1.metric("Error medio de la curva frente al paper", f"{np.nanmean(error_curva):.1f} %",
+                  help="Diferencia promedio entre el valor que da la curva de la app y el valor publicado.")
+        k2.metric("¿Es significativo? Coinciden", f"{coinciden} de {len(evaluables)}",
+                  help="Casos donde el paper tiene letras y la app pudo hacer la prueba t.")
+        k3.metric("¿+M crece más que −M? Coinciden", f"{misma_dir} de {len(base)}")
+
+        # ---- detalle por variable -----------------------------------------------------------
+        st.markdown("#### 1 · Valores: paper vs app, por variable")
+        vars_cc = [v for v in VE_VARIABLES if v in set(base["variable"])]
+        var = st.radio("Variable", vars_cc, horizontal=True, key="cc_var",
+                       format_func=lambda v: f"{VE_NOMBRE.get(v, v)} ({VE_UNIDAD.get(v, '')})")
+        sub = base[base["variable"] == var].sort_values("dia")
+        u = VE_UNIDAD.get(var, "")
+        modelos_txt = " · ".join(f"{VE_GRUPO_TXT[g]}: **{sub[f'modelo_{g}'].iloc[0] or 'ninguno convergió'}**"
+                                 for g in ("-M", "+M"))
+        st.markdown(f"Curva que usa la app (la de mejor R²) — {modelos_txt}")
+
+        tabla_valores = pd.DataFrame({
+            "Día (ddt)": sub["dia"],
+            f"−M paper ({u})": sub["paper_-M"], f"−M curva app ({u})": sub["curva_-M"],
+            "−M error (%)": 100 * (sub["curva_-M"] - sub["paper_-M"]) / sub["paper_-M"],
+            f"+M paper ({u})": sub["paper_+M"], f"+M curva app ({u})": sub["curva_+M"],
+            "+M error (%)": 100 * (sub["curva_+M"] - sub["paper_+M"]) / sub["paper_+M"],
+        })
+        ve_tabla(tabla_valores, {f"−M paper ({u})": "{:g}", f"−M curva app ({u})": "{:.3f}", "−M error (%)": "{:+.1f}",
+                                 f"+M paper ({u})": "{:g}", f"+M curva app ({u})": "{:.3f}", "+M error (%)": "{:+.1f}"})
+        st.caption("«Paper» = valor publicado en el paper. «Curva app» = valor que da en ese día la curva que la app "
+                   "ajustó a estos mismos datos. La app no predice datos nuevos aquí: el error mide qué tan bien la "
+                   "curva describe los datos del paper.")
+
+        fig = ve_figura(f"{VE_NOMBRE.get(var, var)}: valores del paper y curvas de la app",
+                        "Días después del trasplante (ddt)", f"{VE_NOMBRE.get(var, var)} ({u})")
+        t = np.linspace(0, sub["dia"].max() + 10, 300)
+        for g in ("-M", "+M"):
+            m, ajuste = ve_elegir(resultados[var].get(g, {}), "Mejor R²")
+            if m:
+                ve_trazar_curva(fig, g, t, ve_predecir(m, ajuste, t), f"curva de la app ({m})")
+            ve_trazar_real(fig, g, sub["dia"], sub[f"paper_{g}"], None, "valor del paper")
+        st.plotly_chart(fig, width="stretch")
+
+        st.markdown("#### 2 · ¿La diferencia entre −M y +M es significativa? Paper vs app")
+        tabla_sig = pd.DataFrame({
+            "Día (ddt)": sub["dia"],
+            "Efecto del hongo (%)": 100 * (sub["paper_+M"] - sub["paper_-M"]) / sub["paper_-M"],
+            "Letras del paper (−M / +M)": [f"{a or '—'} / {b or '—'}" for a, b in zip(sub["letra_-M"], sub["letra_+M"])],
+            "Paper dice": ["sin letra" if _cc_nulo(s) else ("significativo" if s else "no significativo")
+                           for s in sub["sig_paper"]],
+            "App dice": ["sin prueba" if _cc_nulo(s) else (f"{'significativo' if s else 'no significativo'} (p = {p:.3f})")
+                         for s, p in zip(sub["sig_app"], sub["p_app"])],
+            "¿Coinciden?": ["— no se puede comparar" if _cc_nulo(a) or _cc_nulo(b) else ("✔ sí" if a == b else "✗ no")
+                            for a, b in zip(sub["sig_paper"], sub["sig_app"])],
+        })
+        ve_tabla(tabla_sig, {"Efecto del hongo (%)": "{:+.1f}"})
+        st.caption("Cómo leer las letras: si −M y +M **no comparten ninguna letra**, el paper dice que la diferencia "
+                   "es significativa (prueba de Tukey). La app usa la prueba t de Welch (significativo si p < 0.05). "
+                   "El paper compara 7 tratamientos y la app solo −M y +M, así que en casos límite pueden diferir.")
+        notas = [f"{d} ddt: {n}" for d, n in zip(sub["dia"], sub["nota"]) if n]
+        if notas:
+            st.info("**Notas del paper:** " + " · ".join(notas))
+
+    # ---- 3 · Conclusiones de los autores vs evidencia de la app -------------------------------
     con = paper["conclusiones"]
     if con is not None and not con.empty:
-        st.markdown("#### 2 · Conclusiones del paper vs lo que muestra la app")
+        st.markdown("#### 3 · Conclusiones del paper vs lo que muestra la app")
         filas = []
         for r in con.itertuples():
             variables = [v for v in cc_lista(r.variables) if v in datos]
@@ -3313,10 +3354,10 @@ def cc_render():
                     if d not in comunes:
                         continue
                     casos += 1
-                    mayor += float(np.mean(datos[v]["+M"][d])) > float(np.mean(datos[v]["-M"][d]))
+                    supera = float(np.mean(datos[v]["+M"][d])) > float(np.mean(datos[v]["-M"][d]))
+                    mayor += supera
                     prueba = prueba_t_independiente(datos, v, d)
-                    signif += bool(prueba and prueba["significativo"] and
-                                   np.mean(datos[v]["+M"][d]) > np.mean(datos[v]["-M"][d]))
+                    signif += bool(prueba and prueba["significativo"] and supera)
             if casos == 0:
                 veredicto, evidencia = "— no evaluable", "No hay datos para esas variables y días."
             else:
@@ -3334,24 +3375,6 @@ def cc_render():
         st.table(pd.DataFrame(filas).set_index("Conclusión del paper"))
         st.caption("Veredicto: «respalda» si +M supera a −M en todos los casos y la diferencia es significativa "
                    "en al menos la mitad; «en parte» si +M supera a −M en la mayoría; «no la respalda» en otro caso.")
-
-    # --- 3 · Lo que aporta la app: modelos de crecimiento ---------------------------------
-    st.markdown("#### 3 · Lo que aporta la app")
-    st.write("El paper compara medias por fecha. La app, además, describe el crecimiento con una curva continua: "
-             "este es el modelo que mejor ajusta cada variable y grupo.")
-    resultados = ajustar_todos_los_modelos(datos)
-    filas = []
-    for v in VE_VARIABLES:
-        if v not in resultados:
-            continue
-        fila = {"Variable": VE_NOMBRE.get(v, v)}
-        for g in ("-M", "+M"):
-            m, r = ve_elegir(resultados[v].get(g, {}), "Mejor R²")
-            fila[f"Mejor modelo {g}"] = m or "ninguno convergió"
-            fila[f"R² {g}"] = r["r2"] if r else np.nan
-        filas.append(fila)
-    if filas:
-        ve_tabla(pd.DataFrame(filas), {"R² -M": "{:.3f}", "R² +M": "{:.3f}"})
 
 
 # ==============================================================================
