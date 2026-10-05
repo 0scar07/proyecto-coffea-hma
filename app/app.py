@@ -51,7 +51,7 @@ defaults = {
     "ajustado": False, "resultados": None, "variables_incluidas": ["altura", "biomasa", "diametro", "hojas"],
     "modelos_incluidos": ["Exponencial", "Logístico", "Gompertz"],
     "fuente_datos": "simulado", "datos_reales": None, "dia_ttest": 120, "ultimo_archivo_id": None,
-    "cita_datos_reales": "", "recien_ajustado": False,
+    "cita_datos_reales": "", "recien_ajustado": False, "cc_paper": None,
     "ve_paper": None, "ve_paper_id": None, "ve_ultimo_archivo": None,
 }
 for k, v in defaults.items():
@@ -3131,6 +3131,230 @@ def ve_bloque_datos_de_prueba():
 
 
 # ==============================================================================
+# CONCORDANCIA CON EL PAPER DE ORIGEN — compara lo que concluyeron los autores del paper
+# del que salen los datos reales con lo que obtiene la app a partir de esos mismos datos.
+# No es validación externa (los datos son los mismos): comprueba que la app los procesa sin
+# distorsionarlos y llega a las mismas conclusiones.
+#
+# Los resultados del paper se leen de dos hojas opcionales del Excel de datos reales:
+#   «paper_resultados»: variable, dia, media_menos, letra_menos, media_mas, letra_mas, fuente, nota
+#                       (letras de la prueba de medias del paper, p. ej. Tukey)
+#   «paper_conclusiones»: conclusion, pagina, variables (separadas por coma; vacío = la app no
+#                       la mide), dias (separados por coma; vacío = todos)
+# ==============================================================================
+def cc_leer_paper(archivo):
+    """Lee las hojas «paper_resultados» y «paper_conclusiones» (ruta o archivo subido).
+    Devuelve {"resultados": DataFrame|None, "conclusiones": DataFrame|None} o None si no hay ninguna."""
+    nombre = archivo if isinstance(archivo, str) else getattr(archivo, "name", "")
+    if str(nombre).lower().endswith(".csv"):
+        return None
+    try:
+        if hasattr(archivo, "seek"):
+            archivo.seek(0)
+        hojas = pd.read_excel(archivo, sheet_name=None)
+    except Exception:
+        return None
+    hojas = {str(k).strip().lower(): v for k, v in hojas.items()}
+    res = hojas.get("paper_resultados")
+    con = hojas.get("paper_conclusiones")
+    if res is not None:
+        res = res.copy()
+        res.columns = [str(c).strip().lower() for c in res.columns]
+        if not {"variable", "dia", "media_menos", "media_mas"} <= set(res.columns):
+            res = None
+        else:
+            for c in ("letra_menos", "letra_mas", "fuente", "nota"):
+                if c not in res.columns:
+                    res[c] = ""
+            res = res.dropna(subset=["variable", "dia"])
+            res["variable"] = res["variable"].astype(str).str.strip().str.lower()
+            res["dia"] = pd.to_numeric(res["dia"]).astype(int)
+    if con is not None:
+        con = con.copy()
+        con.columns = [str(c).strip().lower() for c in con.columns]
+        if "conclusion" not in con.columns:
+            con = None
+        else:
+            for c in ("pagina", "variables", "dias"):
+                if c not in con.columns:
+                    con[c] = ""
+            con = con.dropna(subset=["conclusion"])
+    if res is None and con is None:
+        return None
+    return {"resultados": res, "conclusiones": con}
+
+
+@st.cache_data
+def cc_leer_paper_base(ruta):
+    return cc_leer_paper(ruta)
+
+
+def cc_fuente():
+    """(datos, resultados del paper, descripción) con la misma regla que la validación externa:
+    los datos reales activos o, si no hay, el Excel real del repositorio."""
+    if st.session_state.fuente_datos == "real" and st.session_state.datos_reales is not None:
+        return (st.session_state.datos_reales, st.session_state.get("cc_paper"),
+                st.session_state.cita_datos_reales or "datos reales cargados en «Datos de prueba»")
+    if os.path.exists(VE_XLSX_BASE):
+        return (ve_leer_base(VE_XLSX_BASE), cc_leer_paper_base(VE_XLSX_BASE),
+                "datos_reales_coffea_2023.xlsx (Aguirre-Medina et al. 2023)")
+    return None, None, None
+
+
+def _cc_texto(x):
+    return "" if x is None or (isinstance(x, float) and np.isnan(x)) else str(x).strip()
+
+
+def cc_difieren(letra_a, letra_b):
+    """Según las letras de una prueba de medias: dos tratamientos difieren si no comparten
+    ninguna letra. None si falta alguna letra."""
+    a, b = _cc_texto(letra_a), _cc_texto(letra_b)
+    if not a or not b:
+        return None
+    return not (set(a) & set(b))
+
+
+def cc_lista(texto, entero=False):
+    partes = [p.strip() for p in _cc_texto(texto).replace(";", ",").split(",") if p.strip()]
+    if entero:
+        return [int(float(p)) for p in partes]
+    return [p.lower() for p in partes]
+
+
+def cc_render():
+    st.markdown("### Concordancia con el paper de origen")
+    st.markdown("Compara lo que **concluyeron los autores** del paper del que salen los datos reales con lo que "
+                "**obtiene la app** a partir de esos mismos datos. No es una validación externa (los datos son "
+                "los mismos): comprueba que la app los procesa sin distorsionarlos y llega a las mismas conclusiones.")
+    datos, paper, origen = cc_fuente()
+    if datos is None:
+        st.info("No hay datos reales. Cárgalos en «Datos de prueba».")
+        return
+    st.caption(f"Datos: **{origen}**.")
+    if paper is None:
+        st.info("El Excel de datos reales no trae los resultados del paper. Agrégale las hojas "
+                "«paper_resultados» (variable, dia, media_menos, letra_menos, media_mas, letra_mas) y "
+                "«paper_conclusiones» (conclusion, pagina, variables, dias), como en "
+                "`datos_reales/datos_reales_coffea_2023.xlsx`, y vuelve a cargarlo.")
+        return
+
+    # --- 1 · Resultados por variable y día: letras del paper vs prueba t de la app ----------
+    res = paper["resultados"]
+    if res is not None and not res.empty:
+        st.markdown("#### 1 · Diferencias −M vs +M: paper vs app")
+        filas = []
+        for r in res.itertuples():
+            v, d = r.variable, int(r.dia)
+            if v not in datos or d not in datos[v].get("-M", {}) or d not in datos[v].get("+M", {}):
+                continue
+            pm, pp = float(r.media_menos), float(r.media_mas)
+            am, ap = float(np.mean(datos[v]["-M"][d])), float(np.mean(datos[v]["+M"][d]))
+            prueba = prueba_t_independiente(datos, v, d)
+            sig_paper = cc_difieren(r.letra_menos, r.letra_mas)
+            sig_app = None if prueba is None else bool(prueba["significativo"])
+            if sig_paper is None or sig_app is None:
+                concuerda = "— sin letra en el paper" if sig_paper is None else "— sin prueba en la app"
+            else:
+                concuerda = "✔ coinciden" if sig_paper == sig_app else "✗ difieren"
+            letras = f"{_cc_texto(r.letra_menos) or '—'} / {_cc_texto(r.letra_mas) or '—'}"
+            filas.append({
+                "Variable": VE_NOMBRE.get(v, v), "Día (ddt)": d,
+                "−M paper": pm, "+M paper": pp, "Efecto paper (%)": 100 * (pp - pm) / pm,
+                "−M app": am, "+M app": ap, "Efecto app (%)": 100 * (ap - am) / am,
+                "Letras paper (−M / +M)": letras,
+                "¿Significativo en el paper?": "—" if sig_paper is None else ("sí" if sig_paper else "no"),
+                "p app (Welch)": np.nan if prueba is None else prueba["p"],
+                "¿Significativo en la app?": "—" if sig_app is None else ("sí" if sig_app else "no"),
+                "Concordancia": concuerda,
+                "Nota del paper": _cc_texto(r.nota),
+            })
+        if not filas:
+            st.info("Las variables y días de «paper_resultados» no coinciden con los datos cargados.")
+        else:
+            df = pd.DataFrame(filas)
+            evaluables = df[df["Concordancia"].isin(["✔ coinciden", "✗ difieren"])]
+            misma_dir = (np.sign(df["Efecto paper (%)"]) == np.sign(df["Efecto app (%)"])).sum()
+            medias_ok = ((df["−M app"] - df["−M paper"]).abs() <= 0.01 * df["−M paper"].abs()).sum() + \
+                        ((df["+M app"] - df["+M paper"]).abs() <= 0.01 * df["+M paper"].abs()).sum()
+            k1, k2, k3 = st.columns(3)
+            k1.metric("Significancia: coincide", f"{(evaluables['Concordancia'] == '✔ coinciden').sum()} de {len(evaluables)}",
+                      help="Casos con letra en el paper y prueba t en la app.")
+            k2.metric("Dirección del efecto: coincide", f"{misma_dir} de {len(df)}")
+            k3.metric("Medias iguales al paper (±1 %)", f"{medias_ok} de {2 * len(df)}")
+            ve_tabla(df.drop(columns=["−M app", "+M app"]),
+                     {"−M paper": "{:g}", "+M paper": "{:g}", "Efecto paper (%)": "{:+.1f}",
+                      "Efecto app (%)": "{:+.1f}", "p app (Welch)": "{:.4f}"})
+            st.caption("Significancia del paper: dos tratamientos difieren si no comparten ninguna letra. "
+                       "El paper compara 7 tratamientos con Tukey; la app compara solo −M y +M con la prueba t de "
+                       "Welch sobre réplicas sintéticas (que reproducen la media y el CV publicados). Por eso pueden "
+                       "diferir en los casos límite.")
+            difieren = df[df["Concordancia"] == "✗ difieren"]
+            if not difieren.empty:
+                st.info("**Dónde difieren:** " + "; ".join(
+                    f"{x['Variable']} a {x['Día (ddt)']} ddt (paper: {x['¿Significativo en el paper?']}, "
+                    f"app: {x['¿Significativo en la app?']})" for _, x in difieren.iterrows()) + ".")
+
+    # --- 2 · Conclusiones de los autores vs evidencia de la app -----------------------------
+    con = paper["conclusiones"]
+    if con is not None and not con.empty:
+        st.markdown("#### 2 · Conclusiones del paper vs lo que muestra la app")
+        filas = []
+        for r in con.itertuples():
+            variables = [v for v in cc_lista(r.variables) if v in datos]
+            dias_pedidos = cc_lista(r.dias, entero=True)
+            if not variables:
+                filas.append({"Conclusión del paper": _cc_texto(r.conclusion), "Página": _cc_texto(r.pagina),
+                              "Evidencia en la app": "La app no mide esta variable.", "Veredicto": "— no evaluable"})
+                continue
+            casos = mayor = signif = 0
+            for v in variables:
+                comunes = sorted(set(datos[v].get("-M", {})) & set(datos[v].get("+M", {})))
+                for d in (dias_pedidos or comunes):
+                    if d not in comunes:
+                        continue
+                    casos += 1
+                    mayor += float(np.mean(datos[v]["+M"][d])) > float(np.mean(datos[v]["-M"][d]))
+                    prueba = prueba_t_independiente(datos, v, d)
+                    signif += bool(prueba and prueba["significativo"] and
+                                   np.mean(datos[v]["+M"][d]) > np.mean(datos[v]["-M"][d]))
+            if casos == 0:
+                veredicto, evidencia = "— no evaluable", "No hay datos para esas variables y días."
+            else:
+                evidencia = (f"+M > −M en {mayor} de {casos} casos ({', '.join(VE_NOMBRE.get(v, v) for v in variables)}"
+                             f"{'; días ' + ', '.join(map(str, dias_pedidos)) if dias_pedidos else ''}); "
+                             f"significativo en {signif}.")
+                if mayor == casos and signif >= casos / 2:
+                    veredicto = "✔ la app la respalda"
+                elif mayor > casos / 2:
+                    veredicto = "~ la respalda en parte"
+                else:
+                    veredicto = "✗ la app no la respalda"
+            filas.append({"Conclusión del paper": _cc_texto(r.conclusion), "Página": _cc_texto(r.pagina),
+                          "Evidencia en la app": evidencia, "Veredicto": veredicto})
+        st.table(pd.DataFrame(filas).set_index("Conclusión del paper"))
+        st.caption("Veredicto: «respalda» si +M supera a −M en todos los casos y la diferencia es significativa "
+                   "en al menos la mitad; «en parte» si +M supera a −M en la mayoría; «no la respalda» en otro caso.")
+
+    # --- 3 · Lo que aporta la app: modelos de crecimiento ---------------------------------
+    st.markdown("#### 3 · Lo que aporta la app")
+    st.write("El paper compara medias por fecha. La app, además, describe el crecimiento con una curva continua: "
+             "este es el modelo que mejor ajusta cada variable y grupo.")
+    resultados = ajustar_todos_los_modelos(datos)
+    filas = []
+    for v in VE_VARIABLES:
+        if v not in resultados:
+            continue
+        fila = {"Variable": VE_NOMBRE.get(v, v)}
+        for g in ("-M", "+M"):
+            m, r = ve_elegir(resultados[v].get(g, {}), "Mejor R²")
+            fila[f"Mejor modelo {g}"] = m or "ninguno convergió"
+            fila[f"R² {g}"] = r["r2"] if r else np.nan
+        filas.append(fila)
+    if filas:
+        ve_tabla(pd.DataFrame(filas), {"R² -M": "{:.3f}", "R² +M": "{:.3f}"})
+
+
+# ==============================================================================
 # 3. BARRA LATERAL — navegación agrupada
 # ==============================================================================
 def nav_item(nombre):
@@ -3168,6 +3392,7 @@ with st.sidebar:
     nav_item("Estadística")
     nav_item("Residuos")
     nav_item("Discusión y conclusiones")
+    nav_item("Concordancia con el paper")
     nav_item("Validación externa")
 
     st.markdown('<span class="field-label">Datos</span>', unsafe_allow_html=True)
@@ -3921,6 +4146,13 @@ elif seccion == "Discusión y conclusiones":
 
 
 # ==============================================================================
+# SECCIÓN · CONCORDANCIA CON EL PAPER DE ORIGEN
+# ==============================================================================
+elif seccion == "Concordancia con el paper":
+    cc_render()
+
+
+# ==============================================================================
 # SECCIÓN · VALIDACIÓN EXTERNA
 # ==============================================================================
 elif seccion == "Validación externa":
@@ -4007,6 +4239,7 @@ elif seccion == "Datos de prueba":
             st.error(error)
         else:
             st.session_state.datos_reales = datos_cargados
+            st.session_state.cc_paper = cc_leer_paper(archivo_subido)
             st.session_state.fuente_datos = "real"
             st.session_state.ajustado = False
             st.session_state.resultados = None
