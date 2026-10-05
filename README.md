@@ -9,7 +9,7 @@
 ![Excel](https://img.shields.io/badge/Excel-217346?style=flat&logo=microsoftexcel&logoColor=white)
 ![License MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat)
 
-**Desarrollado por:** Richard Montez, Diego Barrios, Santiago Uribe y Oscar Llanos
+**Desarrollado por:** Richard Montes, Diego Barrios, Santiago Uribe y Oscar Llanos
 
 Aplicación en Streamlit que ajusta y compara tres modelos matemáticos de
 crecimiento (**Exponencial**, **Logístico**, **Gompertz**) sobre datos de
