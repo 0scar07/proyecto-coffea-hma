@@ -94,8 +94,12 @@ La navegación de la app tiene estas secciones:
 - **Residuos** — ANOVA de residuos (residuo ~ día y |residuo| ~ modelo con
   Tukey), con explicación de cada gráfica y de cada columna de la tabla.
 - **Discusión y conclusiones** — lectura editorial de los resultados.
-- **Datos de prueba** — generación de datos simulados o carga de un Excel
-  propio (o el real incluido en `datos_reales/`).
+- **Validación externa** — compara lo que predicen los modelos (ajustados a
+  los datos reales) con los valores reales de un experimento independiente
+  publicado. Ver [Validación externa](#validación-externa).
+- **Datos de prueba** — generación de datos simulados, carga de un Excel
+  propio (o el real incluido en `datos_reales/`) y carga del Excel de un
+  paper externo para la validación.
 - **Exportar reporte** — genera el PDF con metodología, tablas y las
   mismas gráficas mostradas en la app.
 
@@ -173,11 +177,70 @@ la micorrización.
   "entrenamiento" contra la del subconjunto de prueba escondido. Esto mide
   **qué tan estable es la media reportada** frente a qué réplicas
   específicas caen en la muestra — no valida que los modelos de crecimiento
-  generalicen a datos nuevos ni a otras condiciones. **No existe, todavía,
-  ninguna validación externa** de los modelos contra un dataset distinto al
-  de Aguirre-Medina et al. (2023).
+  generalicen a datos nuevos ni a otras condiciones.
+- **Validación externa**: se hace dentro de la app, en la sección
+  **Validación externa** (ver [Validación externa](#validación-externa)),
+  contra datos de experimentos distintos al de Aguirre-Medina et al. (2023).
+  Un análisis previo de la metodología contra otros tres estudios (León-Burgos,
+  Siqueira, Vallejos-Torres) está en
+  [docs/validacion_externa/informe.md](docs/validacion_externa/informe.md).
 
-Actualización: ya existe una validación externa parcial de la metodología (no de mis propios resultados) contra tres estudios publicados — ver [docs/validacion_externa/informe.md](docs/validacion_externa/informe.md).
+## Validación externa
+
+La sección **Validación externa** comprueba si las curvas ajustadas a los
+datos reales describen el crecimiento de plantas de **otro experimento**
+publicado, que los modelos nunca vieron. No hay entrenamiento: los modelos
+se ajustan por mínimos cuadrados no lineales (`curve_fit`) y después se usan
+tal cual, con sus parámetros fijos.
+
+**Cómo funciona**
+
+1. Los tres modelos se **ajustan** a los datos reales activos (o, si no se
+   cargó ninguno, a `datos_reales/datos_reales_coffea_2023.xlsx`).
+2. Con esas curvas ya ajustadas se **predice** el valor de cada variable en
+   los días que midió el paper externo.
+3. Se **compara** lo predicho con lo que el paper midió: error por fecha,
+   R², RMSE, MAE y error medio (%).
+
+**Pestañas**
+
+| Pestaña | Qué muestra |
+|---|---|
+| 1 · Lo que predice el modelo | Valor predicho para −M y +M en el día que se elija |
+| 2 · Predicho vs real | **Validación externa propiamente dicha**: tabla Día · Predicho · Real · Error y gráfica predicho vs real |
+| 3 · Fechas no vistas | Los modelos se ajustan solo a las primeras fechas del paper y predicen las últimas (pone a prueba la forma de las curvas) |
+| 4 · Efecto del hongo | Efecto real (+M vs −M) frente al que dan las curvas, con prueba t de Welch si el paper reporta DE y n |
+| 5 · Datos del paper | Valores cargados y qué validaciones permite cada variable |
+
+La columna **Tramo** indica si cada día del paper cae dentro del rango de
+días medido en los datos reales (28–112 ddt → "medido") o fuera
+("extrapolación"). Las predicciones solo son defendibles dentro del tramo
+medido.
+
+**Cargar un paper**: en **Datos de prueba → Datos externos para validación
+(paper)** se descarga la plantilla y se sube el Excel del paper. La hoja
+`datos` lleva una fila por variable, grupo y fecha (`variable`, `grupo`,
+`dia`, `media`, y opcionalmente `de` y `n`); también acepta réplicas
+(`valor`). La hoja `info` indica la cita y desde cuándo cuenta los días el
+paper (`trasplante`, `siembra` o `inoculacion`); si no es el trasplante, la
+app estima la alineación del tiempo comparando el tamaño de las plantas.
+
+**Papers incluidos** (`datos_reales/validacion_externa/`, cada Excel con una
+hoja `de_donde_sale` que indica el cuadro o figura de cada valor):
+
+| Archivo | Paper | Especie | −M / +M | Fechas | De dónde salen los valores |
+|---|---|---|---|---|---|
+| `franca_2014_catuai.xlsx` | França et al. (2014), *Rev. Bras. Ciências Agrárias* 9(4):506-511 | *C. arabica* Catuaí | Sin inocular / *G. clarum* + *Gi. margarita* | 0–150 días después del trasplante | Figuras 1-3 (pág. 508), **digitalizadas** (precisión ≈ ±1 % del eje) |
+| `aguirre_medina_2011.xlsx` | Aguirre-Medina et al. (2011), *Agronomía Mesoamericana* 22(1):71-80 | *C. arabica* Oro Azteca | Testigo / *G. intraradices* | 60–210 días después de la siembra | Cuadros 1 y 2 (págs. 74-75); biomasa = raíz + tallo + lámina |
+| `ibarra_puon_2014_suelo_arena.xlsx`, `..._suelo_pulpa.xlsx` | Ibarra-Puón et al. (2014), *Rev. Chapingo Serie Horticultura* 20(2):201-213 | *C. canephora* (robusta) — solo apoyo | Testigo / *R. intraradices* | 28–140 ddt | Cuadros 1 y 2 (págs. 206 y 208) |
+
+**Lectura de los resultados**: la altura es la variable que mejor se
+transfiere a otros experimentos (error de ~4–11 % dentro del tramo medido en
+França 2014). La biomasa y el área foliar fallan en valor absoluto porque
+las plantas de otros viveros acumulan distinta biomasa a la misma edad: los
+parámetros ajustados no se transfieren entre sistemas de producción y
+habría que volver a ajustarlos para cada uno. Ibarra-Puón (2014) es otra
+especie y solo debe usarse como referencia complementaria.
 
 ## Cómo correrla localmente
 
@@ -207,7 +270,8 @@ proyecto-coffea-hma/
 │   └── .streamlit/
 │       └── config.toml         # tema nativo de Streamlit (paleta "Cuaderno de campo")
 ├── datos_reales/
-│   └── datos_reales_coffea_2023.xlsx   # datos del Cuadro 2 de Aguirre-Medina et al. (2023)
+│   ├── datos_reales_coffea_2023.xlsx   # datos del Cuadro 2 de Aguirre-Medina et al. (2023)
+│   └── validacion_externa/             # Excel de papers externos para la sección Validación externa
 ├── scripts/
 │   └── validacion_cruzada_real.py      # validación cruzada (hold-out) sobre los datos reales
 ├── docs/
@@ -231,7 +295,10 @@ Documentación técnica del código, navegable en el navegador: [docs/documentac
    crecimiento.
 4. Descarga las gráficas individuales en PNG desde los botones bajo cada
    figura.
-5. Genera el reporte completo en **Exportar reporte**.
+5. Para la validación externa: en **Datos de prueba → Datos externos para
+   validación (paper)** sube uno de los Excel de
+   `datos_reales/validacion_externa/` y abre **Validación externa**.
+6. Genera el reporte completo en **Exportar reporte**.
 
 ## Desplegar en Streamlit Cloud
 
@@ -248,10 +315,9 @@ quedado de una versión anterior).
 
 ## Trabajo futuro (en proceso)
 
-- **Validación externa**: contrastar los modelos contra un dataset de
-  crecimiento de *Coffea arabica* distinto al de Aguirre-Medina et al.
-  (2023), idealmente uno con más momentos de muestreo que cubran también la
-  fase de desaceleración.
+- **Ampliar la validación externa**: sumar papers de *Coffea arabica* con
+  datos por fecha publicados en tablas (no solo figuras) y con muestreos
+  más allá de 112 ddt, e incluir la validación externa en el reporte PDF.
 - **App móvil**: una versión en Flutter + FastAPI está contemplada como
   proyecto separado (repo propio, aún sin publicar) — no reemplaza esta app
   de Streamlit, sería un cliente adicional.
