@@ -197,22 +197,28 @@ La sección **Concordancia con el paper** compara lo que **concluyeron los
 autores** del paper del que salen los datos reales (Aguirre-Medina et al.
 2023) con lo que **obtiene la app** a partir de esos mismos datos. No es una
 validación externa —los datos son los mismos—: comprueba que la app los
-procesa sin distorsionarlos y llega a las mismas conclusiones. Tiene tres
+describe bien y llega a las mismas conclusiones. Tiene un resumen y tres
 partes:
 
-1. **Diferencias −M vs +M por variable y día**: la significancia según las
-   letras de Tukey del paper (Cuadro 2, pág. 276; dos tratamientos difieren
-   si no comparten ninguna letra) frente a la prueba t de Welch de la app.
-   Con los datos incluidos coinciden **11 de 11** casos evaluables, la
-   dirección del efecto coincide en **16 de 16** y las medias son iguales a
-   las publicadas. La biomasa total no tiene letras en el paper (el cuadro las
-   da por parte: raíz, tallo y lámina), por eso no entra en el conteo.
-2. **Conclusiones de los autores** (pág. 279) frente a la evidencia de la app.
+- **Resumen**: error medio de las curvas frente a los valores publicados
+  (**13.3 %**), coincidencia en la significancia (**11 de 11** casos
+  evaluables) y en el signo del efecto del hongo según las curvas (**14 de
+  16**).
+1. **Valores: paper vs app, por variable**: para cada día, el valor
+   publicado en el Cuadro 2 (pág. 276) junto al valor que da la curva que la
+   app ajustó a esos datos (el modelo de mejor R² en cada grupo), con su error
+   y una gráfica de puntos del paper y curvas de la app. Aquí la app no predice
+   datos nuevos: el error mide qué tan bien la curva describe los datos. Los
+   errores grandes se concentran en el primer muestreo (28 ddt), donde los
+   valores son muy pequeños.
+2. **¿La diferencia −M vs +M es significativa?**: lo que dice el paper (letras
+   de Tukey; dos tratamientos difieren si no comparten ninguna letra) frente a
+   lo que dice la app (prueba t de Welch). La biomasa total no tiene letras en
+   el paper (las da por parte: raíz, tallo y lámina), por eso no se compara.
+3. **Conclusiones de los autores** (pág. 279) frente a la evidencia de la app.
    Las conclusiones sobre crecimiento quedan respaldadas en parte (+M supera a
    −M en 14 de 16 casos, pero no siempre de forma significativa con *R.
    intraradices*); la del fósforo no es evaluable porque la app no lo mide.
-3. **Lo que aporta la app**: el modelo de crecimiento que mejor ajusta cada
-   variable y grupo, algo que el paper no reporta.
 
 Los resultados y conclusiones del paper no están fijos en el código: se leen
 de las hojas `paper_resultados` (`variable`, `dia`, `media_menos`,
