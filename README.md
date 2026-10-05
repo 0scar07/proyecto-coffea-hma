@@ -94,6 +94,9 @@ La navegación de la app tiene estas secciones:
 - **Residuos** — ANOVA de residuos (residuo ~ día y |residuo| ~ modelo con
   Tukey), con explicación de cada gráfica y de cada columna de la tabla.
 - **Discusión y conclusiones** — lectura editorial de los resultados.
+- **Concordancia con el paper** — compara lo que concluyeron los autores del
+  paper de origen con lo que obtiene la app con esos mismos datos. Ver
+  [Concordancia con el paper de origen](#concordancia-con-el-paper-de-origen).
 - **Validación externa** — compara lo que predicen los modelos (ajustados a
   los datos reales) con los valores reales de un experimento independiente
   publicado. Ver [Validación externa](#validación-externa).
@@ -135,9 +138,12 @@ muestreo (28, 56, 84 y 112 días después del trasplante), 5 réplicas por
 grupo y día. La variable diámetro del tallo no está en el paper y sigue
 usando datos simulados.
 
-El archivo tiene dos hojas: `datos` (columnas `variable`, `grupo`, `dat`,
+El archivo tiene cuatro hojas: `datos` (columnas `variable`, `grupo`, `dat`,
 `replica`, `valor` — este es también el formato que espera la app para
-cargar un Excel propio) y `notas` (texto con la cita completa).
+cargar un Excel propio), `notas` (texto con la cita completa), y
+`paper_resultados` y `paper_conclusiones` (resultados y conclusiones del
+paper, usados por la sección [Concordancia con el paper de
+origen](#concordancia-con-el-paper-de-origen)).
 
 **Nota metodológica importante:** el paper solo reporta media y desviación
 estándar (o CV%) por tratamiento y día — no publica las mediciones planta
@@ -184,6 +190,41 @@ la micorrización.
   Un análisis previo de la metodología contra otros tres estudios (León-Burgos,
   Siqueira, Vallejos-Torres) está en
   [docs/validacion_externa/informe.md](docs/validacion_externa/informe.md).
+
+## Concordancia con el paper de origen
+
+La sección **Concordancia con el paper** compara lo que **concluyeron los
+autores** del paper del que salen los datos reales (Aguirre-Medina et al.
+2023) con lo que **obtiene la app** a partir de esos mismos datos. No es una
+validación externa —los datos son los mismos—: comprueba que la app los
+procesa sin distorsionarlos y llega a las mismas conclusiones. Tiene tres
+partes:
+
+1. **Diferencias −M vs +M por variable y día**: la significancia según las
+   letras de Tukey del paper (Cuadro 2, pág. 276; dos tratamientos difieren
+   si no comparten ninguna letra) frente a la prueba t de Welch de la app.
+   Con los datos incluidos coinciden **11 de 11** casos evaluables, la
+   dirección del efecto coincide en **16 de 16** y las medias son iguales a
+   las publicadas. La biomasa total no tiene letras en el paper (el cuadro las
+   da por parte: raíz, tallo y lámina), por eso no entra en el conteo.
+2. **Conclusiones de los autores** (pág. 279) frente a la evidencia de la app.
+   Las conclusiones sobre crecimiento quedan respaldadas en parte (+M supera a
+   −M en 14 de 16 casos, pero no siempre de forma significativa con *R.
+   intraradices*); la del fósforo no es evaluable porque la app no lo mide.
+3. **Lo que aporta la app**: el modelo de crecimiento que mejor ajusta cada
+   variable y grupo, algo que el paper no reporta.
+
+Los resultados y conclusiones del paper no están fijos en el código: se leen
+de las hojas `paper_resultados` (`variable`, `dia`, `media_menos`,
+`letra_menos`, `media_mas`, `letra_mas`, `fuente`, `nota`) y
+`paper_conclusiones` (`conclusion`, `pagina`, `variables`, `dias`) del Excel
+de datos reales. Si se carga otro Excel con esas hojas, la sección funciona
+igual.
+
+Precauciones: el paper compara 7 tratamientos con Tukey y la app solo −M y +M
+con Welch sobre réplicas sintéticas, así que en casos límite pueden diferir;
+y el paper se centra en cinco aislamientos nativos, mientras que la app solo
+usa el testigo y la referencia *R. intraradices*.
 
 ## Validación externa
 
@@ -295,10 +336,12 @@ Documentación técnica del código, navegable en el navegador: [docs/documentac
    crecimiento.
 4. Descarga las gráficas individuales en PNG desde los botones bajo cada
    figura.
-5. Para la validación externa: en **Datos de prueba → Datos externos para
+5. Abre **Concordancia con el paper** para comparar las conclusiones de los
+   autores del paper de origen con los resultados de la app.
+6. Para la validación externa: en **Datos de prueba → Datos externos para
    validación (paper)** sube uno de los Excel de
    `datos_reales/validacion_externa/` y abre **Validación externa**.
-6. Genera el reporte completo en **Exportar reporte**.
+7. Genera el reporte completo en **Exportar reporte**.
 
 ## Desplegar en Streamlit Cloud
 
