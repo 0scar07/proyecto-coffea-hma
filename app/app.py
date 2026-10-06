@@ -495,10 +495,102 @@ def componer_png_con_pie(png_bytes, pie, scale=3):
 ESCALA_DESCARGA = 4  # PNG descargable = 4× el tamaño de la gráfica (≈ 4800 px de ancho): nítido en Word/PDF
 
 
-def boton_descarga_png(fig, etiqueta, archivo, clave, pie=None):
+# --- PNG para documentos (Times New Roman, 11 pt) ---------------------------------------------
+# El tamaño de letra «en puntos» solo existe una vez que la imagen se pega en una hoja: depende
+# del ancho al que quede. Por eso este PNG se arma para un ancho fijo (el de una hoja carta o A4
+# con márgenes de 2.5 cm) y lleva esa resolución grabada (DPI): Word, LibreOffice y Google Docs
+# lo insertan a DOC_ANCHO_CM y TODO el texto de la gráfica queda en DOC_PUNTOS pt. Si se cambia
+# el ancho a mano en el documento, la letra cambia en la misma proporción.
+# Liberation Serif / Tinos son clones de Times New Roman con las mismas medidas, por si el
+# servidor que genera la imagen no tiene la fuente de Microsoft.
+FUENTE_DOCUMENTO = "Times New Roman, Times, Liberation Serif, Tinos, serif"
+DOC_ANCHO_CM = 16.0
+DOC_PUNTOS = 11
+DOC_DPI = 600
+DOC_PX_LETRA = 17  # px de Plotly que equivalen a DOC_PUNTOS en la hoja (el tamaño base de estilo_publicacion)
+DOC_ANCHO_PX = round(DOC_ANCHO_CM / 2.54 * 72 * DOC_PX_LETRA / DOC_PUNTOS)  # ≈ 701 px
+ESCALA_DOCUMENTO = DOC_DPI * DOC_ANCHO_CM / 2.54 / DOC_ANCHO_PX  # ≈ 5.4 → 3780 px de ancho
+
+
+def _unificar_fuentes(obj):
+    """Recorre el dict de la figura: toda fuente pasa a FUENTE_DOCUMENTO y DOC_PX_LETRA, y los
+    tamaños escritos dentro del texto (<span style='font-size:…'>) también."""
+    if isinstance(obj, dict):
+        for clave, valor in obj.items():
+            if clave.endswith("font") and isinstance(valor, dict):
+                valor["family"] = FUENTE_DOCUMENTO
+                valor["size"] = DOC_PX_LETRA
+            elif isinstance(valor, str) and "font-size" in valor:
+                obj[clave] = re.sub(r"font-size:\s*[\d.]+px", f"font-size:{DOC_PX_LETRA}px", valor)
+            else:
+                _unificar_fuentes(valor)
+    elif isinstance(obj, (list, tuple)):
+        for valor in obj:
+            _unificar_fuentes(valor)
+    return obj
+
+
+def _crecer_arriba(fig, px):
+    """Agrega (o quita) `px` al margen superior y al alto total: el área de trazado no cambia."""
+    if px:
+        fig.update_layout(height=(fig.layout.height or 450) + px, margin_t=(fig.layout.margin.t or 0) + px)
+
+
+def figura_para_documento(fig):
+    """Copia de la figura (de un solo panel) lista para pegar en un documento: ancho
+    DOC_ANCHO_PX, Times New Roman y una sola medida de letra (DOC_PX_LETRA = DOC_PUNTOS pt en la
+    hoja). No toca la figura de la pantalla. El título se vuelve a envolver al ancho nuevo y lo
+    que cambia de alto se suma al margen superior y al alto total, así el área de trazado (y la
+    leyenda, que estilo_publicacion ubica en fracciones de ella) sigue igual."""
+    doc = go.Figure(_unificar_fuentes(fig.to_dict()))
+    doc.update_layout(width=DOC_ANCHO_PX)
+
+    texto = fig.layout.title.text if fig.layout.title is not None else None
+    m = re.fullmatch(r"<b>(.*?)</b>(?:<br><span style='([^']*)'>(.*)</span>)?", texto or "", flags=re.S)
+    if m:
+        titulo, estilo_sub, subtitulo = m.group(1), m.group(2), m.group(3)
+        alto_antes = 31 * (titulo.count("<br>") + 1) + (27 * (subtitulo.count("<br>") + 1) if subtitulo else 0)
+        por_linea = int((DOC_ANCHO_PX - 20) / (DOC_PX_LETRA * 0.52))
+        titulo = _envolver_html(titulo.replace("<br>", " "), por_linea)
+        nuevo = f"<b>{titulo}</b>"
+        lineas = titulo.count("<br>") + 1
+        if subtitulo:
+            subtitulo = _envolver_html(subtitulo.replace("<br>", " "), por_linea)
+            estilo_sub = re.sub(r"font-size:\s*[\d.]+px", f"font-size:{DOC_PX_LETRA}px", estilo_sub)
+            nuevo += f"<br><span style='{estilo_sub}'>{subtitulo}</span>"
+            lineas += subtitulo.count("<br>") + 1
+        doc.update_layout(title_text=nuevo)
+        _crecer_arriba(doc, round(DOC_PX_LETRA * 1.4 * lineas) - alto_antes)
+
+    if doc.layout.showlegend and doc.layout.legend.orientation == "h":
+        # Al ancho nuevo la leyenda puede partirse en más filas y crece hacia arriba: se mide en
+        # SVG dónde quedó realmente y se deja justo el aire necesario bajo el título.
+        svg = doc.to_image(format="svg").decode()
+        leyenda = re.search(r'class="legend"[^>]*translate\([-\d.]+,\s*([-\d.]+)\)', svg)
+        tit = re.search(r'class="gtitle"[^>]*\sy="([\d.]+)"', svg)
+        if leyenda and tit:
+            lineas = len(re.findall(r'<tspan class="line"', svg[tit.start():svg.find("</text>", tit.start())]))
+            fondo_titulo = float(tit.group(1)) + (1.3 * (max(lineas, 1) - 1) + 1.0) * DOC_PX_LETRA
+            _crecer_arriba(doc, round(fondo_titulo + 14 - float(leyenda.group(1))))
+    return doc
+
+
+def png_para_documento(fig):
+    """PNG de figura_para_documento a DOC_DPI, con la resolución grabada en el archivo."""
+    png = figura_para_documento(fig).to_image(format="png", scale=ESCALA_DOCUMENTO)
+    buf = io.BytesIO()
+    Image.open(io.BytesIO(png)).convert("RGB").save(buf, format="PNG", dpi=(DOC_DPI, DOC_DPI))
+    return buf.getvalue()
+
+
+def boton_descarga_png(fig, etiqueta, archivo, clave, pie=None, para_documento=False):
     """Botón «Descargar PNG (alta resolución)». La imagen se genera SOLO al hacer clic (descarga
-    diferida), a ESCALA_DESCARGA, con el pie de figura debajo cuando se pasa `pie`."""
+    diferida), a ESCALA_DESCARGA, con el pie de figura debajo cuando se pasa `pie`. Con
+    `para_documento` sale en Times New Roman a DOC_PUNTOS pt al pegarla a DOC_ANCHO_CM
+    (png_para_documento; solo para figuras de un panel y sin pie)."""
     def generar():
+        if para_documento:
+            return png_para_documento(fig)
         png = fig.to_image(format="png", scale=ESCALA_DESCARGA)
         return componer_png_con_pie(png, pie, scale=ESCALA_DESCARGA) if pie else png
     st.download_button(f"⬇ Descargar PNG en alta resolución — {etiqueta}", data=generar, file_name=archivo,
@@ -3623,7 +3715,8 @@ elif seccion == "Ajustar modelos":
                                                  "mientras más cerca de la línea, mejor predice")
                     st.plotly_chart(fig, width='stretch', theme=None)
                     boton_descarga_png(fig, f"Real vs. predicho {NOMBRE_VARIABLE[variable]}",
-                                       f"real_vs_predicho_{variable}.png", f"png_real_pred_{variable}")
+                                       f"real_vs_predicho_{variable}.png", f"png_real_pred_{variable}",
+                                       para_documento=True)
                 else:
                     st.info(
                         f"No se dibuja el gráfico Real vs. predicho para **{NOMBRE_VARIABLE[variable]}**: "
