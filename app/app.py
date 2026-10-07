@@ -436,38 +436,67 @@ def mostrar_pie_streamlit(pie):
 _FUENTE_PIE_PNG_CACHE = {}
 
 
-def _fuente_pie_png(tam_px):
+def _fuente_pie_png(tam_px, serif=False):
     """Fuente TTF real para componer el pie en los PNG descargables (el bitmap por
-    defecto de PIL es ilegible a cualquier tamaño). Reutiliza la DejaVu Sans que ya trae
-    matplotlib -- ya es dependencia de la app, no se agrega ninguna nueva."""
-    if tam_px not in _FUENTE_PIE_PNG_CACHE:
+    defecto de PIL es ilegible a cualquier tamaño). Por defecto la DejaVu Sans que ya trae
+    matplotlib; con `serif`, Times New Roman o un clon con sus mismas medidas. Devuelve
+    (fuente, glifos que trae, DejaVu Sans de respaldo para los símbolos que le falten)."""
+    clave = (tam_px, serif)
+    if clave not in _FUENTE_PIE_PNG_CACHE:
         import matplotlib.font_manager as fm
-        ruta = fm.findfont("DejaVu Sans")
-        _FUENTE_PIE_PNG_CACHE[tam_px] = ImageFont.truetype(ruta, tam_px)
-    return _FUENTE_PIE_PNG_CACHE[tam_px]
+        from fontTools.ttLib import TTFont  # viene con matplotlib
+        respaldo = fm.findfont("DejaVu Sans")
+        ruta = None
+        for nombre in (("Times New Roman", "Liberation Serif", "Tinos", "Times", "DejaVu Serif") if serif else ()):
+            try:
+                ruta = fm.findfont(fm.FontProperties(family=nombre), fallback_to_default=False)
+                break
+            except ValueError:
+                continue
+        ruta = ruta or respaldo
+        with TTFont(ruta, fontNumber=0, lazy=True) as ttf:
+            glifos = set(ttf.getBestCmap())
+        _FUENTE_PIE_PNG_CACHE[clave] = (ImageFont.truetype(ruta, tam_px), glifos, ImageFont.truetype(respaldo, tam_px))
+    return _FUENTE_PIE_PNG_CACHE[clave]
 
 
-def componer_png_con_pie(png_bytes, pie, scale=3):
+def _trozos_pie(texto, tam_px, serif=False):
+    """Parte el texto en trozos (texto, fuente): los símbolos que la fuente no trae (★, ◇…) se
+    escriben con DejaVu Sans para que no queden en blanco."""
+    fuente, glifos, respaldo = _fuente_pie_png(tam_px, serif)
+    trozos = []
+    for car in texto:
+        f = fuente if ord(car) in glifos else respaldo
+        if trozos and trozos[-1][1] is f:
+            trozos[-1][0] += car
+        else:
+            trozos.append([car, f])
+    return trozos
+
+
+def componer_png_con_pie(png_bytes, pie, scale=3, tam_base=15, serif=False, dpi=None):
     """Compone el PNG final para descarga: la figura de Plotly (limpia, sin pie
     incrustado) arriba, y el pie como una franja blanca debajo, con texto envuelto a
-    líneas, alineado a la izquierda, fuente >= 11pt (proporcional a `scale`, igual que el
-    resto de la figura, para que no quede diminuta en la imagen de alta resolución)."""
+    líneas, alineado a la izquierda. La letra mide `tam_base` px de la figura × `scale`, igual
+    que el resto de la figura, para que no quede diminuta en la imagen de alta resolución."""
     img = Image.open(io.BytesIO(png_bytes)).convert("RGB")
     ancho = img.width
-    tam_fuente = max(int(15 * scale), 14)
+    tam_fuente = max(int(round(tam_base * scale)), 14)
     interlineado = int(tam_fuente * 1.5)
     margen = int(14 * scale)
-    fuente = _fuente_pie_png(tam_fuente)
 
     draw_tmp = ImageDraw.Draw(img)
     ancho_max_texto = ancho - 2 * margen
+
+    def largo(texto):
+        return sum(draw_tmp.textlength(t, font=f) for t, f in _trozos_pie(texto, tam_fuente, serif))
 
     def envolver(texto):
         palabras = texto.split(" ")
         actual, salida = "", []
         for palabra in palabras:
             prueba = (actual + " " + palabra).strip()
-            if not actual or draw_tmp.textlength(prueba, font=fuente) <= ancho_max_texto:
+            if not actual or largo(prueba) <= ancho_max_texto:
                 actual = prueba
             else:
                 salida.append(actual)
@@ -483,16 +512,17 @@ def componer_png_con_pie(png_bytes, pie, scale=3):
     lienzo.paste(img, (0, 0))
     draw = ImageDraw.Draw(lienzo)
     y = img.height + margen
+    color = (26, 23, 20) if serif else (60, 56, 50)
     for linea in lineas_fisicas:
-        draw.text((margen, y), linea, font=fuente, fill=(60, 56, 50))
+        x = margen
+        for trozo, fuente in _trozos_pie(linea, tam_fuente, serif):
+            draw.text((x, y), trozo, font=fuente, fill=color)
+            x += draw.textlength(trozo, font=fuente)
         y += interlineado
 
     buf = io.BytesIO()
-    lienzo.save(buf, format="PNG")
+    lienzo.save(buf, format="PNG", **({"dpi": (dpi, dpi)} if dpi else {}))
     return buf.getvalue()
-
-
-ESCALA_DESCARGA = 4  # PNG descargable = 4× el tamaño de la gráfica (≈ 4800 px de ancho): nítido en Word/PDF
 
 
 # --- PNG para documentos (Times New Roman, 11 pt) ---------------------------------------------
@@ -507,6 +537,7 @@ FUENTE_DOCUMENTO = "Times New Roman, Times, Liberation Serif, Tinos, serif"
 DOC_ANCHO_CM = 16.0
 DOC_PUNTOS = 11
 DOC_DPI = 600
+DOC_ALTO_MAX_CM = 23.0  # alto máximo de la imagen (con su pie) para que entre en una hoja sin que el procesador la achique
 DOC_PX_LETRA = 17  # px de Plotly que equivalen a DOC_PUNTOS en la hoja (el tamaño base de estilo_publicacion)
 DOC_ANCHO_PX = round(DOC_ANCHO_CM / 2.54 * 72 * DOC_PX_LETRA / DOC_PUNTOS)  # ≈ 701 px
 ESCALA_DOCUMENTO = DOC_DPI * DOC_ANCHO_CM / 2.54 / DOC_ANCHO_PX  # ≈ 5.4 → 3780 px de ancho
@@ -536,12 +567,13 @@ def _crecer_arriba(fig, px):
         fig.update_layout(height=(fig.layout.height or 450) + px, margin_t=(fig.layout.margin.t or 0) + px)
 
 
-def figura_para_documento(fig):
-    """Copia de la figura (de un solo panel) lista para pegar en un documento: ancho
+def figura_para_documento(fig, recorte_px=0):
+    """Copia de la figura lista para pegar en un documento: ancho
     DOC_ANCHO_PX, Times New Roman y una sola medida de letra (DOC_PX_LETRA = DOC_PUNTOS pt en la
     hoja). No toca la figura de la pantalla. El título se vuelve a envolver al ancho nuevo y lo
     que cambia de alto se suma al margen superior y al alto total, así el área de trazado (y la
-    leyenda, que estilo_publicacion ubica en fracciones de ella) sigue igual."""
+    leyenda, que estilo_publicacion ubica en fracciones de ella) sigue igual. `recorte_px` quita
+    alto a los paneles (no a la letra) cuando la imagen no cabe en una hoja."""
     doc = go.Figure(_unificar_fuentes(fig.to_dict()))
     doc.update_layout(width=DOC_ANCHO_PX)
 
@@ -562,38 +594,166 @@ def figura_para_documento(fig):
         doc.update_layout(title_text=nuevo)
         _crecer_arriba(doc, round(DOC_PX_LETRA * 1.4 * lineas) - alto_antes)
 
-    if doc.layout.showlegend and doc.layout.legend.orientation == "h":
-        # Al ancho nuevo la leyenda puede partirse en más filas y crece hacia arriba: se mide en
-        # SVG dónde quedó realmente y se deja justo el aire necesario bajo el título.
-        svg = doc.to_image(format="svg").decode()
-        leyenda = re.search(r'class="legend"[^>]*translate\([-\d.]+,\s*([-\d.]+)\)', svg)
-        tit = re.search(r'class="gtitle"[^>]*\sy="([\d.]+)"', svg)
-        if leyenda and tit:
-            lineas = len(re.findall(r'<tspan class="line"', svg[tit.start():svg.find("</text>", tit.start())]))
-            fondo_titulo = float(tit.group(1)) + (1.3 * (max(lineas, 1) - 1) + 1.0) * DOC_PX_LETRA
-            _crecer_arriba(doc, round(fondo_titulo + 14 - float(leyenda.group(1))))
+    _bajar_rotulos_de_zona(doc)
+    if not _apilar_paneles(doc, recorte_px):
+        _acortar_trazado(doc, recorte_px)
+    _corregir_por_medicion(doc)
     return doc
 
 
-def png_para_documento(fig):
-    """PNG de figura_para_documento a DOC_DPI, con la resolución grabada en el archivo."""
-    png = figura_para_documento(fig).to_image(format="png", scale=ESCALA_DOCUMENTO)
+def _bajar_rotulos_de_zona(fig):
+    """Los rótulos de las zonas sombreadas de Validación externa («extrapolación», «fechas que el
+    modelo no vio») van arriba de la zona, justo donde terminan las curvas y sus etiquetas: con la
+    letra más grande chocan. En el documento pasan al pie de la zona."""
+    for a in fig.layout.annotations:
+        if (a.yref or "").endswith(" domain") and a.y == 1 and a.yanchor == "top" and not a.showarrow \
+                and not (a.xref or "").endswith(" domain"):
+            a.update(y=0, yanchor="bottom", yshift=4, bgcolor="rgba(243,238,230,0.9)")
+
+
+def _acortar_trazado(fig, px):
+    """Quita `px` al alto del área de trazado (hasta un 25 %) sin mover la leyenda respecto a ella."""
+    m = fig.layout.margin
+    alto = (fig.layout.height or 450) - (m.t or 0) - (m.b or 0)
+    px = min(px, round(alto * 0.25))
+    if px <= 0:
+        return
+    if fig.layout.legend.y is not None and fig.layout.legend.y > 1:
+        fig.update_layout(legend_y=1 + (fig.layout.legend.y - 1) * alto / (alto - px))
+    fig.update_layout(height=(fig.layout.height or 450) - px)
+
+
+def _apilar_paneles(fig, recorte_px=0, panel_min_px=180):
+    """Dos paneles lado a lado no caben a DOC_ANCHO_CM con letra de DOC_PUNTOS pt (las etiquetas
+    al final de las líneas de uno invaden el otro): en el documento van uno ENCIMA del otro, cada
+    uno a todo el ancho. Las franjas, etiquetas y anotaciones están en coordenadas de cada panel,
+    así que se mueven con él; las que van por fuera del panel (encabezados) conservan su distancia
+    en px, y el hueco entre paneles deja sitio al eje X de arriba y al encabezado de abajo."""
+    ejes = fig.layout.to_plotly_json()
+    if sorted(k for k in ejes if re.fullmatch(r"[xy]axis\d*", k)) != ["xaxis", "xaxis2", "yaxis", "yaxis2"]:
+        return False
+    x1, x2 = fig.layout.xaxis.domain or (0, 1), fig.layout.xaxis2.domain or (0, 1)
+    y1, y2 = fig.layout.yaxis.domain or (0, 1), fig.layout.yaxis2.domain or (0, 1)
+    if not (x1[1] < x2[0] and tuple(y1) == tuple(y2)):
+        return False
+    m = fig.layout.margin
+    alto_antes = (fig.layout.height or 450) - (m.t or 0) - (m.b or 0)
+    panel_antes = alto_antes * (y1[1] - y1[0])
+    fuera = [o for o in list(fig.layout.annotations) + list(fig.layout.shapes)
+             if (o.yref or "") in ("y domain", "y2 domain")]
+
+    def sobre_el_panel(o):
+        """px que ocupa por encima de su panel (0 si va dentro)."""
+        if getattr(o, "text", None) is not None:
+            if o.y is None or o.y <= 1:
+                return 0
+            alto_txt = (o.text.count("<br>") + 1) * DOC_PX_LETRA * 1.3
+            return (o.y - 1) * panel_antes + {"bottom": alto_txt, "top": 0}.get(o.yanchor, alto_txt / 2)
+        return max((o.y1 or 0) - 1, 0) * panel_antes
+
+    encabezado = max([sobre_el_panel(o) for o in fuera if o.yref == "y2 domain"] + [0])
+    hueco = round(DOC_PX_LETRA * 4.2 + encabezado + 12)  # números y título del eje X de arriba + encabezado de abajo
+    alto_panel = max(round(panel_antes * 0.8) - recorte_px // 2, panel_min_px)
+    alto = 2 * alto_panel + hueco
+    if fig.layout.legend.y is not None and fig.layout.legend.y > 1:
+        fig.update_layout(legend_y=1 + (fig.layout.legend.y - 1) * alto_antes / alto)
+    fig.update_layout(height=(m.t or 0) + (m.b or 0) + alto,
+                      xaxis_domain=[0, 1], xaxis2_domain=[0, 1],
+                      yaxis_domain=[(alto_panel + hueco) / alto, 1], yaxis2_domain=[0, alto_panel / alto],
+                      yaxis2_showticklabels=True)
+    if fig.layout.yaxis.title.text and not fig.layout.yaxis2.title.text:
+        fig.update_layout(yaxis2_title=fig.layout.yaxis.title.to_plotly_json())
+    # Lo que está por fuera del panel guarda su distancia en px aunque el panel cambie de alto.
+    k = panel_antes / alto_panel
+    for o in fuera:
+        for campo in ("y", "y0", "y1"):
+            v = getattr(o, campo, None)
+            if v is not None and (v > 1 or v < 0):
+                setattr(o, campo, (1 + (v - 1) * k) if v > 1 else v * k)
+    # Etiquetas al final de las líneas: con el panel más bajo se separan para que no se encimen.
+    for eje_y, ref in (("yaxis", "y"), ("yaxis2", "y2")):
+        rango = fig.layout[eje_y].range
+        etiquetas = sorted((a for a in fig.layout.annotations
+                            if a.yref == ref and a.xanchor == "left" and a.xshift == 6 and not a.showarrow),
+                           key=lambda a: a.y)
+        if rango is None or len(etiquetas) < 2:
+            continue
+        separacion = DOC_PX_LETRA * 1.3 * (rango[1] - rango[0]) / alto_panel
+        for anterior, actual in zip(etiquetas, etiquetas[1:]):
+            if actual.y - anterior.y < separacion:
+                actual.y = anterior.y + separacion
+    # Rótulos con flecha (p. ej. «Día 38: crece más rápido»): arriba a la izquierda chocan con el
+    # rótulo de K en un panel bajo; en una línea, abajo a la derecha del punto (bajo la curva de
+    # crecimiento) hay sitio.
+    for a in fig.layout.annotations:
+        if a.showarrow and (a.ax or 0) < 0 and (a.ay or 0) < 0 and "crece" in (a.text or ""):
+            a.update(text=a.text.replace("<br>", " "), ax=24, ay=26, xanchor="left", yanchor="middle",
+                     align="left")
+    return True
+
+
+def _corregir_por_medicion(fig, intentos=3):
+    """Se dibuja la figura en SVG y se mide dónde quedó cada cosa: (1) si la leyenda horizontal
+    —que al ancho nuevo puede partirse en más filas y crece hacia arriba— choca con el título o
+    queda muy lejos de él, y (2) si alguna anotación se sale por los lados de la imagen. Se
+    corrige con los márgenes y se vuelve a medir."""
+    for _ in range(intentos):
+        svg = fig.to_image(format="svg").decode()
+        cambio = False
+        leyenda = re.search(r'class="legend"[^>]*translate\([-\d.]+,\s*([-\d.]+)\)', svg)
+        titulo = re.search(r'class="gtitle"[^>]*\sy="([\d.]+)"', svg)
+        if fig.layout.showlegend and fig.layout.legend.orientation == "h" and leyenda and titulo:
+            lineas = len(re.findall(r'<tspan class="line"', svg[titulo.start():svg.find("</text>", titulo.start())]))
+            fondo_titulo = float(titulo.group(1)) + (1.3 * (max(lineas, 1) - 1) + 1.0) * DOC_PX_LETRA
+            falta = round(fondo_titulo + 14 - float(leyenda.group(1)))
+            if abs(falta) > 2:
+                _crecer_arriba(fig, falta)
+                cambio = True
+        cajas = [(float(x), float(w)) for x, w in re.findall(
+            r'class="cursor-pointer" transform="translate\(([-\d.]+),[-\d.]+\)"><rect class="bg" '
+            r'x="[-\d.]+" y="[-\d.]+" width="([\d.]+)"', svg)]
+        if cajas:
+            ancho = fig.layout.width
+            sobra_der = max(x + w for x, w in cajas) - (ancho - 6)
+            sobra_izq = 6 - min(x for x, _ in cajas)
+            if sobra_der > 1:
+                fig.update_layout(margin_r=(fig.layout.margin.r or 0) + int(sobra_der * 1.3) + 1)
+                cambio = True
+            if sobra_izq > 1:
+                fig.update_layout(margin_l=(fig.layout.margin.l or 0) + int(sobra_izq * 1.3) + 1)
+                cambio = True
+        if not cambio:
+            return
+
+
+def png_para_documento(fig, pie=None):
+    """PNG de figura_para_documento a DOC_DPI, con el pie debajo (también en Times New Roman a
+    DOC_PUNTOS pt) y la resolución grabada en el archivo. Si con el pie pasa de DOC_ALTO_MAX_CM, se
+    vuelve a armar con los paneles más bajos: así entra en la hoja sin que la letra se achique."""
+    recorte = 0
+    for _ in range(2):
+        png = figura_para_documento(fig, recorte).to_image(format="png", scale=ESCALA_DOCUMENTO)
+        if pie:
+            png = componer_png_con_pie(png, pie, scale=ESCALA_DOCUMENTO, tam_base=DOC_PX_LETRA, serif=True,
+                                       dpi=DOC_DPI)
+        alto_max = DOC_ALTO_MAX_CM / 2.54 * DOC_DPI
+        alto = Image.open(io.BytesIO(png)).height
+        if alto <= alto_max or recorte:
+            break
+        recorte = int((alto - alto_max) / ESCALA_DOCUMENTO) + 1
+    if pie:
+        return png
     buf = io.BytesIO()
     Image.open(io.BytesIO(png)).convert("RGB").save(buf, format="PNG", dpi=(DOC_DPI, DOC_DPI))
     return buf.getvalue()
 
 
-def boton_descarga_png(fig, etiqueta, archivo, clave, pie=None, para_documento=False):
+def boton_descarga_png(fig, etiqueta, archivo, clave, pie=None):
     """Botón «Descargar PNG (alta resolución)». La imagen se genera SOLO al hacer clic (descarga
-    diferida), a ESCALA_DESCARGA, con el pie de figura debajo cuando se pasa `pie`. Con
-    `para_documento` sale en Times New Roman a DOC_PUNTOS pt al pegarla a DOC_ANCHO_CM
-    (png_para_documento; solo para figuras de un panel y sin pie)."""
-    def generar():
-        if para_documento:
-            return png_para_documento(fig)
-        png = fig.to_image(format="png", scale=ESCALA_DESCARGA)
-        return componer_png_con_pie(png, pie, scale=ESCALA_DESCARGA) if pie else png
-    st.download_button(f"⬇ Descargar PNG en alta resolución — {etiqueta}", data=generar, file_name=archivo,
+    diferida) y sale lista para documentos (png_para_documento): Times New Roman a DOC_PUNTOS pt al
+    pegarla a DOC_ANCHO_CM, con el pie de figura debajo cuando se pasa `pie`."""
+    st.download_button(f"⬇ Descargar PNG en alta resolución — {etiqueta}",
+                       data=lambda: png_para_documento(fig, pie), file_name=archivo,
                        mime="image/png", key=clave)
 
 
@@ -3715,8 +3875,7 @@ elif seccion == "Ajustar modelos":
                                                  "mientras más cerca de la línea, mejor predice")
                     st.plotly_chart(fig, width='stretch', theme=None)
                     boton_descarga_png(fig, f"Real vs. predicho {NOMBRE_VARIABLE[variable]}",
-                                       f"real_vs_predicho_{variable}.png", f"png_real_pred_{variable}",
-                                       para_documento=True)
+                                       f"real_vs_predicho_{variable}.png", f"png_real_pred_{variable}")
                 else:
                     st.info(
                         f"No se dibuja el gráfico Real vs. predicho para **{NOMBRE_VARIABLE[variable]}**: "
