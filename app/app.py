@@ -280,9 +280,11 @@ def estilo_publicacion(fig, width=None, height=420, left_margin=70, top_margin=N
     ancho_ref = width or fig.layout.width or 1000
     if titulo and "<br>" not in titulo:
         # Títulos y subtítulos largos se parten según el ancho: Plotly no los envuelve solo.
-        titulo = _envolver_html(titulo, max(int(ancho_ref / 14), 40))
+        # Margen para pantallas más angostas que el ancho de exportación (la gráfica se encoge
+        # al ancho del contenedor, pero el texto no).
+        titulo = _envolver_html(titulo, max(int(ancho_ref / 15.5), 40))
     if subtitulo:
-        subtitulo = _envolver_html(subtitulo, max(int(ancho_ref / 8.6), 50))
+        subtitulo = _envolver_html(subtitulo, max(int(ancho_ref / 9.8), 50))
     lineas_titulo = titulo.count("<br>") + 1 if titulo else 0
     lineas_sub = (subtitulo or "").count("<br>") + 1 if subtitulo else 0
     if top_margin is None:
@@ -366,7 +368,7 @@ def encabezado_panel(fig, panel, texto, color, alto_px=36):
     fig.add_shape(type="rect", xref=f"{xr} domain", yref=f"{yr} domain", x0=0, x1=0.008, y0=y0, y1=y1,
                   fillcolor=color, line_width=0)
     fig.add_annotation(xref=f"{xr} domain", yref=f"{yr} domain", x=0.022, y=(y0 + y1) / 2, text=texto,
-                       showarrow=False, xanchor="left", yanchor="middle",
+                       showarrow=False, xanchor="left", yanchor="middle", align="left",
                        font=dict(family=FUENTE_PUBLICACION, size=17.5, color=G_INK))
     return fig
 
@@ -1417,9 +1419,11 @@ def fig_curvas_publicacion(datos, RES, variable, modelos, fuente_datos="simulado
     y_bottom_cap = min(0, y_obs_min) - 0.05 * rango_total
     y_top_cap = y_obs_max * 1.25
 
-    fig = make_subplots(rows=1, cols=len(grupos), horizontal_spacing=0.13, shared_yaxes=True)
+    fig = make_subplots(rows=1, cols=len(grupos), horizontal_spacing=0.08, shared_yaxes=True)
 
     notas = []
+    r2_por_grupo = {}
+    marcas_por_grupo = {}   # grupo -> (K, Ti): se escriben en el encabezado, no dentro del gráfico
     ticks_x = dias_todos if len(dias_todos) <= 8 else None
     for col, grupo in enumerate(grupos, start=1):
         color_g = COLOR_GRUPO[grupo]
@@ -1455,7 +1459,6 @@ def fig_curvas_publicacion(datos, RES, variable, modelos, fuente_datos="simulado
             validos[modelo] = res
         mejor = max(validos, key=lambda m: validos[m]["r2"]) if validos else None
 
-        etiquetas = []
         for modelo, res in validos.items():
             estilo = MODELO_ESTILO[modelo]
             func = MODELOS[modelo]["func"]
@@ -1485,20 +1488,14 @@ def fig_curvas_publicacion(datos, RES, variable, modelos, fuente_datos="simulado
 
                 if tiene_k and dibujar_k:
                     fig.add_hline(y=K, line=dict(color=G_MUTED, dash="dot", width=1), row=1, col=col)
-                    fig.add_annotation(x=0.01, y=K, xref=f"{xr} domain", yref=yr, showarrow=False, xanchor="left",
-                                       yanchor="bottom", text=f"K ≈ {K:.3g} {unidad} · techo estimado",
-                                       font=dict(family=FUENTE_PUBLICACION, size=14.5, color=G_MUTED))
                     Ti = res["params"][2]
+                    marcas_por_grupo[grupo] = (K, Ti)
                     y_ti = float(func(Ti, *res["params"]))
-                    fig.add_trace(go.Scatter(x=[Ti], y=[y_ti], mode="markers", showlegend=False,
+                    fig.add_trace(go.Scatter(x=[Ti], y=[y_ti], mode="markers", showlegend=False, cliponaxis=False,
                                              marker=dict(symbol="diamond", size=12, color="white",
                                                          line=dict(color=G_INK, width=2)),
                                              hovertemplate=f"Punto de inflexión: día {Ti:.0f}<extra></extra>"),
                                   row=1, col=col)
-                    fig.add_annotation(x=Ti, y=y_ti, xref=xr, yref=yr, ax=-70, ay=-46, showarrow=True,
-                                       arrowhead=0, arrowcolor=G_MUTED, arrowwidth=1, align="right",
-                                       text=f"Día {Ti:.0f}: crece<br>más rápido",
-                                       font=dict(family=FUENTE_PUBLICACION, size=14.5, color=G_INK))
 
             visible = np.where((y_fino > y_top_cap) | (y_fino < y_bottom_cap), np.nan, y_fino)
             fig.add_trace(go.Scatter(
@@ -1506,11 +1503,7 @@ def fig_curvas_publicacion(datos, RES, variable, modelos, fuente_datos="simulado
                 line=dict(color=estilo["color"], dash=estilo["dash"], width=3 if es_mejor else 1.8),
                 hovertemplate=f"{modelo}<br>Día %{{x:.0f}}: %{{y:.2f}} {unidad}<extra></extra>",
             ), row=1, col=col)
-            if np.any(~np.isnan(visible)):
-                k_ult = int(np.where(~np.isnan(visible))[0][-1])
-                etiquetas.append((f"{'★ ' if es_mejor else ''}<b>{modelo}</b> R²={res['r2']:.3f}",
-                                  t_fino[k_ult], visible[k_ult]))
-        etiquetas_fin_de_linea(fig, col, etiquetas, (y_bottom_cap, y_top_cap))
+        r2_por_grupo[grupo] = (mejor, {m: r["r2"] for m, r in validos.items()})
         fig.update_xaxes(title_text="Días después del trasplante", row=1, col=col,
                          range=[dia_min - 0.03 * (dia_max - dia_min), dia_max + 0.03 * (dia_max - dia_min)],
                          **({"tickvals": ticks_x} if ticks_x else {}))
@@ -1532,20 +1525,32 @@ def fig_curvas_publicacion(datos, RES, variable, modelos, fuente_datos="simulado
                                                         dash=MODELO_ESTILO[m]["dash"], width=3))
     entrada_leyenda(fig, "Día de crecimiento más rápido", marker=dict(symbol="diamond", size=12, color="white",
                                                                       line=dict(color=G_INK, width=2)))
+    tres_lineas = bool(marcas_por_grupo)   # encabezado con la línea «◇ … · techo K …»
     estilo_publicacion(
-        fig, width=1200, height=660, titulo=titulo, right_margin=185, left_margin=80, leyenda_sobre_px=50,
-        subtitulo="Panel izquierdo = −M, derecho = +M · ★ = mejor ajuste del grupo (con banda IC 95 %) · "
-                  "línea punteada fina = techo estimado K")
+        fig, width=1200, height=730 if tres_lineas else 700, titulo=titulo, right_margin=36, left_margin=80,
+        leyenda_sobre_px=110 if tres_lineas else 86, espacio_eje_x_px=66,
+        subtitulo="★ = mejor ajuste del grupo (con banda IC 95 %) · línea punteada fina = techo estimado K")
     for col, grupo in enumerate(grupos, start=1):
         ultimo = max(datos[variable][grupo])
-        encabezado_panel(fig, col, f"<b>({'ab'[col - 1]}) {texto_grupo(grupo)}</b> · {NOMBRE_GRUPO[grupo]} — "
-                                   f"media final {np.mean(datos[variable][grupo][ultimo]):.3g} {unidad}",
-                         COLOR_GRUPO[grupo])
+        mejor_g, r2s = r2_por_grupo.get(grupo, (None, {}))
+        partes_r2 = [f"{'★ ' if m == mejor_g else ''}<span style='color:{COLOR_MODELO_TEXTO.get(m, G_INK)}'>"
+                     f"<b>{m}</b></span> {r2:.3f}" for m, r2 in sorted(r2s.items(), key=lambda kv: -kv[1])]
+        linea_r2 = ("R² " + " · ".join(partes_r2)) if partes_r2 else "Ningún modelo convergió"
+        nombre_corto = "sin micorriza" if grupo == "-M" else "con micorriza"
+        encabezado_panel(fig, col, f"<span style='font-size:16px'><b>({'ab'[col - 1]}) {texto_grupo(grupo)}</b> · "
+                                   f"{nombre_corto} · media final "
+                                   f"{np.mean(datos[variable][grupo][ultimo]):.3g} {unidad}</span>"
+                                   f"<br><span style='font-size:14px'>{linea_r2}</span>"
+                                   + (f"<br><span style='font-size:14px'>◇ crece más rápido: día "
+                                      f"{marcas_por_grupo[grupo][1]:.0f} · ┄ techo K ≈ "
+                                      f"{marcas_por_grupo[grupo][0]:.3g} {unidad}</span>"
+                                      if grupo in marcas_por_grupo else ""),
+                         COLOR_GRUPO[grupo], alto_px=86 if tres_lineas else 62)
 
     descripcion = ("Puntos claros = réplicas individuales; punto con barra = media ± DE por día. Líneas = modelos "
-                   "convergidos con su R² escrito al final; ★ = mejor R² del grupo (el único con banda IC 95 %). "
+                   "convergidos; su R² está en el encabezado de cada panel; ★ = mejor R² del grupo (el único con banda IC 95 %). "
                    "Eje Y limitado a ~1.25× el máximo observado. Asíntota K (techo estimado) y punto de inflexión "
-                   "(◇) del mejor modelo: solo si convergió, R² ≥ 0.90, K ≤ 1.5× el máximo observado y la "
+                   "(◇) del mejor modelo, con sus valores en el encabezado: solo si convergió, R² ≥ 0.90, K ≤ 1.5× el máximo observado y la "
                    "inflexión cae dentro de los días observados.")
     extra = ("Réplicas sintéticas generadas a partir de medias y CV% publicados (Aguirre-Medina et al., 2023)."
              if fuente_datos == "real" else None)
@@ -1613,7 +1618,7 @@ def fig_tasas_crecimiento(datos, RES, variable, modelos, fuente_datos="simulado"
         maximos[grupo] = (t_fino[k], agr[k], modelo)
         panel_agr = col
         xr, yr = _ref_ejes(panel_agr)
-        fig.add_trace(go.Scatter(x=[t_fino[k]], y=[agr[k]], mode="markers", showlegend=False,
+        fig.add_trace(go.Scatter(x=[t_fino[k]], y=[agr[k]], mode="markers", showlegend=False, cliponaxis=False,
                                  marker=dict(symbol="diamond", size=11, color="white",
                                              line=dict(color=G_INK, width=2)), hoverinfo="skip"), row=1, col=col)
         pos = (t_fino[k] - t_fino[0]) / max(t_fino[-1] - t_fino[0], 1e-9)
@@ -1641,8 +1646,8 @@ def fig_tasas_crecimiento(datos, RES, variable, modelos, fuente_datos="simulado"
 
     if len(maximos) == 2:
         (d_c, v_c, _), (d_t, v_t, _) = maximos["-M"], maximos["+M"]
-        titulo = (f"Velocidad máxima de crecimiento: +M {v_t:.3g} {unidad}/día (día {d_t:.0f}) frente a "
-                  f"−M {v_c:.3g} {unidad}/día (día {d_c:.0f})")
+        titulo = (f"Velocidad máxima de crecimiento<br>+M: {v_t:.3g} {unidad}/día (día {d_t:.0f}) · "
+                  f"−M: {v_c:.3g} {unidad}/día (día {d_c:.0f})")
     else:
         g0 = next(iter(maximos))
         titulo = (f"{NOMBRE_VARIABLE[variable]}: velocidad máxima de {texto_grupo(g0)} = "
@@ -1653,8 +1658,8 @@ def fig_tasas_crecimiento(datos, RES, variable, modelos, fuente_datos="simulado"
     entrada_leyenda(fig, "Día de crecimiento más rápido", marker=dict(symbol="diamond", size=12, color="white",
                                                                       line=dict(color=G_INK, width=2)))
     estilo_publicacion(fig, width=1200, height=880, titulo=titulo, left_margin=90, leyenda_sobre_px=50,
-                       subtitulo="Arriba, AGR: cuánto crece la planta cada día · abajo, RGR: cuánto crece en "
-                                 "proporción a su tamaño · ◇ = día de crecimiento más rápido")
+                       subtitulo="AGR (arriba): cuánto crece por día · RGR (abajo): crecimiento relativo a su "
+                                 "tamaño · ◇ = día de crecimiento más rápido")
     for col, grupo in enumerate(grupos_validos, start=1):
         encabezado_panel(fig, col, f"<b>{texto_grupo(grupo)}</b> · {NOMBRE_GRUPO[grupo]}", COLOR_GRUPO[grupo])
 
