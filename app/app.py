@@ -553,7 +553,8 @@ ESCALA_DOCUMENTO = DOC_DPI * DOC_ANCHO_CM / 2.54 / DOC_ANCHO_PX  # ≈ 5.4 → 3
 
 def _unificar_fuentes(obj):
     """Recorre el dict de la figura: toda fuente pasa a FUENTE_DOCUMENTO y DOC_PX_LETRA, y los
-    tamaños escritos dentro del texto (<span style='font-size:…'>) también."""
+    tamaños escritos dentro del texto (<span style='font-size:…'>) también, igual en todas partes
+    (una categoría del eje y la anotación que la usa como posición tienen que seguir coincidiendo)."""
     if isinstance(obj, dict):
         for clave, valor in obj.items():
             if clave.endswith("font") and isinstance(valor, dict):
@@ -563,9 +564,12 @@ def _unificar_fuentes(obj):
                 obj[clave] = re.sub(r"font-size:\s*[\d.]+px", f"font-size:{DOC_PX_LETRA}px", valor)
             else:
                 _unificar_fuentes(valor)
-    elif isinstance(obj, (list, tuple)):
-        for valor in obj:
-            _unificar_fuentes(valor)
+    elif isinstance(obj, list):
+        for i, valor in enumerate(obj):
+            if isinstance(valor, str) and "font-size" in valor:
+                obj[i] = re.sub(r"font-size:\s*[\d.]+px", f"font-size:{DOC_PX_LETRA}px", valor)
+            else:
+                _unificar_fuentes(valor)
     return obj
 
 
@@ -575,15 +579,24 @@ def _crecer_arriba(fig, px):
         fig.update_layout(height=(fig.layout.height or 450) + px, margin_t=(fig.layout.margin.t or 0) + px)
 
 
-def figura_para_documento(fig, recorte_px=0):
+def figura_para_documento(fig, recorte_px=0, solo_tabla=False):
     """Copia de la figura lista para pegar en un documento: ancho
     DOC_ANCHO_PX, Times New Roman y una sola medida de letra (DOC_PX_LETRA = DOC_PUNTOS pt en la
     hoja). No toca la figura de la pantalla. El título se vuelve a envolver al ancho nuevo y lo
     que cambia de alto se suma al margen superior y al alto total, así el área de trazado (y la
     leyenda, que estilo_publicacion ubica en fracciones de ella) sigue igual. `recorte_px` quita
-    alto a los paneles (no a la letra) cuando la imagen no cabe en una hoja."""
+    alto a los paneles (no a la letra) cuando la imagen no cabe en una hoja. Con `solo_tabla`
+    (figuras que son una tabla de calor) queda solo la tabla, sin título, con filas del alto justo."""
     doc = go.Figure(_unificar_fuentes(fig.to_dict()))
     doc.update_layout(width=DOC_ANCHO_PX)
+    if solo_tabla:
+        filas = max((len(t.y) for t in doc.data if t.type == "heatmap" and t.y is not None), default=0)
+        arriba, abajo = round(DOC_PX_LETRA * 2.2), 8
+        doc.update_layout(title_text="", showlegend=False, margin=dict(t=arriba, b=abajo),
+                          height=arriba + abajo + round(DOC_PX_LETRA * 3.1) * filas)
+        _corregir_por_medicion(doc)
+        _ajustar_celdas(doc)
+        return doc
 
     texto = fig.layout.title.text if fig.layout.title is not None else None
     m = re.fullmatch(r"<b>(.*?)</b>(?:<br><span style='([^']*)'>(.*)</span>)?", texto or "", flags=re.S)
@@ -607,6 +620,32 @@ def figura_para_documento(fig, recorte_px=0):
         _acortar_trazado(doc, recorte_px)
     _corregir_por_medicion(doc)
     return doc
+
+
+def _ajustar_celdas(fig):
+    """Con muchas columnas, a DOC_ANCHO_CM no caben «+12.5 %» ni «Día 10» a DOC_PUNTOS pt: primero se
+    quita el «%» de cada celda y el «Día» de cada columna (el eje lo dice una vez), y si aun así no
+    caben, se achica solo la letra de las celdas lo justo (nunca por debajo de ~8 pt)."""
+    mapa = next((t for t in fig.data if t.type == "heatmap" and t.x is not None and t.text is not None), None)
+    if mapa is None:
+        return
+    svg = fig.to_image(format="svg").decode()
+    plano = re.search(r'<clipPath[^>]*xyplot[^>]*><rect width="([\d.]+)"', svg)
+    if plano is None:
+        return
+    ancho_celda = float(plano.group(1)) / len(mapa.x) - 4
+    largo = lambda filas: max((len(str(c)) for fila in filas for c in fila), default=1) * DOC_PX_LETRA * 0.5
+    if largo(mapa.text) <= ancho_celda:
+        return
+    texto = [[str(c).replace(" %", "") for c in fila] for fila in mapa.text]
+    columnas = [str(c).replace("Día ", "") for c in mapa.x]
+    mapa.update(text=texto)
+    fig.update_xaxes(tickmode="array", tickvals=list(mapa.x), ticktext=columnas, tickangle=0,
+                     title_text="Día · residuo medio en %", title_standoff=6)
+    fig.update_layout(margin_t=(fig.layout.margin.t or 0) + round(DOC_PX_LETRA * 1.5),
+                      height=(fig.layout.height or 450) + round(DOC_PX_LETRA * 1.5))
+    if largo(texto) > ancho_celda:
+        mapa.update(textfont_size=max(round(DOC_PX_LETRA * ancho_celda / largo(texto), 1), 12))
 
 
 def _bajar_rotulos_de_zona(fig):
@@ -734,13 +773,13 @@ def _corregir_por_medicion(fig, intentos=3):
             return
 
 
-def png_para_documento(fig, pie=None):
+def png_para_documento(fig, pie=None, solo_tabla=False):
     """PNG de figura_para_documento a DOC_DPI, con el pie debajo (también en Times New Roman a
     DOC_PUNTOS pt) y la resolución grabada en el archivo. Si con el pie pasa de DOC_ALTO_MAX_CM, se
     vuelve a armar con los paneles más bajos: así entra en la hoja sin que la letra se achique."""
     recorte = 0
     for _ in range(2):
-        png = figura_para_documento(fig, recorte).to_image(format="png", scale=ESCALA_DOCUMENTO)
+        png = figura_para_documento(fig, recorte, solo_tabla).to_image(format="png", scale=ESCALA_DOCUMENTO)
         if pie:
             png = componer_png_con_pie(png, pie, scale=ESCALA_DOCUMENTO, tam_base=DOC_PX_LETRA, serif=True,
                                        dpi=DOC_DPI)
@@ -756,12 +795,14 @@ def png_para_documento(fig, pie=None):
     return buf.getvalue()
 
 
-def boton_descarga_png(fig, etiqueta, archivo, clave, pie=None):
+def boton_descarga_png(fig, etiqueta, archivo, clave, pie=None, solo_tabla=False):
     """Botón «Descargar PNG (alta resolución)». La imagen se genera SOLO al hacer clic (descarga
     diferida) y sale lista para documentos (png_para_documento): Times New Roman a DOC_PUNTOS pt al
-    pegarla a DOC_ANCHO_CM, con el pie de figura debajo cuando se pasa `pie`."""
+    pegarla a DOC_ANCHO_CM, con el pie de figura debajo cuando se pasa `pie`. Con `solo_tabla`, el PNG
+    es solo la tabla (sin título ni pie)."""
     st.download_button(f"⬇ Descargar PNG en alta resolución — {etiqueta}",
-                       data=lambda: png_para_documento(fig, pie), file_name=archivo,
+                       data=lambda: png_para_documento(fig, None if solo_tabla else pie, solo_tabla),
+                       file_name=archivo,
                        mime="image/png", key=clave)
 
 
@@ -1869,14 +1910,15 @@ def fig_real_vs_predicho_global(RES, datos, variables, modelos, eleccion):
     return fig, pie
 
 
-def mostrar_resumen_global(fig, pie, etiqueta, archivo, clave):
-    """Muestra un resumen global (o el motivo por el que no hay) con su pie y su botón de PNG."""
+def mostrar_resumen_global(fig, pie, etiqueta, archivo, clave, solo_tabla=False):
+    """Muestra un resumen global (o el motivo por el que no hay) con su pie y su botón de PNG
+    (con `solo_tabla`, el PNG es solo la tabla, sin título ni pie)."""
     if fig is None:
         st.info(pie)
         return
     st.plotly_chart(fig, width="stretch", theme=None)
     mostrar_pie_streamlit(pie)
-    boton_descarga_png(fig, etiqueta, archivo, clave, pie)
+    boton_descarga_png(fig, etiqueta, archivo, clave, pie, solo_tabla)
 
 
 def _asintota_k_plausible(res, y_max_obs_grupo, dia_min, dia_max):
@@ -5069,7 +5111,7 @@ elif seccion == "Residuos":
                            "png_resumen_residuos")
     fig_rg, pie_rg = fig_residuos_globales(RES, DATOS, variables_a_mostrar, modelos_a_mostrar)
     mostrar_resumen_global(fig_rg, pie_rg, "Resumen: residuos por día", "resumen_residuos_por_dia.png",
-                           "png_resumen_residuos_dia")
+                           "png_resumen_residuos_dia", solo_tabla=True)
 
 
 # ==============================================================================
