@@ -53,6 +53,7 @@ defaults = {
     "fuente_datos": "simulado", "datos_reales": None, "dia_ttest": 120, "ultimo_archivo_id": None,
     "cita_datos_reales": "", "recien_ajustado": False, "cc_paper": None,
     "ve_paper": None, "ve_paper_id": None, "ve_ultimo_archivo": None,
+    "tabla_resumen": None, "tabla_info": None,
 }
 for k, v in defaults.items():
     if k not in st.session_state:
@@ -965,12 +966,65 @@ def flatten_replicas(datos_var_grupo):
             y_flat.append(v)
     return np.array(t_flat, dtype=float), np.array(y_flat, dtype=float)
 
-def media_sd_por_dia(datos_var_grupo):
+def media_sd_por_dia(datos_var_grupo, variable=None, grupo=None):
+    """Media, DE y n por día. En modo tabla (con `variable` y `grupo`), la DE y el n salen de la
+    tabla publicada (DE del ANOVA a partir del CV%), no de las réplicas."""
     dias = dias_disponibles(datos_var_grupo)
     medias = np.array([np.mean(datos_var_grupo[d]) for d in dias])
     sds = np.array([np.std(datos_var_grupo[d], ddof=1) if len(datos_var_grupo[d]) > 1 else 0.0 for d in dias])
     ns = np.array([len(datos_var_grupo[d]) for d in dias])
+    if variable is not None and es_modo_tabla():
+        for i, d in enumerate(dias):
+            info = estad_tabla(variable, grupo, d)
+            if info is not None:
+                sds[i] = info["de"] or 0.0
+                ns[i] = info["n"]
     return np.array(dias, dtype=float), medias, sds, ns
+
+
+# ==============================================================================
+# MODO TABLA — datos tomados TAL CUAL de una tabla publicada (p. ej. el Cuadro 2 de
+# Aguirre-Medina et al. 2023): una media por tratamiento y día, sus letras y el CV% del ANOVA
+# de cada día. No se generan réplicas sintéticas:
+#   - DATOS[variable][grupo][dia] = array([media])  -> los modelos se ajustan a las medias.
+#   - DE del día = CV/100 × promedio de TODOS los tratamientos del cuadro (= √CME del ANOVA),
+#     la misma para −M y +M; n = plantas por tratamiento; gl del error = k × (n − 1).
+#   - Prueba t −M vs +M con esa DE y esos gl (la que corresponde a un ANOVA de un diseño
+#     completamente al azar). Sin CV (p. ej. biomasa total, que es una suma) no hay prueba.
+# st.session_state.tabla_resumen = {variable: {grupo: {dia: {"de", "n", "gl", "letra"}}}}
+# ==============================================================================
+def es_modo_tabla():
+    return st.session_state.get("fuente_datos") == "real" and st.session_state.get("tabla_resumen") is not None
+
+
+def estad_tabla(variable, grupo, dia):
+    """DE, n, gl y letra de la tabla publicada para una variable, grupo y día (o None)."""
+    if not es_modo_tabla():
+        return None
+    return st.session_state.tabla_resumen.get(variable, {}).get(grupo, {}).get(int(dia))
+
+
+def nombre_prueba_t(corto=False):
+    """Cómo se llama la prueba t que usa la app con los datos activos (para títulos y pies)."""
+    if es_modo_tabla() and corto:
+        return "prueba t con la DE del paper"
+    if es_modo_tabla():
+        gl = {i["gl"] for v in st.session_state.tabla_resumen.values() for g in v.values() for i in g.values()
+              if i.get("gl")}
+        return f"prueba t con la DE del ANOVA del paper (gl = {'/'.join(str(x) for x in sorted(gl)) or '?'})"
+    return "prueba t de Welch"
+
+
+def nota_fuente_datos(fuente_datos):
+    """Nota final de los pies de figura sobre el origen de los datos reales."""
+    if fuente_datos != "real":
+        return None
+    if es_modo_tabla():
+        info = st.session_state.get("tabla_info") or {}
+        return (f"Datos tomados tal cual de la tabla publicada ({info.get('cita_corta', 'paper cargado')}): una media "
+                f"por día y grupo (−M = {info.get('control', '?')}, +M = {info.get('inoculado', '?')}). "
+                "DE = CV% del ANOVA × media general del día; sin réplicas sintéticas.")
+    return "Réplicas sintéticas generadas a partir de medias y CV% publicados (Aguirre-Medina et al., 2023)."
 
 
 def calcular_r2(y_obs, y_pred):
@@ -1023,6 +1077,9 @@ def ajustar_todos_los_modelos(datos):
                     mae = calcular_mae(y_flat, y_pred_flat)
                     n = len(y_flat)
                     gl = max(n - n_params, 1)
+                    # Con 1 solo grado de libertad (p. ej. 4 medias y 3 parámetros) el IC sale con
+                    # t crítico ≈ 12.7 y no informa nada: se marca como no calculable.
+                    ic_fiable = n - n_params >= 2
                     error_std = np.sqrt(np.diag(pcov))
                     t_critico = t_dist.ppf(0.975, gl)
                     ci_bajo = popt - t_critico * error_std
@@ -1031,9 +1088,10 @@ def ajustar_todos_los_modelos(datos):
                 except RuntimeError:
                     popt, pcov, r2, rmse, mae = None, None, np.nan, np.nan, np.nan
                     error_std = ci_bajo = ci_alto = residuos = None
+                    ic_fiable = False
                 resultados[variable][grupo][nombre_modelo] = {
                     "params": popt, "pcov": pcov, "r2": r2, "rmse": rmse, "mae": mae,
-                    "error_std": error_std, "ci_bajo": ci_bajo, "ci_alto": ci_alto,
+                    "error_std": error_std, "ci_bajo": ci_bajo, "ci_alto": ci_alto, "ic_fiable": ic_fiable,
                     "residuos": residuos, "t_flat": t_flat, "insuficiente": False,
                 }
     return resultados
@@ -1042,7 +1100,10 @@ def ajustar_todos_los_modelos(datos):
 def prueba_t_independiente(datos, variable, dia):
     """Prueba t de dos muestras independientes (Welch) entre −M y +M en un
     día concreto, usando las réplicas reales de ese día — ahora sí es una
-    prueba t propiamente dicha, no una aproximación."""
+    prueba t propiamente dicha, no una aproximación.
+    En modo tabla usa la media publicada y la DE del ANOVA del paper (ver MODO TABLA)."""
+    if es_modo_tabla():
+        return prueba_t_tabla(datos, variable, dia)
     y_control = np.asarray(datos[variable]["-M"].get(dia, []))
     y_tratado = np.asarray(datos[variable]["+M"].get(dia, []))
     if len(y_control) < 2 or len(y_tratado) < 2:
@@ -1053,6 +1114,27 @@ def prueba_t_independiente(datos, variable, dia):
         "media_control": np.mean(y_control), "sd_control": np.std(y_control, ddof=1),
         "media_tratado": np.mean(y_tratado), "sd_tratado": np.std(y_tratado, ddof=1),
         "n_control": len(y_control), "n_tratado": len(y_tratado),
+    }
+
+
+def prueba_t_tabla(datos, variable, dia):
+    """Prueba t −M vs +M a partir de la tabla publicada: medias del cuadro, DE común del ANOVA
+    (CV% × media general del día) y gl del error del ANOVA. None si falta la DE (sin CV)."""
+    c, t = estad_tabla(variable, "-M", dia), estad_tabla(variable, "+M", dia)
+    if c is None or t is None or not c["de"] or not t["de"]:
+        return None
+    if dia not in datos[variable]["-M"] or dia not in datos[variable]["+M"]:
+        return None
+    m_c, m_t = float(np.mean(datos[variable]["-M"][dia])), float(np.mean(datos[variable]["+M"][dia]))
+    ee_dif = c["de"] * np.sqrt(1 / c["n"] + 1 / t["n"])
+    estadistico = (m_t - m_c) / ee_dif
+    gl = c["gl"]
+    valor_p = float(2 * t_dist.sf(abs(estadistico), gl))
+    return {
+        "t": estadistico, "p": valor_p, "significativo": valor_p < 0.05,
+        "media_control": m_c, "sd_control": c["de"], "media_tratado": m_t, "sd_tratado": t["de"],
+        "n_control": c["n"], "n_tratado": t["n"], "gl": gl, "ee_dif": ee_dif,
+        "letra_control": c.get("letra", ""), "letra_tratado": t.get("letra", ""),
     }
 
 
@@ -1189,9 +1271,10 @@ def fig_barras_variable(datos, variable, fuente_datos="simulado"):
     rng = np.random.default_rng(3)
     techo = 0.0
     n_replicas_vistas = set()
+    modo_tabla = es_modo_tabla()
     for k, g in enumerate(grupos):
         desplaz = (k - (len(grupos) - 1) / 2) * ancho * 1.08
-        dias_g, medias, sds, ns = media_sd_por_dia(datos[variable][g])
+        dias_g, medias, sds, ns = media_sd_por_dia(datos[variable][g], variable, g)
         n_replicas_vistas.update(int(n) for n in ns)
         xs = np.array([x[dias.index(d)] for d in dias_g]) + desplaz
         techo = max(techo, float(np.max(medias + sds)),
@@ -1202,6 +1285,8 @@ def fig_barras_variable(datos, variable, fuente_datos="simulado"):
             error_y=dict(type="data", array=sds, color=G_INK, thickness=1.2, width=0),
             customdata=dias_g,
             hovertemplate=f"{texto_grupo(g)} · día %{{customdata:.0f}}<br>promedio %{{y:.3g}} {unidad}<extra></extra>"))
+        if modo_tabla:
+            continue   # una sola media por día: no hay plantas individuales que dibujar
         px, py = [], []
         for xi, d in zip(xs, dias_g):
             v = np.asarray(datos[variable][g][d], dtype=float)
@@ -1235,7 +1320,9 @@ def fig_barras_variable(datos, variable, fuente_datos="simulado"):
                                      (13 if denso else 15.5), color=color))
 
     # Leyenda (arriba): las barras de cada grupo ya tienen nombre; se agregan los círculos y el corchete.
-    entrada_leyenda(fig, "Cada planta medida", marker=dict(size=9, color="white", line=dict(color=G_INK, width=1.2)))
+    if not modo_tabla:
+        entrada_leyenda(fig, "Cada planta medida", marker=dict(size=9, color="white",
+                                                               line=dict(color=G_INK, width=1.2)))
     if filas:
         entrada_leyenda(fig, "Corchete: cuánto más crece +M (prueba t)", mode="lines",
                         line=dict(color=G_INK, width=1.5))
@@ -1245,18 +1332,27 @@ def fig_barras_variable(datos, variable, fuente_datos="simulado"):
     estilo_publicacion(
         fig, width=1100, height=620, titulo=titulo_barras_significancia(datos, variable, filas),
         left_margin=75,
-        subtitulo="Barra = promedio · círculos = cada planta · línea = ± DE<br>Arriba de cada día: cuánto más crece "
+        subtitulo=("Barra = promedio publicado · línea = ± DE del ANOVA del paper" if modo_tabla else
+                   "Barra = promedio · círculos = cada planta · línea = ± DE")
+                  + "<br>Arriba de cada día: cuánto más crece "
                   "+M que −M, la prueba t y los promedios (−M → +M) · ns = sin diferencia · * p < 0.05 · "
                   "** p < 0.01 · *** p < 0.001")
 
     n_reps_txt = "/".join(str(n) for n in sorted(n_replicas_vistas)) if n_replicas_vistas else "?"
-    descripcion = (
-        f"{NOMBRE_VARIABLE[variable]} ({unidad}): barra = promedio y línea = ± DE de n = {n_reps_txt} plantas por "
-        "día y grupo; círculos = cada planta. Sobre cada día: % de incremento de +M sobre −M y prueba t de Welch "
-        "(ns = p ≥ 0.05 · * p < 0.05 · ** p < 0.01 · *** p < 0.001)."
-    )
-    extra = ("Réplicas sintéticas generadas a partir de medias y CV% publicados (Aguirre-Medina et al., 2023)."
-             if fuente_datos == "real" else None)
+    if modo_tabla:
+        descripcion = (
+            f"{NOMBRE_VARIABLE[variable]} ({unidad}): barra = media publicada (n = {n_reps_txt} plantas) y línea = "
+            "± DE del ANOVA del paper (CV% × media general del día; sin línea si la tabla no da CV). Sobre cada día: "
+            f"% de incremento de +M sobre −M y {nombre_prueba_t()} (ns = p ≥ 0.05 · * p < 0.05 · ** p < 0.01 · "
+            "*** p < 0.001)."
+        )
+    else:
+        descripcion = (
+            f"{NOMBRE_VARIABLE[variable]} ({unidad}): barra = promedio y línea = ± DE de n = {n_reps_txt} plantas por "
+            "día y grupo; círculos = cada planta. Sobre cada día: % de incremento de +M sobre −M y prueba t de Welch "
+            "(ns = p ≥ 0.05 · * p < 0.05 · ** p < 0.01 · *** p < 0.001)."
+        )
+    extra = nota_fuente_datos(fuente_datos)
     return fig, construir_pie(descripcion, extra=extra)
 
 
@@ -1278,10 +1374,15 @@ def fig_resumen_efecto_final(datos, variables, fuente_datos="simulado"):
         if t_res is None or a.mean() == 0:
             continue
         inc = (b.mean() - a.mean()) / a.mean() * 100
-        rng = np.random.default_rng(1)
-        boot = np.array([(rng.choice(b, len(b)).mean() / rng.choice(a, len(a)).mean() - 1) * 100
-                         for _ in range(4000)])
-        lo, hi = np.percentile(boot[np.isfinite(boot)], [2.5, 97.5])
+        if "ee_dif" in t_res:
+            # Modo tabla: IC 95 % de la diferencia de medias (DE y gl del ANOVA), expresado como % de −M.
+            margen = t_dist.ppf(0.975, t_res["gl"]) * t_res["ee_dif"] / a.mean() * 100
+            lo, hi = inc - margen, inc + margen
+        else:
+            rng = np.random.default_rng(1)
+            boot = np.array([(rng.choice(b, len(b)).mean() / rng.choice(a, len(a)).mean() - 1) * 100
+                             for _ in range(4000)])
+            lo, hi = np.percentile(boot[np.isfinite(boot)], [2.5, 97.5])
         filas.append(dict(nombre=NOMBRE_VARIABLE[v], inc=inc, lo=lo, hi=hi, p=t_res["p"],
                           sig=t_res["significativo"], dia=d, ma=a.mean(), mb=b.mean(), u=UNIDADES[v]))
     if not filas:
@@ -1317,13 +1418,14 @@ def fig_resumen_efecto_final(datos, variables, fuente_datos="simulado"):
     entrada_leyenda(fig, "Intervalo de confianza 95 %", mode="lines", line=dict(color=G_INK, width=1.5))
     estilo_publicacion(fig, width=1100, height=max(380, 210 + 85 * len(filas)), titulo=titulo, left_margin=150,
                        subtitulo="Barra = % de incremento de +M sobre −M el último día con datos de ambos grupos "
-                                 "(prueba t de Welch)")
+                                 f"({nombre_prueba_t(corto=True)})")
     fig.update_yaxes(showgrid=False)
-    extra = ("Réplicas sintéticas generadas a partir de medias y CV% publicados (Aguirre-Medina et al., 2023)."
-             if fuente_datos == "real" else None)
+    extra = nota_fuente_datos(fuente_datos)
+    ic_txt = ("IC 95 % de la diferencia de medias con la DE del ANOVA del paper, como % de −M" if es_modo_tabla()
+              else "IC 95 % por remuestreo (bootstrap) de las réplicas")
     pie = construir_pie(
-        "% de incremento de +M sobre −M en el último día con datos de ambos grupos, por variable. Línea = IC 95 % "
-        "por remuestreo (bootstrap) de las réplicas. Significancia: prueba t de Welch (ns = p ≥ 0.05 · * p < 0.05 · "
+        f"% de incremento de +M sobre −M en el último día con datos de ambos grupos, por variable. Línea = {ic_txt}. "
+        f"Significancia: {nombre_prueba_t()} (ns = p ≥ 0.05 · * p < 0.05 · "
         "** p < 0.01 · *** p < 0.001).", extra=extra)
     return fig, pie
 
@@ -1475,11 +1577,10 @@ def fig_resumen_efecto_tiempo(datos, RES, variables, modelos, fuente_datos="simu
     estilo_publicacion(fig, width=1100, height=600, titulo=titulo, left_margin=80,
                        subtitulo="Cuánto más crece +M que −M en cada día · línea = según las curvas ajustadas · "
                                  "marcador = promedios medidos (relleno = significativo) · 0 % = sin efecto")
-    extra = ("Réplicas sintéticas generadas a partir de medias y CV% publicados (Aguirre-Medina et al., 2023)."
-             if fuente_datos == "real" else None)
+    extra = nota_fuente_datos(fuente_datos)
     pie = construir_pie(
         "Efecto del hongo = (+M − −M) / −M × 100, para todas las variables. Línea: con el mejor modelo de cada "
-        "grupo (mayor R²). Marcadores: con los promedios medidos; relleno = prueba t de Welch con p < 0.05.",
+        f"grupo (mayor R²). Marcadores: con los promedios medidos; relleno = {nombre_prueba_t()} con p < 0.05.",
         extra=extra)
     return fig, pie
 
@@ -1536,9 +1637,8 @@ def fig_mapa_significancia(datos, variables, fuente_datos="simulado"):
                                  "+M menor · ns = sin diferencia · * p < 0.05 · ** p < 0.01 · *** p < 0.001")
     fig.update_xaxes(side="top", showline=False, showgrid=False, ticks="")
     fig.update_yaxes(autorange="reversed", showgrid=False)
-    extra = ("Réplicas sintéticas generadas a partir de medias y CV% publicados (Aguirre-Medina et al., 2023)."
-             if fuente_datos == "real" else None)
-    pie = construir_pie("Prueba t de Welch (+M vs −M) para cada variable y día, en una sola figura. Color limitado a "
+    extra = nota_fuente_datos(fuente_datos)
+    pie = construir_pie(f"{nombre_prueba_t()[0].upper()}{nombre_prueba_t()[1:]} (+M vs −M) para cada variable y día, en una sola figura. Color limitado a "
                         "±100 % para que los efectos chicos no se pierdan.", extra=extra)
     return fig, pie
 
@@ -1791,7 +1891,7 @@ def tabla_global_efecto(datos, variables, solo_dia=None):
             registros.append({"Variable": NOMBRE_VARIABLE[v], "Unidad": UNIDADES[v], "Día (ddt)": f["dia"],
                               "Media −M": f["media_control"], "DE −M": f["sd_control"], "n −M": f["n_control"],
                               "Media +M": f["media_tratado"], "DE +M": f["sd_tratado"], "n +M": f["n_tratado"],
-                              "+M vs −M (%)": inc, "t (Welch)": f["t"], "p": f["p"], "Significancia": sig})
+                              "+M vs −M (%)": inc, "t": f["t"], "p": f["p"], "Significancia": sig})
     if not filas:
         return None, None, "Ninguna variable tiene −M y +M con réplicas en un mismo día."
     cuando = f"a los {solo_dia:.0f} ddt" if solo_dia is not None else "en cada día de muestreo"
@@ -1800,8 +1900,11 @@ def tabla_global_efecto(datos, variables, solo_dia=None):
               f"diferencias son significativas")
     tabla = dict(encabezados=encabezados, filas=filas, bloques=bloques, titulo=titulo,
                  anchos=[1.5, 0.75, 1.3, 1.3, 1.0, 0.65, 0.85, 0.6])
-    pie = construir_pie("+M vs −M = (media +M − media −M) / media −M × 100. Prueba t de Welch (dos muestras "
-                        "independientes): ns = no significativa; * p < 0.05; ** p < 0.01; *** p < 0.001. "
+    pie = construir_pie("+M vs −M = (media +M − media −M) / media −M × 100. "
+                        + ("Prueba t con la DE del ANOVA del paper (CV% × media general del día, la misma DE para "
+                           "−M y +M) y los gl del error del ANOVA: " if es_modo_tabla() else
+                           "Prueba t de Welch (dos muestras independientes): ")
+                        + "ns = no significativa; * p < 0.05; ** p < 0.01; *** p < 0.001. "
                         "En negrita, las diferencias significativas. DE = desviación estándar.")
     return tabla, pd.DataFrame(registros), pie
 
@@ -1824,7 +1927,11 @@ def tabla_global_parametros(RES, datos, variables, modelos):
             partes = []
             for k, nombre_p in enumerate(MODELOS[m]["nombres_param"]):
                 val, lo, hi = res["params"][k], res["ci_bajo"][k], res["ci_alto"][k]
-                partes.append(f"{nombre_p} = {fmt_num(val)} [{fmt_num(lo)}; {fmt_num(hi)}]")
+                if not res.get("ic_fiable", True):
+                    lo = hi = np.nan
+                    partes.append(f"{nombre_p} = {fmt_num(val)} [IC no calculable]")
+                else:
+                    partes.append(f"{nombre_p} = {fmt_num(val)} [{fmt_num(lo)}; {fmt_num(hi)}]")
                 registros.append({"Variable": NOMBRE_VARIABLE[v], "Grupo": g, "Modelo": m, "R²": res["r2"],
                                   "Parámetro": nombre_p, "Valor": val, "IC 95 % inferior": lo,
                                   "IC 95 % superior": hi})
@@ -1837,7 +1944,8 @@ def tabla_global_parametros(RES, datos, variables, modelos):
                  titulo="Tabla. Parámetros del mejor modelo de cada variable y grupo, con su IC 95 %",
                  anchos=[1.3, 0.6, 1.2, 3.0], alinear=["left", "center", "center", "left"])
     pie = construir_pie("Mejor modelo = el de mayor R² en cada grupo. Entre corchetes, el intervalo de confianza al "
-                        "95 % de cada parámetro (más estrecho = parámetro mejor estimado). Logístico y Gompertz: K = "
+                        "95 % de cada parámetro (más estrecho = parámetro mejor estimado; «IC no calculable» = muy "
+                        "pocos datos para ese modelo). Logístico y Gompertz: K = "
                         "tamaño máximo (asíntota), k = velocidad, Ti = día de crecimiento más rápido. Exponencial: "
                         "P0 = valor inicial, r = tasa de crecimiento.")
     return tabla, pd.DataFrame(registros), pie
@@ -2014,13 +2122,14 @@ def fig_curvas_publicacion(datos, RES, variable, modelos, fuente_datos="simulado
         xr, yr = _ref_ejes(col)
         y_max_obs_grupo = max(v for vals in datos[variable][grupo].values() for v in vals)
         t_flat, y_flat = flatten_replicas(datos[variable][grupo])
-        fig.add_trace(go.Scatter(
-            x=t_flat + _jitter(len(t_flat), ancho=max((dia_max - dia_min) / 100, 0.5)), y=y_flat,
-            mode="markers", name="Planta medida", showlegend=False,
-            marker=dict(size=6, color=color_g, opacity=0.28, line_width=0),
-            customdata=t_flat, hovertemplate=f"Día %{{customdata:.0f}}<br>%{{y:.2f}} {unidad}<extra>planta</extra>",
-        ), row=1, col=col)
-        dias_g, medias_g, sds_g, _ = media_sd_por_dia(datos[variable][grupo])
+        if not es_modo_tabla():
+            fig.add_trace(go.Scatter(
+                x=t_flat + _jitter(len(t_flat), ancho=max((dia_max - dia_min) / 100, 0.5)), y=y_flat,
+                mode="markers", name="Planta medida", showlegend=False,
+                marker=dict(size=6, color=color_g, opacity=0.28, line_width=0),
+                customdata=t_flat, hovertemplate=f"Día %{{customdata:.0f}}<br>%{{y:.2f}} {unidad}<extra>planta</extra>",
+            ), row=1, col=col)
+        dias_g, medias_g, sds_g, _ = media_sd_por_dia(datos[variable][grupo], variable, grupo)
         fig.add_trace(go.Scatter(
             x=dias_g, y=medias_g, mode="markers", name="Media ± DE", showlegend=False,
             error_y=dict(type="data", array=sds_g, color=color_g, thickness=1.4, width=0),
@@ -2052,7 +2161,12 @@ def fig_curvas_publicacion(datos, RES, variable, modelos, fuente_datos="simulado
                 tiene_k = MODELOS[modelo]["nombres_param"][0] == "K"
                 dibujar_k, K, motivo_k = (_asintota_k_plausible(res, y_max_obs_grupo, dia_min, dia_max)
                                           if tiene_k else (True, None, None))
-                banda_baja, banda_alta = calcular_banda_confianza(func, res["params"], res["pcov"], t_fino)
+                banda_baja, banda_alta = (calcular_banda_confianza(func, res["params"], res["pcov"], t_fino)
+                                          if res.get("ic_fiable", True) else (None, None))
+                if not res.get("ic_fiable", True):
+                    notas.append(f"{modelo} ({texto_grupo(grupo)}): sin banda de confianza ({len(res['t_flat'])} "
+                                 f"datos para {len(res['params'])} parámetros: no quedan grados de libertad "
+                                 "suficientes).")
                 if banda_baja is not None and tiene_k and not dibujar_k:
                     notas.append(f"{modelo} ({texto_grupo(grupo)}): ni la asíntota K ni la banda de confianza "
                                  f"se dibujan ({motivo_k}).")
@@ -2099,7 +2213,8 @@ def fig_curvas_publicacion(datos, RES, variable, modelos, fuente_datos="simulado
     fig.update_yaxes(range=[y_bottom_cap, y_top_cap])
     titulo = titulo_efecto_final(datos, variable) or f"{NOMBRE_VARIABLE[variable]}: curvas de crecimiento ajustadas"
     # Leyenda: qué es cada símbolo (en gris: el color de cada panel ya dice el grupo) y cada línea.
-    entrada_leyenda(fig, "Cada planta medida", marker=dict(size=9, color=G_MUTED, opacity=0.45))
+    if not es_modo_tabla():
+        entrada_leyenda(fig, "Cada planta medida", marker=dict(size=9, color=G_MUTED, opacity=0.45))
     entrada_leyenda(fig, "Promedio ± DE", mode="markers", marker=dict(size=11, color=G_MUTED,
                                                                       line=dict(color="white", width=2)))
     modelos_dibujados = [m for m in modelos if any(
@@ -2131,13 +2246,14 @@ def fig_curvas_publicacion(datos, RES, variable, modelos, fuente_datos="simulado
                                       if grupo in marcas_por_grupo else ""),
                          COLOR_GRUPO[grupo], alto_px=86 if tres_lineas else 62)
 
-    descripcion = ("Puntos claros = réplicas individuales; punto con barra = media ± DE por día. Líneas = modelos "
+    descripcion = (("Punto con barra = media publicada ± DE del ANOVA del paper; los modelos se ajustan a esas "
+                    "medias (R² sobre medias). " if es_modo_tabla() else
+                    "Puntos claros = réplicas individuales; punto con barra = media ± DE por día. ") + "Líneas = modelos "
                    "convergidos; su R² está en el encabezado de cada panel; ★ = mejor R² del grupo (el único con banda IC 95 %). "
                    "Eje Y limitado a ~1.25× el máximo observado. Asíntota K (techo estimado) y punto de inflexión "
                    "(◇) del mejor modelo, con sus valores en el encabezado: solo si convergió, R² ≥ 0.90, K ≤ 1.5× el máximo observado y la "
                    "inflexión cae dentro de los días observados.")
-    extra = ("Réplicas sintéticas generadas a partir de medias y CV% publicados (Aguirre-Medina et al., 2023)."
-             if fuente_datos == "real" else None)
+    extra = nota_fuente_datos(fuente_datos)
     return fig, construir_pie(descripcion, notas=notas, extra=extra)
 
 
@@ -2251,8 +2367,7 @@ def fig_tasas_crecimiento(datos, RES, variable, modelos, fuente_datos="simulado"
     if len(grupos_validos) < len(grupos):
         notas.append(f"Sin tasas para {', '.join(texto_grupo(g) for g in grupos if g not in grupos_validos)}: "
                      "ningún modelo convergió en ese grupo.")
-    extra = ("Réplicas sintéticas generadas a partir de medias y CV% publicados (Aguirre-Medina et al., 2023)."
-             if fuente_datos == "real" else None)
+    extra = nota_fuente_datos(fuente_datos)
     descripcion = ("Tasas calculadas analíticamente a partir de los parámetros ya ajustados del modelo con "
                    "mejor R² en cada grupo (sin reajustar). AGR = dP/dt (cuánto crece por día); "
                    "RGR = (1/P)·dP/dt (crecimiento relativo a su tamaño). ◇ = máximo de AGR.")
@@ -2869,9 +2984,12 @@ def generar_sugerencias(fuente_datos):
             "Validación externa con un segundo estudio publicado, idealmente con series de tiempo más largas.",
             "Ampliar el número de días de muestreo si el estudio de campo continúa, para cubrir también la "
             "fase de desaceleración del crecimiento (necesaria para que Logístico y Gompertz converjan de forma estable).",
-            "Las réplicas individuales cargadas son sintéticas (generadas para reproducir la media y desviación "
-            "estándar reportadas en el paper, no mediciones planta por planta) — tenerlo en cuenta al interpretar "
-            "los intervalos de confianza.",
+            ("Con la tabla publicada solo hay una media por día (4 fechas): conseguir los datos planta por planta "
+             "de los autores permitiría intervalos de confianza para K, k y Ti y el ANOVA de residuos."
+             if es_modo_tabla() else
+             "Las réplicas individuales cargadas son sintéticas (generadas para reproducir la media y desviación "
+             "estándar reportadas en el paper, no mediciones planta por planta) — tenerlo en cuenta al interpretar "
+             "los intervalos de confianza."),
         ]
     else:
         especificas = [
@@ -3059,6 +3177,150 @@ def cargar_datos_desde_archivo(archivo):
 
     advertir_dias_insuficientes(datos)
     return datos, None
+
+
+# --- Modo tabla: Excel con la tabla publicada tal cual (ver MODO TABLA) -----------------------
+TABLA_XLSX_BASE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "datos_reales",
+                               "cuadro2_aguirre_medina_2023.xlsx")
+TABLA_PARTES_BIOMASA = ("raiz", "tallo", "lamina")
+
+
+def _leer_hojas(archivo):
+    if hasattr(archivo, "seek"):
+        archivo.seek(0)
+    hojas = pd.read_excel(archivo, sheet_name=None)
+    return {str(k).strip().lower(): v for k, v in hojas.items()}
+
+
+def es_archivo_tabla(archivo):
+    """True si el Excel trae la tabla publicada (hoja «cuadro2» o columna «tratamiento»)."""
+    nombre = archivo if isinstance(archivo, str) else getattr(archivo, "name", "")
+    if not str(nombre).lower().endswith(".xlsx"):
+        return False
+    try:
+        hojas = _leer_hojas(archivo)
+    except Exception:
+        return False
+    df = hojas.get("cuadro2", next(iter(hojas.values())))
+    return "cuadro2" in hojas or "tratamiento" in [str(c).strip().lower() for c in df.columns]
+
+
+def tratamientos_tabla(archivo):
+    """(tratamientos del cuadro, control por defecto, inoculado por defecto)."""
+    hojas = _leer_hojas(archivo)
+    df = hojas.get("cuadro2", next(iter(hojas.values())))
+    df.columns = [str(c).strip().lower() for c in df.columns]
+    nombres = [t for t in dict.fromkeys(df["tratamiento"].dropna().astype(str).str.strip())
+               if not t.lower().startswith("cv")]
+    info = {}
+    if "info" in hojas and hojas["info"].shape[1] >= 2:
+        hi = hojas["info"]
+        info = {str(k).strip().lower(): str(v).strip() for k, v in zip(hi.iloc[:, 0], hi.iloc[:, 1]) if pd.notna(k)}
+    control = info.get("control") if info.get("control") in nombres else nombres[0]
+    inoculado = info.get("inoculado") if info.get("inoculado") in nombres else nombres[-1]
+    return nombres, control, inoculado
+
+
+def leer_tabla_paper(archivo, control=None, inoculado=None):
+    """Lee la tabla publicada (hoja «cuadro2»: dia, tratamiento, una columna por variable y su
+    «_letra», y una fila «CV (%)» por día). Devuelve (paquete, error), con paquete = {"datos",
+    "resumen", "cc_paper", "info"}. −M = `control` y +M = `inoculado` (por defecto, los de la hoja
+    «info»)."""
+    try:
+        hojas = _leer_hojas(archivo)
+    except Exception as e:
+        return None, f"No se pudo leer el archivo: {e}"
+    df = hojas.get("cuadro2", next(iter(hojas.values()))).copy()
+    df.columns = [str(c).strip().lower() for c in df.columns]
+    df = df.rename(columns={"dat": "dia", "día": "dia", "ddt": "dia"})
+    if not {"dia", "tratamiento"} <= set(df.columns):
+        return None, "La tabla necesita las columnas «dia» y «tratamiento»."
+    df = df.dropna(subset=["dia", "tratamiento"])
+    df["tratamiento"] = df["tratamiento"].astype(str).str.strip()
+    df["dia"] = pd.to_numeric(df["dia"]).astype(int)
+    es_cv = df["tratamiento"].str.lower().str.startswith("cv")
+    cv, medias = df[es_cv].set_index("dia"), df[~es_cv]
+
+    nombres, control_def, inoculado_def = tratamientos_tabla(archivo)
+    control, inoculado = control or control_def, inoculado or inoculado_def
+    if control == inoculado:
+        return None, "El tratamiento −M y el +M deben ser distintos."
+    if control not in nombres or inoculado not in nombres:
+        return None, f"Tratamientos no encontrados en la tabla. Disponibles: {', '.join(nombres)}."
+
+    variables = [v for v in ("altura", "hojas", "diametro", "area_foliar", "biomasa") if v in df.columns]
+    biomasa_sumada = "biomasa" not in df.columns and all(p in df.columns for p in TABLA_PARTES_BIOMASA)
+    if biomasa_sumada:
+        medias = medias.assign(biomasa=medias[list(TABLA_PARTES_BIOMASA)].apply(pd.to_numeric).sum(axis=1))
+        variables.append("biomasa")
+    if not variables:
+        return None, "La tabla no tiene ninguna variable que use la app (altura, hojas, diametro, area_foliar, biomasa)."
+
+    n = 5
+    info_hoja = {}
+    if "info" in hojas and hojas["info"].shape[1] >= 2:
+        hi = hojas["info"]
+        info_hoja = {str(k).strip().lower(): v for k, v in zip(hi.iloc[:, 0], hi.iloc[:, 1]) if pd.notna(k)}
+        try:
+            n = int(float(info_hoja.get("n", n)))
+        except (TypeError, ValueError):
+            pass
+
+    datos, resumen, filas_cc = {}, {}, []
+    for v in variables:
+        datos[v], resumen[v] = {"-M": {}, "+M": {}}, {"-M": {}, "+M": {}}
+        for dia, bloque in medias.groupby("dia"):
+            valores = pd.to_numeric(bloque.set_index("tratamiento")[v], errors="coerce")
+            if pd.isna(valores.get(control)) or pd.isna(valores.get(inoculado)):
+                continue
+            k = int(valores.notna().sum())
+            cv_dia = pd.to_numeric(cv[v], errors="coerce").get(dia) if v in cv.columns and dia in cv.index else None
+            de = (float(cv_dia) / 100 * float(valores.mean())
+                  if cv_dia is not None and pd.notna(cv_dia) and not (v == "biomasa" and biomasa_sumada) else None)
+            letras = bloque.set_index("tratamiento").get(f"{v}_letra")
+            for g, trat in (("-M", control), ("+M", inoculado)):
+                datos[v][g][int(dia)] = np.array([float(valores[trat])])
+                letra = letras.get(trat) if letras is not None else None
+                resumen[v][g][int(dia)] = {"de": de, "n": n, "gl": k * (n - 1),
+                                           "letra": "" if letra is None or pd.isna(letra) else str(letra).strip()}
+            filas_cc.append({"variable": v, "dia": int(dia),
+                             "media_menos": float(valores[control]), "letra_menos": resumen[v]["-M"][int(dia)]["letra"],
+                             "media_mas": float(valores[inoculado]), "letra_mas": resumen[v]["+M"][int(dia)]["letra"],
+                             "fuente": "tabla cargada",
+                             "nota": ("Biomasa = suma de raíz + tallo + lámina; el paper no da letras ni CV del total."
+                                      if v == "biomasa" and biomasa_sumada else "")})
+        if not datos[v]["-M"]:
+            del datos[v], resumen[v]
+    if not datos:
+        return None, "No hay valores de −M y +M en la tabla para ninguna variable."
+
+    conclusiones = hojas.get("paper_conclusiones")
+    if conclusiones is not None:
+        conclusiones = conclusiones.copy()
+        conclusiones.columns = [str(c).strip().lower() for c in conclusiones.columns]
+        for c in ("pagina", "variables", "dias"):
+            if c not in conclusiones.columns:
+                conclusiones[c] = ""
+        conclusiones = conclusiones.dropna(subset=["conclusion"]) if "conclusion" in conclusiones.columns else None
+    cita = str(info_hoja.get("cita", "") or "").strip()
+    info = {"cita": cita, "cita_corta": ve_cita_corta(cita) if cita else "tabla cargada",
+            "control": control, "inoculado": inoculado, "tratamientos": nombres, "n": n,
+            "biomasa_sumada": biomasa_sumada}
+    return {"datos": datos, "resumen": resumen, "info": info,
+            "cc_paper": {"resultados": pd.DataFrame(filas_cc), "conclusiones": conclusiones}}, None
+
+
+def activar_tabla_paper(paquete):
+    """Deja la tabla publicada como datos activos (modo tabla) e invalida el ajuste anterior."""
+    st.session_state.datos_reales = paquete["datos"]
+    st.session_state.tabla_resumen = paquete["resumen"]
+    st.session_state.tabla_info = paquete["info"]
+    st.session_state.cc_paper = paquete["cc_paper"]
+    st.session_state.fuente_datos = "real"
+    st.session_state.ajustado = False
+    st.session_state.resultados = None
+    st.session_state.variables_incluidas = list(paquete["datos"].keys())
+    st.session_state.cita_datos_reales = paquete["info"]["cita"]
 
 
 def advertir_dias_insuficientes(datos):
@@ -4260,7 +4522,7 @@ def cc_render():
         })
         ve_tabla(tabla_sig, {"Efecto del hongo (%)": "{:+.1f}"})
         st.caption("Cómo leer las letras: si −M y +M **no comparten ninguna letra**, el paper dice que la diferencia "
-                   "es significativa (prueba de Tukey). La app usa la prueba t de Welch (significativo si p < 0.05). "
+                   f"es significativa (prueba de Tukey). La app usa la {nombre_prueba_t()} (significativo si p < 0.05). "
                    "El paper compara 7 tratamientos y la app solo −M y +M, así que en casos límite pueden diferir.")
         notas = [f"{d} ddt: {n}" for d, n in zip(sub["dia"], sub["nota"]) if n]
         if notas:
@@ -4421,8 +4683,12 @@ if seccion == "Resumen":
 
     k1, k2, k3, k4 = st.columns(4)
     k1.metric("Duración del ensayo", "120 días")
-    k2.metric("Réplicas por día", f"{N_REPLICAS}")
-    k3.metric("Fuente de datos", "Real" if st.session_state.fuente_datos == "real" else "Simulada")
+    if es_modo_tabla():
+        k2.metric("Datos por día", "1 media (n = 5)")
+    else:
+        k2.metric("Réplicas por día", f"{N_REPLICAS}")
+    k3.metric("Fuente de datos", ("Tabla del paper" if es_modo_tabla() else "Real")
+              if st.session_state.fuente_datos == "real" else "Simulada")
     if st.session_state.fuente_datos == "real" and st.session_state.cita_datos_reales:
         st.caption(f"📄 Fuente: {st.session_state.cita_datos_reales}")
 
@@ -4471,8 +4737,10 @@ elif seccion == "Ajustar modelos":
     st.markdown("### Ajustar modelos")
     st.markdown(
         "Elige qué variables y qué modelos incluir, y presiona el botón para correr el ajuste. "
-        "**Método:** mínimos cuadrados no lineales (`scipy.optimize.curve_fit`) sobre las "
-        f"{N_REPLICAS} réplicas de cada día — no es una red neuronal ni requiere épocas/tasa de "
+        "**Método:** mínimos cuadrados no lineales (`scipy.optimize.curve_fit`) sobre "
+        + ("la **media publicada** de cada día (modo tabla: 4 fechas por grupo, sin réplicas sintéticas)"
+           if es_modo_tabla() else f"las {N_REPLICAS} réplicas de cada día")
+        + " — no es una red neuronal ni requiere épocas/tasa de "
         "aprendizaje, porque estamos ajustando una curva matemática conocida."
     )
     st.write("")
@@ -4668,6 +4936,9 @@ elif seccion == "Metodología":
 - **{N_REPLICAS} réplicas por día y por grupo**, simuladas con ruido aleatorio para poder probar
   una prueba t/ANOVA real, mientras se consiguen los datos reales.
 - **Con datos reales**, súbelos en formato largo desde *Datos de prueba* usando la plantilla.
+- **Con la tabla publicada tal cual** (modo tabla, *Datos de prueba*): una media por día y grupo; la
+  prueba t usa la DE del ANOVA del paper (CV% × media general del día, n = 5, gl = 28). Sin réplicas
+  sintéticas no hay ANOVA de residuos, y Logístico/Gompertz (3 parámetros con 4 fechas) quedan sin IC.
 - **Limitación a declarar:** los parámetros de forma (k, Ti) dependen de qué tan buena sea la
   cobertura temporal real de tus mediciones.
             """
@@ -4845,7 +5116,13 @@ elif seccion == "Resultados esperados":
     )
     st.write("")
 
-    if st.session_state.fuente_datos == "real":
+    if es_modo_tabla():
+        st.info(
+            "**Nota metodológica.** " + nota_fuente_datos("real") + " Los modelos se ajustan a las medias de "
+            "cada día (R² sobre medias) y la prueba t usa la DE y los grados de libertad del ANOVA del paper.",
+            icon="📄",
+        )
+    elif st.session_state.fuente_datos == "real":
         st.info(
             "**Nota metodológica.** Los datos provienen de Aguirre-Medina et al. (2023), Revista "
             "Fitotecnia Mexicana. Las réplicas individuales fueron generadas sintéticamente a partir "
@@ -4887,14 +5164,18 @@ elif seccion == "Resultados esperados":
         filas_efecto = calcular_efecto_micorriza(DATOS, variable)
         st.markdown(f"**{NOMBRE_VARIABLE[variable]}**")
         if not filas_efecto:
-            st.caption("No hay suficientes réplicas en ambos grupos para calcular el efecto.")
+            st.caption("La tabla no trae el CV% de esta variable: no se puede hacer la prueba t (solo se ajusta "
+                       "la curva)." if es_modo_tabla() else
+                       "No hay suficientes réplicas en ambos grupos para calcular el efecto.")
             continue
         df_efecto = pd.DataFrame([{
             "Día (ddt)": int(f["dia"]),
             f"Media −M ({UNIDADES[variable]})": round(f["media_control"], 2),
             f"Media +M ({UNIDADES[variable]})": round(f["media_tratado"], 2),
             "Incremento +M vs −M (%)": round(f["incremento_pct"], 1),
-            "t (Welch)": round(f["t"], 3), "p": round(f["p"], 4),
+            ("t" if es_modo_tabla() else "t (Welch)"): round(f["t"], 3), "p": round(f["p"], 4),
+            **({"Letras paper (−M / +M)": f"{f['letra_control'] or '—'} / {f['letra_tratado'] or '—'}"}
+               if es_modo_tabla() else {}),
             "Significativo (p<0.05)": "Sí" if f["significativo"] else "No",
         } for f in filas_efecto])
         st.dataframe(df_efecto, width='stretch', hide_index=True)
@@ -4927,11 +5208,16 @@ elif seccion == "Estadística":
     st.markdown(
         "Dos cosas que un R² alto no te dice por sí solo: **qué tan preciso es cada parámetro "
         "estimado** (intervalos de confianza) y **si la diferencia entre −M y +M es "
-        "estadísticamente significativa o podría deberse al azar** (prueba t con réplicas reales)."
+        "estadísticamente significativa o podría deberse al azar** ("
+        + ("prueba t con la DE del ANOVA del paper" if es_modo_tabla() else "prueba t con réplicas reales") + ")."
     )
     st.write("")
 
-    st.markdown('<span class="eyebrow">Prueba t independiente (Welch) · −M vs +M</span>', unsafe_allow_html=True)
+    st.markdown('<span class="eyebrow">' + ("Prueba t con la DE del ANOVA del paper" if es_modo_tabla()
+                else "Prueba t independiente (Welch)") + ' · −M vs +M</span>', unsafe_allow_html=True)
+    if es_modo_tabla():
+        st.caption("Modo tabla: medias tal cual del paper; DE = CV% del ANOVA × media general del día (la misma para "
+                   "−M y +M), n = 5 plantas y gl del error del ANOVA. Se muestran al lado las letras del paper.")
     dias_comunes = sorted(set(DATOS[variables_a_mostrar[0]]["-M"].keys()))
     dia_sel = st.select_slider("Día (DAT) para comparar", options=dias_comunes, value=st.session_state.dia_ttest
                                 if st.session_state.dia_ttest in dias_comunes else dias_comunes[-1], key="dia_ttest")
@@ -4941,7 +5227,9 @@ elif seccion == "Estadística":
         with st.container(border=True):
             st.markdown('<span class="ficha-marca"></span>', unsafe_allow_html=True)
             if resultado_t is None:
-                st.markdown(f"**{NOMBRE_VARIABLE[variable]}** — no hay suficientes réplicas en el día {dia_sel} para esta prueba.")
+                st.markdown(f"**{NOMBRE_VARIABLE[variable]}** — " + (
+                    "la tabla no trae el CV% de esta variable, así que no hay DE para la prueba t."
+                    if es_modo_tabla() else f"no hay suficientes réplicas en el día {dia_sel} para esta prueba."))
                 continue
             col_izq, col_der = st.columns([2, 1], gap="medium")
             with col_izq:
@@ -4957,7 +5245,10 @@ elif seccion == "Estadística":
                 st.caption(
                     f"−M: {resultado_t['media_control']:.2f} ± {resultado_t['sd_control']:.2f} {UNIDADES[variable]} "
                     f"(n={resultado_t['n_control']}) · +M: {resultado_t['media_tratado']:.2f} ± {resultado_t['sd_tratado']:.2f} "
-                    f"{UNIDADES[variable]} (n={resultado_t['n_tratado']}). Prueba t de Welch (dos muestras independientes)."
+                    f"{UNIDADES[variable]} (n={resultado_t['n_tratado']}). "
+                    + (f"Prueba t con la DE del ANOVA del paper (gl = {resultado_t['gl']}). Letras del paper: "
+                       f"−M «{resultado_t['letra_control'] or '—'}» · +M «{resultado_t['letra_tratado'] or '—'}»."
+                       if "gl" in resultado_t else "Prueba t de Welch (dos muestras independientes).")
                 )
             with col_der:
                 m_t, m_p = st.columns(2)
@@ -4978,15 +5269,18 @@ elif seccion == "Estadística":
                                       "Valor": "–", "IC 95% (inferior)": "–", "IC 95% (superior)": "–"})
                     continue
                 nombres_p = MODELOS[nombre_modelo]["nombres_param"]
+                ic_ok = res.get("ic_fiable", True)
                 for i, nombre_p in enumerate(nombres_p):
                     filas_ci.append({
                         "Grupo": grupo, "Modelo": nombre_modelo, "Parámetro": nombre_p,
                         "Valor": f"{res['params'][i]:.4f}",
-                        "IC 95% (inferior)": f"{res['ci_bajo'][i]:.4f}",
-                        "IC 95% (superior)": f"{res['ci_alto'][i]:.4f}",
+                        "IC 95% (inferior)": f"{res['ci_bajo'][i]:.4f}" if ic_ok else "no calculable",
+                        "IC 95% (superior)": f"{res['ci_alto'][i]:.4f}" if ic_ok else "no calculable",
                     })
         st.dataframe(pd.DataFrame(filas_ci), width='stretch', hide_index=True)
-        st.caption("'–': el modelo no convergió o no tuvo suficientes días de muestreo.")
+        st.caption("'–': el modelo no convergió o no tuvo suficientes días de muestreo. «No calculable»: hay muy "
+                   "pocos datos para los parámetros del modelo (p. ej. 4 medias y 3 parámetros deja 1 grado de "
+                   "libertad), así que el IC no informa nada.")
         st.write("")
 
     titulo_resumen_global("Todas las variables en una sola tabla y una sola figura",
@@ -5015,6 +5309,17 @@ elif seccion == "Residuos":
         "preguntas: **(1)** ¿el error del modelo cambia según el día (patrón sistemático)? y **(2)** ¿qué modelo "
         "se equivoca menos?"
     )
+    if es_modo_tabla():
+        st.info(
+            "**No disponible con la tabla publicada.** El ANOVA de residuos necesita varias plantas por día; la tabla "
+            "solo da una media por día y grupo (4 fechas), así que no hay grados de libertad dentro de cada día. "
+            "La comparación de modelos sigue en **Resultados esperados** (R², RMSE y MAE sobre las medias) y abajo, "
+            "en el error de cada modelo como % del promedio.", icon="ℹ️")
+        RES = st.session_state.resultados
+        fig_eg, pie_eg = fig_mapa_error_modelos(RES, DATOS, variables_a_mostrar, modelos_a_mostrar)
+        mostrar_resumen_global(fig_eg, pie_eg, "Resumen: error de los modelos", "resumen_error_modelos.png",
+                               "png_resumen_residuos")
+        st.stop()
 
     def mostrar_explicacion_anova(tipo, frases, filas, primera_col):
         """Debajo de cada gráfica, en orden: «Qué dice aquí» (una tarjeta ✓/✗ por modelo o grupo),
@@ -5226,12 +5531,14 @@ elif seccion == "Datos de prueba":
             st.session_state.resultados = None
             st.session_state.fuente_datos = "simulado"
             st.session_state.datos_reales = None
+            st.session_state.tabla_resumen = None
             st.toast(f"Lote #{st.session_state.lote} generado. Ve a Ajustar modelos para recalcular.")
             st.rerun()
     with col_real:
         if st.session_state.fuente_datos == "real":
             if st.button("Volver a datos simulados", width='stretch'):
                 st.session_state.fuente_datos = "simulado"
+                st.session_state.tabla_resumen = None
                 st.session_state.ajustado = False
                 st.session_state.resultados = None
                 st.rerun()
@@ -5244,7 +5551,10 @@ elif seccion == "Datos de prueba":
     _, med_kpi_p, _, _ = media_sd_por_dia(DATOS[variable_kpi]["+M"])
     k2.metric(f"{NOMBRE_VARIABLE[variable_kpi]} final (−M)", f"{med_kpi_m[-1]:.2f} {UNIDADES[variable_kpi]}")
     k3.metric(f"{NOMBRE_VARIABLE[variable_kpi]} final (+M)", f"{med_kpi_p[-1]:.2f} {UNIDADES[variable_kpi]}")
-    k4.metric("Réplicas por día", f"{N_REPLICAS}")
+    if es_modo_tabla():
+        k4.metric("Plantas por media (tabla)", f"{st.session_state.tabla_info['n']}")
+    else:
+        k4.metric("Réplicas por día", f"{N_REPLICAS}")
 
     st.write("")
     variables_todas = list(DATOS.keys())
@@ -5255,20 +5565,68 @@ elif seccion == "Datos de prueba":
                 st.markdown(f'<span class="field-label">Tabla · {NOMBRE_VARIABLE[variable]} (media ± DE por día)</span>', unsafe_allow_html=True)
                 filas = []
                 for grupo in DATOS[variable]:
-                    dias_g, medias_g, sds_g, ns_g = media_sd_por_dia(DATOS[variable][grupo])
+                    dias_g, medias_g, sds_g, ns_g = media_sd_por_dia(DATOS[variable][grupo], variable, grupo)
                     for d, m, s, n in zip(dias_g, medias_g, sds_g, ns_g):
-                        filas.append({"DAT": int(d), "Grupo": grupo, "Media": round(m, 2), "DE": round(s, 2), "n": int(n)})
+                        fila = {"DAT": int(d), "Grupo": grupo, "Media": round(m, 3), "DE": round(s, 3), "n": int(n)}
+                        if es_modo_tabla():
+                            info_d = estad_tabla(variable, grupo, d) or {}
+                            fila["DE"] = round(s, 3) if info_d.get("de") else None
+                            fila["Letra (paper)"] = info_d.get("letra", "")
+                        filas.append(fila)
                 df_resumen = pd.DataFrame(filas).sort_values(["DAT", "Grupo"])
                 st.dataframe(df_resumen, width='stretch', hide_index=True, height=280)
 
     if st.session_state.fuente_datos != "real":
         st.caption(f"Identificador interno del lote (para reproducibilidad): semilla `{st.session_state.semilla}`")
+    if es_modo_tabla():
+        st.caption("DE = CV% del ANOVA del día × promedio de todos los tratamientos de la tabla (la misma para −M y "
+                   "+M); vacía cuando la tabla no da CV (biomasa total = suma de raíz + tallo + lámina).")
+
+    st.write("")
+    st.markdown("### Usar la tabla publicada tal cual (sin réplicas sintéticas)")
+    st.markdown(
+        "Carga el **Cuadro 2** de Aguirre-Medina et al. (2023) exactamente como está en el artículo: una media por "
+        "tratamiento y día, sus letras y el CV% de cada día. Los modelos se ajustan a las **medias** y la prueba t "
+        "usa la **DE del ANOVA del paper** (CV% × media general del día, n = 5, gl = 28). No se inventa ninguna planta."
+    )
+    fuente_tabla = st.session_state.get("tabla_fuente") or (TABLA_XLSX_BASE if os.path.exists(TABLA_XLSX_BASE) else None)
+    if fuente_tabla is None:
+        st.info("No se encontró `datos_reales/cuadro2_aguirre_medina_2023.xlsx`. Sube una tabla en el formato del "
+                "cuadro con el botón de abajo.")
+    else:
+        def _abrir_tabla(fuente):
+            return io.BytesIO(fuente) if isinstance(fuente, bytes) else fuente
+        nombres_t, control_def, inoculado_def = tratamientos_tabla(_abrir_tabla(fuente_tabla))
+        info_activa = st.session_state.tabla_info if es_modo_tabla() else {}
+        control_sel = info_activa.get("control", control_def)
+        inoculado_sel = info_activa.get("inoculado", inoculado_def)
+        c_ctrl, c_inoc, c_boton = st.columns([1, 1, 1])
+        control_t = c_ctrl.selectbox("−M (sin inocular)", nombres_t, index=nombres_t.index(control_sel)
+                                     if control_sel in nombres_t else 0, key="tabla_control")
+        inoculado_t = c_inoc.selectbox("+M (inoculado)", nombres_t, index=nombres_t.index(inoculado_sel)
+                                       if inoculado_sel in nombres_t else len(nombres_t) - 1, key="tabla_inoculado")
+        c_boton.write("")
+        if c_boton.button("Usar esta tabla", type="primary", width="stretch"):
+            paquete, error = leer_tabla_paper(_abrir_tabla(fuente_tabla), control_t, inoculado_t)
+            if error:
+                st.error(error)
+            else:
+                activar_tabla_paper(paquete)
+                st.rerun()
+        st.caption(("Tabla del repositorio: `datos_reales/cuadro2_aguirre_medina_2023.xlsx`."
+                    if not isinstance(fuente_tabla, bytes) else "Tabla subida por ti.")
+                   + " La DE sale de **todos** los tratamientos del cuadro, aunque solo se comparen dos.")
+        if es_modo_tabla():
+            st.success(f"Activa: −M = **{info_activa['control']}** · +M = **{info_activa['inoculado']}**. "
+                       "Ve a Modelos → Ajustar modelos para calcular con ella.")
 
     st.write("")
     st.markdown("### Cargar tus propios datos reales")
     st.markdown(
         "Cuando tengas las mediciones reales, descarga la plantilla, complétala con tus datos "
-        "(formato **largo**: una fila por cada planta/réplica medida en cada día) y súbela aquí."
+        "(formato **largo**: una fila por cada planta/réplica medida en cada día) y súbela aquí. "
+        "También acepta una tabla publicada con el formato de `cuadro2_aguirre_medina_2023.xlsx` "
+        "(hoja «cuadro2»): se carga en modo tabla."
     )
     col_plantilla, col_subir = st.columns(2)
     with col_plantilla:
@@ -5279,12 +5637,27 @@ elif seccion == "Datos de prueba":
     with col_subir:
         archivo_subido = st.file_uploader("Subir archivo (.csv o .xlsx)", type=["csv", "xlsx"], key="uploader_datos_reales")
 
-    if archivo_subido is not None and archivo_subido.file_id != st.session_state.get("ultimo_archivo_id"):
+    if (archivo_subido is not None and archivo_subido.file_id != st.session_state.get("ultimo_archivo_id")
+            and es_archivo_tabla(archivo_subido)):
+        # Tabla publicada (formato del Cuadro 2): modo tabla, sin réplicas.
+        st.session_state.ultimo_archivo_id = archivo_subido.file_id
+        paquete, error = leer_tabla_paper(archivo_subido)
+        if error:
+            st.error(error)
+        else:
+            archivo_subido.seek(0)
+            st.session_state.tabla_fuente = archivo_subido.read()
+            activar_tabla_paper(paquete)
+            st.success(f"Tabla publicada cargada (−M = {paquete['info']['control']}, +M = "
+                       f"{paquete['info']['inoculado']}). Puedes cambiar los tratamientos arriba. "
+                       "Ve a Modelos → Ajustar modelos para calcular con ella.")
+    elif archivo_subido is not None and archivo_subido.file_id != st.session_state.get("ultimo_archivo_id"):
         datos_cargados, error = cargar_datos_desde_archivo(archivo_subido)
         st.session_state.ultimo_archivo_id = archivo_subido.file_id
         if error:
             st.error(error)
         else:
+            st.session_state.tabla_resumen = None
             st.session_state.datos_reales = datos_cargados
             st.session_state.cc_paper = cc_leer_paper(archivo_subido)
             st.session_state.fuente_datos = "real"
@@ -5517,7 +5890,9 @@ elif seccion == "Exportar reporte":
             texto_metodo = (
                 "Se compararon tres modelos de crecimiento (Exponencial, Logistico, Gompertz) "
                 "ajustados por minimos cuadrados no lineales (scipy.optimize.curve_fit) sobre "
-                f"{N_REPLICAS} replicas por dia, para dos grupos: -M (sin inocular, control) y "
+                + ("la media publicada de cada dia (tabla del paper, sin replicas sinteticas)"
+                   if es_modo_tabla() else f"{N_REPLICAS} replicas por dia")
+                + ", para dos grupos: -M (sin inocular, control) y "
                 "+M (inoculado con hongos micorrizicos arbusculares)."
             )
             pdf.multi_cell(0, 5.8, limpiar_texto(texto_metodo))
@@ -5646,41 +6021,51 @@ elif seccion == "Exportar reporte":
                     insertar_pie_pdf(pdf, pie_tasas_pdf_o_motivo)
 
             # --- Analisis de residuos (ANOVA sobre los residuos) -- mismas figuras y tablas que la
-            # seccion Residuos de la app, con su explicacion en texto. ---
-            asegurar_espacio(pdf, 60)
-            titulo_seccion(pdf, "Analisis de residuos (ANOVA)")
-            pdf.set_font("Helvetica", "", 10)
-            pdf.multi_cell(0, 5.5, limpiar_texto(
-                "El residuo es lo que se midio en cada planta menos lo que predice el modelo ese dia. Se aplica "
-                "un ANOVA de un factor a los residuos para responder: (1) residuo ~ dia: el error cambia segun "
-                "el dia? (si p < 0.05, el modelo se equivoca de forma sistematica en ciertas etapas); "
-                "(2) |residuo| ~ modelo: que modelo se equivoca menos? (letras de Tukey: misma letra = sin "
-                "diferencia real)."
-            ), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
-            pdf.ln(3)
-            guia_mostrada = set()
-            for variable in variables_a_mostrar:
-                grupos_v = [g for g in ("-M", "+M") if g in DATOS[variable]]
-                salidas = [("dia", "Modelo", "Tabla ANOVA - residuo ~ dia", fig_residuos_dia(RES, variable, g,
-                                                                                         modelos_a_mostrar))
-                           for g in grupos_v]
-                salidas.append(("modelo", "Grupo", "Tabla ANOVA - |residuo| ~ modelo",
-                                fig_residuos_modelos(RES, variable, modelos_a_mostrar, grupos_v)))
-                imagenes = []
-                for tipo, primera, titulo_tabla, salida in salidas:
-                    if salida is None or not salida[1]:
+            # seccion Residuos de la app, con su explicacion en texto. En modo tabla no hay
+            # plantas individuales: la seccion se omite. ---
+            if es_modo_tabla():
+                asegurar_espacio(pdf, 30)
+                titulo_seccion(pdf, "Analisis de residuos (ANOVA)")
+                pdf.set_font("Helvetica", "I", 9.5)
+                pdf.multi_cell(0, 5.5, limpiar_texto(
+                    "No se incluye: con la tabla publicada hay una sola media por dia y grupo, sin plantas "
+                    "individuales, asi que el ANOVA de residuos no tiene grados de libertad dentro de cada dia."
+                ), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+            else:
+                asegurar_espacio(pdf, 60)
+                titulo_seccion(pdf, "Analisis de residuos (ANOVA)")
+                pdf.set_font("Helvetica", "", 10)
+                pdf.multi_cell(0, 5.5, limpiar_texto(
+                    "El residuo es lo que se midio en cada planta menos lo que predice el modelo ese dia. Se aplica "
+                    "un ANOVA de un factor a los residuos para responder: (1) residuo ~ dia: el error cambia segun "
+                    "el dia? (si p < 0.05, el modelo se equivoca de forma sistematica en ciertas etapas); "
+                    "(2) |residuo| ~ modelo: que modelo se equivoca menos? (letras de Tukey: misma letra = sin "
+                    "diferencia real)."
+                ), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+                pdf.ln(3)
+                guia_mostrada = set()
+                for variable in variables_a_mostrar:
+                    grupos_v = [g for g in ("-M", "+M") if g in DATOS[variable]]
+                    salidas = [("dia", "Modelo", "Tabla ANOVA - residuo ~ dia", fig_residuos_dia(RES, variable, g,
+                                                                                             modelos_a_mostrar))
+                               for g in grupos_v]
+                    salidas.append(("modelo", "Grupo", "Tabla ANOVA - |residuo| ~ modelo",
+                                    fig_residuos_modelos(RES, variable, modelos_a_mostrar, grupos_v)))
+                    imagenes = []
+                    for tipo, primera, titulo_tabla, salida in salidas:
+                        if salida is None or not salida[1]:
+                            continue
+                        fig_r, filas_r, frases_r = salida
+                        tabla_r = fig_tabla_anova(filas_r, primera, ANOVA_TEXTOS[tipo]["ok"], ANOVA_TEXTOS[tipo]["mal"],
+                                                  titulo_tabla)
+                        imagenes.append(png_anova_explicado(fig_r, tabla_r, tipo, frases_r, scale=2,
+                                                            incluir_guia=tipo not in guia_mostrada))
+                        guia_mostrada.add(tipo)
+                    if not imagenes:
                         continue
-                    fig_r, filas_r, frases_r = salida
-                    tabla_r = fig_tabla_anova(filas_r, primera, ANOVA_TEXTOS[tipo]["ok"], ANOVA_TEXTOS[tipo]["mal"],
-                                              titulo_tabla)
-                    imagenes.append(png_anova_explicado(fig_r, tabla_r, tipo, frases_r, scale=2,
-                                                        incluir_guia=tipo not in guia_mostrada))
-                    guia_mostrada.add(tipo)
-                if not imagenes:
-                    continue
-                # El subtítulo de la variable va en la misma página que su primera imagen.
-                for i_r, png_r in enumerate(imagenes):
-                    insertar_imagen_png(pdf, png_r, subtitulo=NOMBRE_VARIABLE[variable] if i_r == 0 else None)
+                    # El subtítulo de la variable va en la misma página que su primera imagen.
+                    for i_r, png_r in enumerate(imagenes):
+                        insertar_imagen_png(pdf, png_r, subtitulo=NOMBRE_VARIABLE[variable] if i_r == 0 else None)
 
             # --- Resultados esperados (modelo que mejor describe cada variable + efecto +M vs -M) ---
             pdf.add_page()
@@ -5690,6 +6075,9 @@ elif seccion == "Exportar reporte":
                 pdf.set_font("Helvetica", "I", 9)
                 pdf.set_text_color(*PDF_MUTED)
                 pdf.multi_cell(0, 5.2, limpiar_texto(
+                    "Nota metodologica: " + nota_fuente_datos("real") + " Modelos ajustados a las medias de "
+                    "cada dia; prueba t con la DE y los grados de libertad del ANOVA del paper."
+                    if es_modo_tabla() else
                     "Nota metodologica: los datos provienen de Aguirre-Medina et al. (2023), Revista "
                     "Fitotecnia Mexicana. Las replicas individuales fueron generadas sinteticamente a "
                     "partir de las medias y el CV% publicados en el articulo (no son mediciones planta "
@@ -5741,6 +6129,8 @@ elif seccion == "Exportar reporte":
                 if not filas_efecto:
                     pdf.set_font("Helvetica", "", 9)
                     pdf.multi_cell(0, 5.5, limpiar_texto(
+                        "La tabla no trae el CV% de esta variable: no se puede hacer la prueba t."
+                        if es_modo_tabla() else
                         "No hay suficientes replicas en ambos grupos para calcular el efecto."
                     ), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
                     pdf.ln(2)
