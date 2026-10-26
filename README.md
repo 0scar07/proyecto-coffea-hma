@@ -158,6 +158,34 @@ originales. Los p-values de esta sección deben leerse como una ilustración
 de la metodología de la app, no como un resultado nuevo sobre el efecto de
 la micorrización.
 
+### Modo tabla: el Cuadro 2 tal cual, sin réplicas sintéticas
+
+`datos_reales/cuadro2_aguirre_medina_2023.xlsx` es el Cuadro 2 del artículo
+transcrito tal cual: los 7 tratamientos, sus medias, sus letras y la fila
+`CV (%)` de cada día (hoja `cuadro2`), más las hojas `info` (cita y qué
+tratamiento es −M y cuál +M; por defecto Testigo y *R. intraradices*),
+`paper_conclusiones` y `notas`. Se carga en **Datos de prueba → Usar la
+tabla publicada tal cual**, o subiéndolo como cualquier Excel.
+
+En este modo la app no inventa ninguna planta:
+
+- Los modelos se ajustan a la **media publicada** de cada día (4 fechas por
+  grupo); el R² es sobre medias. Las curvas son las mismas que con las
+  réplicas sintéticas, porque estas promediaban exactamente esas medias.
+- La **DE** de cada día sale del ANOVA del paper: DE = CV% / 100 × promedio
+  de los 7 tratamientos (√CME), la misma para −M y +M. Por eso la tabla
+  lleva los 7 tratamientos aunque solo se comparen dos.
+- La **prueba t** −M vs +M usa esa DE, n = 5 y los grados de libertad del
+  error del ANOVA (7 × 4 = 28). Coincide con las letras del paper en 11 de
+  12 comparaciones; la que no (altura a 112 días: 14.1 «b» vs 14.7 «a»)
+  parece una errata del cuadro, ya que 14.7 no puede compartir letra con
+  17.6–19.7.
+- **Biomasa total** = raíz + tallo + lámina (dato derivado): el paper no da su
+  CV, así que se ajusta su curva pero no tiene prueba t.
+- **No disponible:** el ANOVA de residuos (sin plantas individuales no hay
+  grados de libertad dentro de cada día) y los IC de K, k y Ti de Logístico y
+  Gompertz (4 medias y 3 parámetros dejan 1 grado de libertad).
+
 ## Metodología y limitaciones conocidas
 
 - **Ventana de muestreo limitada**: con los 4 días disponibles (28–112 ddt)
