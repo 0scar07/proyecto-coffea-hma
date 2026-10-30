@@ -182,9 +182,20 @@ En este modo la app no inventa ninguna planta:
   17.6–19.7.
 - **Biomasa total** = raíz + tallo + lámina (dato derivado): el paper no da su
   CV, así que se ajusta su curva pero no tiene prueba t.
-- **No disponible:** el ANOVA de residuos (sin plantas individuales no hay
-  grados de libertad dentro de cada día) y los IC de K, k y Ti de Logístico y
-  Gompertz (4 medias y 3 parámetros dejan 1 grado de libertad).
+- **Residuos → prueba de falta de ajuste.** El ANOVA de residuos clásico
+  necesita plantas individuales, así que se reemplaza por esta prueba: cada
+  residuo (media − curva) se divide por el error estándar de la media de ese
+  día (DE del paper / √n) y F = Σ z² / (fechas − parámetros) se compara con
+  F(fechas − parámetros; 28). Se estandariza día por día porque la variación
+  entre plantas crece mucho con el tamaño. El Logístico y el Gompertz quedan
+  con 1 grado de libertad: la prueba es débil para ellos.
+- **Estadística → ANOVA del paper con Tukey.** El ANOVA de un factor de cada
+  día, reconstruido con las medias de los 7 tratamientos, el CV% y n
+  (CME = (CV/100 × media general)²), con letras de Tukey calculadas por la app
+  y comparadas par a par con las del paper. Incluye raíz, tallo y lámina por
+  separado.
+- **No disponible:** los IC de K, k y Ti de Logístico y Gompertz (4 medias y
+  3 parámetros dejan 1 grado de libertad).
 
 ## Metodología y limitaciones conocidas
 
