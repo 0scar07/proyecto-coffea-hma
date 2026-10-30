@@ -26,7 +26,8 @@ import plotly.graph_objects as go
 import plotly.io as pio
 from plotly.subplots import make_subplots
 from scipy.optimize import brentq, curve_fit
-from scipy.stats import f_oneway, t as t_dist, ttest_ind, ttest_ind_from_stats, tukey_hsd
+from scipy.stats import (f as f_dist, f_oneway, studentized_range, t as t_dist, ttest_ind,
+                         ttest_ind_from_stats, tukey_hsd)
 from fpdf import FPDF
 from fpdf.enums import XPos, YPos
 from PIL import Image, ImageDraw, ImageFont
@@ -2421,6 +2422,243 @@ def letras_tukey(muestras):
     return letras
 
 
+# ==============================================================================
+# ANOVA EN MODO TABLA — con la tabla publicada no hay plantas individuales, pero el cuadro trae
+# todo lo necesario para dos análisis válidos:
+#   1) ANOVA del paper: el de un factor (tratamientos) de cada día, reconstruido con las medias
+#      de todos los tratamientos, el CV% y n. CME = (CV/100 × media general)²; gl = k−1 y k(n−1).
+#      Tukey: DMS = q(0.95; k; gl error) × √(CME/n).
+#   2) Falta de ajuste de cada curva: residuo de cada día (media − curva) dividido por el error
+#      estándar de la media de ese día (√(CME/n)). Si el modelo es correcto, Σ z² / (fechas −
+#      parámetros) se distribuye ≈ F(fechas − parámetros; gl error). Se estandariza día por día
+#      porque la variación entre plantas crece mucho con el tamaño (no se puede juntar).
+# ==============================================================================
+def letras_por_dms(medias, dms):
+    """Letras de Tukey a partir de las medias y la diferencia mínima significativa (DMS):
+    la media mayor lleva «a»; misma letra = sin diferencia significativa."""
+    orden = sorted(medias, key=medias.get, reverse=True)
+    vals = [medias[t] for t in orden]
+    tramos = []
+    for i in range(len(orden)):
+        j = i
+        while j + 1 < len(orden) and vals[i] - vals[j + 1] <= dms + 1e-12:
+            j += 1
+        if not tramos or j > tramos[-1][1]:
+            tramos.append((i, j))
+    letras = {t: "" for t in orden}
+    for li, (i, j) in enumerate(tramos):
+        for t in orden[i:j + 1]:
+            letras[t] += "abcdefghijklmnopqrstuvwxyz"[li % 26]
+    return letras
+
+
+def anova_cuadro(variable, dia):
+    """ANOVA de un factor (tratamientos) del paper para una variable y día, con letras de Tukey
+    de la app y del paper. None si la tabla no trae esa variable/día con CV."""
+    info = st.session_state.get("tabla_info") or {}
+    celda = info.get("cuadro", {}).get(variable, {}).get(int(dia))
+    if not celda:
+        return None
+    n = int(info.get("n", 5))
+    nombres = list(celda["medias"])
+    m = np.array([celda["medias"][t] for t in nombres])
+    k, gm = len(m), float(m.mean())
+    sc_t, gl_t = float(n * np.sum((m - gm) ** 2)), k - 1
+    cme, gl_e = (celda["cv"] / 100 * gm) ** 2, k * (n - 1)
+    if cme <= 0:
+        return None
+    sc_e = cme * gl_e
+    F = (sc_t / gl_t) / cme
+    dms = float(studentized_range.ppf(0.95, k, gl_e) * np.sqrt(cme / n))
+    letras_app = letras_por_dms(dict(zip(nombres, m)), dms)
+    letras_paper = celda["letras"]
+    # Coincidencia por pares: ¿app y paper dicen lo mismo de cada par de tratamientos?
+    pares = coinciden = 0
+    for i in range(k):
+        for j in range(i + 1, k):
+            a, b = nombres[i], nombres[j]
+            if not letras_paper.get(a) or not letras_paper.get(b):
+                continue
+            pares += 1
+            dif_app = not (set(letras_app[a]) & set(letras_app[b]))
+            dif_paper = not (set(letras_paper[a]) & set(letras_paper[b]))
+            coinciden += dif_app == dif_paper
+    return dict(nombres=nombres, medias=dict(zip(nombres, m)), letras_app=letras_app, letras_paper=letras_paper,
+                sc_t=sc_t, gl_t=gl_t, cm_t=sc_t / gl_t, sc_e=sc_e, gl_e=gl_e, cme=cme, sc_total=sc_t + sc_e,
+                gl_total=gl_t + gl_e, F=float(F), p=float(f_dist.sf(F, gl_t, gl_e)), dms=dms, cv=celda["cv"], n=n,
+                pares=pares, pares_coinciden=coinciden)
+
+
+def falta_ajuste_tabla(RES, variable, grupo, modelo):
+    """Prueba de falta de ajuste de una curva frente a las medias publicadas (ver arriba).
+    None si el modelo no se ajustó o la tabla no da CV para esa variable."""
+    res = RES[variable][grupo][modelo]
+    if res.get("insuficiente") or res["params"] is None or res["residuos"] is None:
+        return None
+    dias = np.asarray(res["t_flat"], dtype=float)
+    infos = [estad_tabla(variable, grupo, d) for d in dias]
+    if any(i is None or not i["de"] for i in infos):
+        return None
+    ee = np.array([i["de"] / np.sqrt(i["n"]) for i in infos])
+    r = np.asarray(res["residuos"], dtype=float)
+    z = r / ee
+    gl_fa, gl_e = len(dias) - len(res["params"]), int(infos[0]["gl"])
+    sc = float(np.sum(z ** 2))
+    F = sc / gl_fa if gl_fa >= 1 else None
+    p = float(f_dist.sf(F, gl_fa, gl_e)) if F is not None else None
+    return dict(dias=dias, residuos=r, ee=ee, z=z, sc=sc, gl_fa=gl_fa, gl_e=gl_e, F=F, p=p,
+                t_crit=float(t_dist.ppf(0.975, gl_e)))
+
+
+def veredicto_falta_ajuste(fa):
+    if fa is None:
+        return "—"
+    if fa["F"] is None:
+        return "sin grados de libertad para probarlo"
+    return "✓ describe bien las medias" if fa["p"] >= 0.05 else "✗ se aleja de las medias (falta de ajuste)"
+
+
+def tabla_falta_ajuste(RES, variable, modelos):
+    """Filas (dict) de la prueba de falta de ajuste para cada grupo y modelo de una variable."""
+    filas = []
+    for g in ("-M", "+M"):
+        for m in modelos:
+            fa = falta_ajuste_tabla(RES, variable, g, m)
+            if fa is None:
+                continue
+            filas.append({"Grupo": g, "Modelo": m, "Σ z² (falta de ajuste)": round(fa["sc"], 3),
+                          "gl falta de ajuste": fa["gl_fa"], "gl error (paper)": fa["gl_e"],
+                          "F": None if fa["F"] is None else round(fa["F"], 3),
+                          "p": None if fa["p"] is None else round(fa["p"], 4),
+                          "Veredicto": veredicto_falta_ajuste(fa)})
+    return filas
+
+
+def fig_falta_ajuste(RES, variable, modelos):
+    """Residuos estandarizados (z = (media − curva) / EE de la media) por día, un panel por grupo y
+    una línea por modelo, con la franja ±t crítico: un punto fuera de la franja es un día en que la
+    curva se sale del margen de error del paper. Devuelve (fig, pie) o (None, motivo)."""
+    grupos = [g for g in ("-M", "+M") if g in RES[variable]]
+    datos_fa = {(g, m): falta_ajuste_tabla(RES, variable, g, m) for g in grupos for m in modelos}
+    if not any(datos_fa.values()):
+        return None, ("La tabla no trae el CV% de esta variable (o ningún modelo se ajustó): no hay error del paper "
+                      "con el que comparar los residuos.")
+    fig = make_subplots(rows=1, cols=len(grupos), shared_yaxes=True, horizontal_spacing=0.08)
+    z_max, fuera, probados, con_falta = 2.5, 0, 0, 0
+    for col, g in enumerate(grupos, start=1):
+        t_crit = None
+        for m in modelos:
+            fa = datos_fa[(g, m)]
+            if fa is None:
+                continue
+            t_crit = fa["t_crit"]
+            z_max = max(z_max, float(np.max(np.abs(fa["z"]))) * 1.15)
+            fuera += int(np.sum(np.abs(fa["z"]) > fa["t_crit"]))
+            if fa["p"] is not None:
+                probados += 1
+                con_falta += fa["p"] < 0.05
+            est = MODELO_ESTILO[m]
+            fig.add_trace(go.Scatter(
+                x=fa["dias"], y=fa["z"], mode="lines+markers", name=m, showlegend=False,
+                line=dict(color=est["color"], dash=est["dash"], width=2),
+                marker=dict(size=10, color=est["color"]),
+                customdata=np.c_[fa["residuos"], fa["ee"]],
+                hovertemplate=(f"{m} · día %{{x:.0f}}<br>z = %{{y:.2f}}<br>media − curva = %{{customdata[0]:.3g}} "
+                               f"{UNIDADES[variable]}<br>EE de la media = %{{customdata[1]:.3g}}<extra></extra>")),
+                row=1, col=col)
+        if t_crit is not None:
+            fig.add_hrect(y0=-t_crit, y1=t_crit, fillcolor=G_GRID, opacity=0.5, line_width=0, row=1, col=col)
+        fig.add_hline(y=0, line=dict(color=G_INK, width=1), row=1, col=col)
+        fig.update_xaxes(title_text="Días después del trasplante", row=1, col=col)
+    fig.update_yaxes(range=[-z_max, z_max], title_text="Residuo estandarizado (z)", row=1, col=1)
+    for m in modelos:
+        if any(datos_fa[(g, m)] for g in grupos):
+            entrada_leyenda(fig, m, mode="lines+markers", line=dict(color=MODELO_ESTILO[m]["color"],
+                                                                    dash=MODELO_ESTILO[m]["dash"], width=3))
+    entrada_leyenda(fig, "Margen de error del paper (±t crítico)", marker=dict(symbol="square", size=14,
+                                                                                color=G_GRID))
+    nombre = NOMBRE_VARIABLE[variable]
+    if probados == 0:
+        titulo = f"{nombre}: residuos de cada día frente al margen de error del paper"
+    elif con_falta == 0:
+        titulo = f"{nombre}: ninguna curva se aleja de las medias más de lo que explica el azar"
+    else:
+        titulo = f"{nombre}: {con_falta} de {probados} curvas se alejan de las medias (falta de ajuste)"
+    estilo_publicacion(fig, width=1100, height=560, titulo=titulo, left_margin=80, leyenda_sobre_px=60,
+                       subtitulo="z = (media publicada − curva) / error estándar de la media · franja gris = margen "
+                                 "de error del paper · fuera de la franja = la curva se sale de ese margen ese día")
+    for col, g in enumerate(grupos, start=1):
+        encabezado_panel(fig, col, f"<b>({'ab'[col - 1]}) {texto_grupo(g)}</b> · {NOMBRE_GRUPO[g]}",
+                         COLOR_GRUPO[g])
+    pie = construir_pie(
+        "Residuo estandarizado z = (media publicada − valor de la curva) / (DE del ANOVA del paper / √n), con la DE "
+        "de cada día (CV% × media general del día). Prueba de falta de ajuste: F = Σ z² / (fechas − parámetros), "
+        f"comparada con F(fechas − parámetros; gl del error del paper). {fuera} punto(s) fuera de la franja ±t crítico.",
+        extra=nota_fuente_datos("real"))
+    return fig, pie
+
+
+def fig_anova_cuadro(an, variable, dia):
+    """Barras de los tratamientos del cuadro (media ± DE del ANOVA) con las letras de Tukey de la
+    app y, debajo, las del paper. −M y +M con sus colores; los demás en gris."""
+    info = st.session_state.tabla_info
+    nombre, unidad = TABLA_NOMBRE_ANOVA.get(variable, (variable, ""))
+    de = float(np.sqrt(an["cme"]))
+    nombres = an["nombres"]
+    colores = [COLOR_GRUPO["-M"] if t == info["control"] else COLOR_GRUPO["+M"] if t == info["inoculado"]
+               else "#C9C2BA" for t in nombres]
+    medias = [an["medias"][t] for t in nombres]
+    fig = go.Figure(go.Bar(
+        x=nombres, y=medias, marker=dict(color=colores, cornerradius=4),
+        error_y=dict(type="data", array=[de] * len(nombres), color=G_INK, thickness=1.2, width=0),
+        hovertemplate="%{x}: %{y:.3g} " + unidad + "<extra></extra>"))
+    techo = max(medias) + de
+    for t, y in zip(nombres, medias):
+        coincide = (an["letras_paper"].get(t) or "") == an["letras_app"][t]
+        fig.add_annotation(x=t, y=y + de, yshift=6, yanchor="bottom", showarrow=False,
+                           text=(f"<b>{an['letras_app'][t]}</b><br><span style='font-size:13px;color:{G_MUTED}'>"
+                                 f"paper: {an['letras_paper'].get(t) or '—'}{'' if coincide else ' ≠'}</span>"),
+                           font=dict(family=FUENTE_PUBLICACION, size=17, color=G_INK))
+    fig.update_yaxes(title_text=f"{nombre} ({unidad})", range=[0, techo * 1.3])
+    fig.update_xaxes(tickfont=dict(family=FUENTE_PUBLICACION, size=15, color=G_INK))
+    signif = "hay diferencias entre tratamientos" if an["p"] < 0.05 else "no hay diferencias entre tratamientos"
+    estilo_publicacion(
+        fig, width=1100, height=540, mostrar_leyenda=False,
+        titulo=f"{nombre}, día {dia}: {signif} ({formatear_p(an['p'])}); Tukey coincide con el paper en "
+               f"{an['pares_coinciden']} de {an['pares']} pares",
+        subtitulo="Barra = media publicada · línea = ± DE del ANOVA · arriba: letra de Tukey de la app (negrita) y la "
+                  "del paper · misma letra = sin diferencia · ≠ = la letra no es igual a la del paper")
+    pie = construir_pie(
+        f"ANOVA de un factor con los {len(nombres)} tratamientos del cuadro: CME = (CV {an['cv']:g} % × media general)², "
+        f"n = {an['n']}, gl = {an['gl_t']} y {an['gl_e']}. Tukey: DMS = q × √(CME/n) = {an['dms']:.3g} {unidad}. "
+        f"Azul = −M ({info['control']}), rojo = +M ({info['inoculado']}).", extra=nota_fuente_datos("real"))
+    return fig, pie
+
+
+def df_anova_cuadro(an):
+    return pd.DataFrame([
+        {"Fuente": "Tratamientos", "SC": an["sc_t"], "gl": an["gl_t"], "CM": an["cm_t"], "F": an["F"], "p": an["p"]},
+        {"Fuente": "Error", "SC": an["sc_e"], "gl": an["gl_e"], "CM": an["cme"], "F": None, "p": None},
+        {"Fuente": "Total", "SC": an["sc_total"], "gl": an["gl_total"], "CM": None, "F": None, "p": None},
+    ])
+
+
+def resumen_anova_cuadro():
+    """Una fila por variable y día con el ANOVA del paper y cuánto coincide el Tukey de la app."""
+    filas = []
+    for v, dias in (st.session_state.tabla_info or {}).get("cuadro", {}).items():
+        for d in sorted(dias):
+            an = anova_cuadro(v, d)
+            if an is None:
+                continue
+            nombre, unidad = TABLA_NOMBRE_ANOVA.get(v, (v, ""))
+            filas.append({"Variable": f"{nombre} ({unidad})", "Día": d, "F": round(an["F"], 2), "p": round(an["p"], 4),
+                          "¿Difieren los tratamientos?": "Sí" if an["p"] < 0.05 else "No",
+                          "DMS Tukey": float(f"{an['dms']:.3g}"),
+                          "Tukey app = paper (pares)": f"{an['pares_coinciden']} de {an['pares']}"})
+    return pd.DataFrame(filas)
+
+
 def fmt_num(v):
     """Número corto para tablas ANOVA: 4 cifras significativas, sin notación científica
     (valores prácticamente cero -> '≈ 0')."""
@@ -2985,7 +3223,7 @@ def generar_sugerencias(fuente_datos):
             "Ampliar el número de días de muestreo si el estudio de campo continúa, para cubrir también la "
             "fase de desaceleración del crecimiento (necesaria para que Logístico y Gompertz converjan de forma estable).",
             ("Con la tabla publicada solo hay una media por día (4 fechas): conseguir los datos planta por planta "
-             "de los autores permitiría intervalos de confianza para K, k y Ti y el ANOVA de residuos."
+             "de los autores permitiría intervalos de confianza para K, k y Ti y el ANOVA de residuos clásico."
              if es_modo_tabla() else
              "Las réplicas individuales cargadas son sintéticas (generadas para reproducir la media y desviación "
              "estándar reportadas en el paper, no mediciones planta por planta) — tenerlo en cuenta al interpretar "
@@ -3183,6 +3421,12 @@ def cargar_datos_desde_archivo(archivo):
 TABLA_XLSX_BASE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "datos_reales",
                                "cuadro2_aguirre_medina_2023.xlsx")
 TABLA_PARTES_BIOMASA = ("raiz", "tallo", "lamina")
+# Variables del cuadro que entran al ANOVA del paper (las que traen CV%) y su nombre/unidad.
+TABLA_VARIABLES_ANOVA = ("altura", "hojas", "diametro", "area_foliar", "raiz", "tallo", "lamina", "biomasa")
+TABLA_NOMBRE_ANOVA = {"altura": ("Altura", "cm"), "hojas": ("Número de hojas", "unidades"),
+                      "diametro": ("Diámetro del tallo", "mm"), "area_foliar": ("Área foliar", "cm²"),
+                      "raiz": ("Raíz", "g"), "tallo": ("Tallo + ramas y pecíolo", "g"),
+                      "lamina": ("Lámina foliar", "g"), "biomasa": ("Biomasa total", "g")}
 
 
 def _leer_hojas(archivo):
@@ -3302,10 +3546,27 @@ def leer_tabla_paper(archivo, control=None, inoculado=None):
             if c not in conclusiones.columns:
                 conclusiones[c] = ""
         conclusiones = conclusiones.dropna(subset=["conclusion"]) if "conclusion" in conclusiones.columns else None
+    # Cuadro completo (todos los tratamientos) de cada variable con CV: lo usa el ANOVA del paper.
+    cuadro = {}
+    for v in TABLA_VARIABLES_ANOVA:
+        if v not in medias.columns or v not in cv.columns:
+            continue
+        for dia, bloque in medias.groupby("dia"):
+            b = bloque.set_index("tratamiento")
+            valores = pd.to_numeric(b[v], errors="coerce").dropna()
+            cv_dia = pd.to_numeric(cv[v], errors="coerce").get(dia) if dia in cv.index else None
+            if len(valores) < 2 or cv_dia is None or pd.isna(cv_dia):
+                continue
+            letras = b.get(f"{v}_letra")
+            cuadro.setdefault(v, {})[int(dia)] = {
+                "medias": {t: float(x) for t, x in valores.items()},
+                "letras": {t: ("" if letras is None or pd.isna(letras.get(t)) else str(letras.get(t)).strip())
+                           for t in valores.index},
+                "cv": float(cv_dia)}
     cita = str(info_hoja.get("cita", "") or "").strip()
     info = {"cita": cita, "cita_corta": ve_cita_corta(cita) if cita else "tabla cargada",
             "control": control, "inoculado": inoculado, "tratamientos": nombres, "n": n,
-            "biomasa_sumada": biomasa_sumada}
+            "biomasa_sumada": biomasa_sumada, "cuadro": cuadro}
     return {"datos": datos, "resumen": resumen, "info": info,
             "cc_paper": {"resultados": pd.DataFrame(filas_cc), "conclusiones": conclusiones}}, None
 
@@ -4937,8 +5198,9 @@ elif seccion == "Metodología":
   una prueba t/ANOVA real, mientras se consiguen los datos reales.
 - **Con datos reales**, súbelos en formato largo desde *Datos de prueba* usando la plantilla.
 - **Con la tabla publicada tal cual** (modo tabla, *Datos de prueba*): una media por día y grupo; la
-  prueba t usa la DE del ANOVA del paper (CV% × media general del día, n = 5, gl = 28). Sin réplicas
-  sintéticas no hay ANOVA de residuos, y Logístico/Gompertz (3 parámetros con 4 fechas) quedan sin IC.
+  prueba t usa la DE del ANOVA del paper (CV% × media general del día, n = 5, gl = 28). El ANOVA de
+  residuos se cambia por una prueba de falta de ajuste contra el error del paper, y en *Estadística*
+  está el ANOVA del paper con Tukey. Logístico/Gompertz (3 parámetros con 4 fechas) quedan sin IC.
 - **Limitación a declarar:** los parámetros de forma (k, Ti) dependen de qué tan buena sea la
   cobertura temporal real de tus mediciones.
             """
@@ -5283,6 +5545,52 @@ elif seccion == "Estadística":
                    "libertad), así que el IC no informa nada.")
         st.write("")
 
+    if es_modo_tabla() and st.session_state.tabla_info.get("cuadro"):
+        st.markdown('<span class="eyebrow">ANOVA del paper · todos los tratamientos del cuadro, con Tukey</span>',
+                    unsafe_allow_html=True)
+        st.markdown(
+            "El ANOVA de un factor que hicieron los autores, **reconstruido con la tabla**: medias de los "
+            f"{len(st.session_state.tabla_info['tratamientos'])} tratamientos, CV% del día y n = "
+            f"{st.session_state.tabla_info['n']}. La app saca sus propias letras de Tukey y las compara con las del "
+            "paper. Incluye raíz, tallo y lámina por separado (la biomasa total no, porque el paper no da su CV).")
+        cuadro_t = st.session_state.tabla_info["cuadro"]
+        vars_an = list(cuadro_t)
+        c_var, c_dia = st.columns([2, 1])
+        var_an = c_var.selectbox("Variable", vars_an, key="anova_paper_var",
+                                 format_func=lambda v: "{} ({})".format(*TABLA_NOMBRE_ANOVA.get(v, (v, ""))))
+        dias_an = sorted(cuadro_t[var_an])
+        dia_an = c_dia.selectbox("Día", dias_an, index=len(dias_an) - 1, key="anova_paper_dia")
+        an = anova_cuadro(var_an, dia_an)
+        if an is not None:
+            k1, k2, k3, k4 = st.columns(4)
+            k1.metric("F", f"{an['F']:.2f}")
+            k2.metric("Valor p", f"{an['p']:.4f}")
+            k3.metric("DMS de Tukey", f"{an['dms']:.3g} {TABLA_NOMBRE_ANOVA.get(var_an, ('', ''))[1]}")
+            k4.metric("Tukey app = paper", f"{an['pares_coinciden']} de {an['pares']} pares")
+            fig_an, pie_an = fig_anova_cuadro(an, var_an, dia_an)
+            st.plotly_chart(fig_an, width="stretch", theme=None)
+            mostrar_pie_streamlit(pie_an)
+            boton_descarga_png(fig_an, "Descargar PNG — ANOVA del paper", f"anova_paper_{var_an}_dia_{dia_an}.png",
+                               "png_anova_paper", pie=pie_an)
+            c_tab, c_let = st.columns([3, 2])
+            with c_tab:
+                st.markdown('<span class="field-label">Tabla ANOVA</span>', unsafe_allow_html=True)
+                st.dataframe(df_anova_cuadro(an).style.format(
+                    {"SC": "{:.4g}", "CM": "{:.4g}", "F": "{:.2f}", "p": "{:.4f}"}, na_rep=""),
+                    hide_index=True, width="stretch")
+            with c_let:
+                st.markdown('<span class="field-label">Letras de Tukey</span>', unsafe_allow_html=True)
+                st.dataframe(pd.DataFrame([{
+                    "Tratamiento": t, "Media": an["medias"][t], "App": an["letras_app"][t],
+                    "Paper": an["letras_paper"].get(t) or "—"} for t in an["nombres"]]),
+                    hide_index=True, width="stretch")
+            st.caption("SC tratamientos = n × Σ (media − media general)²; CME = (CV/100 × media general)²; "
+                       "gl error = tratamientos × (n − 1). Las letras pueden escribirse distinto y significar lo "
+                       "mismo: por eso la coincidencia se cuenta por pares (si cada par difiere o no).")
+        st.markdown('<span class="field-label">Todas las variables y días</span>', unsafe_allow_html=True)
+        st.dataframe(resumen_anova_cuadro(), hide_index=True, width="stretch")
+        st.write("")
+
     titulo_resumen_global("Todas las variables en una sola tabla y una sola figura",
                           "Las tablas reúnen las pruebas t del día elegido arriba y los parámetros del mejor modelo; "
                           "la figura muestra todas las pruebas t de todos los días.")
@@ -5311,11 +5619,52 @@ elif seccion == "Residuos":
     )
     if es_modo_tabla():
         st.info(
-            "**No disponible con la tabla publicada.** El ANOVA de residuos necesita varias plantas por día; la tabla "
-            "solo da una media por día y grupo (4 fechas), así que no hay grados de libertad dentro de cada día. "
-            "La comparación de modelos sigue en **Resultados esperados** (R², RMSE y MAE sobre las medias) y abajo, "
-            "en el error de cada modelo como % del promedio.", icon="ℹ️")
-        RES = st.session_state.resultados
+            "**Con la tabla publicada se usa la prueba de falta de ajuste.** El ANOVA de residuos de siempre necesita "
+            "varias plantas por día; la tabla da una media por día y grupo. En su lugar, cada residuo (media publicada "
+            "− curva) se compara con el **margen de error del paper** de ese día (DE del ANOVA / √n) y se prueba si, en "
+            "conjunto, la curva se aleja de las medias más de lo que explica la variación entre plantas.", icon="ℹ️")
+        tabs_fa = st.tabs([NOMBRE_VARIABLE[v] for v in variables_a_mostrar])
+        for tab, variable in zip(tabs_fa, variables_a_mostrar):
+            with tab:
+                fig_fa, pie_fa = fig_falta_ajuste(RES, variable, modelos_a_mostrar)
+                if fig_fa is None:
+                    st.info(pie_fa)
+                    continue
+                st.plotly_chart(fig_fa, width="stretch", theme=None)
+                mostrar_pie_streamlit(pie_fa)
+                boton_descarga_png(fig_fa, "Descargar PNG — falta de ajuste", f"falta_ajuste_{variable}.png",
+                                   f"png_falta_ajuste_{variable}", pie=pie_fa)
+                st.markdown('<span class="field-label">Tabla · prueba de falta de ajuste</span>',
+                            unsafe_allow_html=True)
+                st.dataframe(pd.DataFrame(tabla_falta_ajuste(RES, variable, modelos_a_mostrar)),
+                             hide_index=True, width="stretch")
+                st.caption(
+                    "Cómo interpretarlo: el margen de error del paper es muy estrecho (medias de 5 plantas con CV de "
+                    "6–20 %), y solo mide la variación **entre plantas del mismo día**. Cualquier otra diferencia "
+                    "entre fechas (otro lote de plantas, el clima de esa semana) cuenta como falta de ajuste. Por eso "
+                    "una curva con R² de 0.99 puede no pasar esta prueba: describe bien la tendencia, pero no pasa "
+                    "por cada media dentro de su margen de error.")
+                c_leer, c_glos = st.columns(2)
+                with c_leer.container(border=True):
+                    st.markdown('<span class="field-label">Cómo leer esta gráfica</span>', unsafe_allow_html=True)
+                    st.markdown(
+                        "- **Cada punto:** cuánto se aleja la curva de la media publicada ese día, medido en errores "
+                        "estándar (z).\n"
+                        "- **Franja gris:** el margen de error del paper. Dentro de la franja, la diferencia se explica "
+                        "por la variación entre plantas.\n"
+                        "- **Puntos que suben y bajan sin patrón:** bien. **Todos del mismo lado o en forma de U:** la "
+                        "curva no tiene la forma de los datos.")
+                with c_glos.container(border=True):
+                    st.markdown('<span class="field-label">Qué significa cada columna</span>', unsafe_allow_html=True)
+                    st.markdown(
+                        "- **Σ z²:** suma de los residuos estandarizados al cuadrado (cuánto se aleja la curva en total).\n"
+                        "- **gl falta de ajuste:** fechas − parámetros del modelo (Exponencial 4 − 2 = 2; Logístico y "
+                        "Gompertz 4 − 3 = 1, prueba con poco poder).\n"
+                        "- **gl error (paper):** grados de libertad del error del ANOVA del paper (7 × 4 = 28).\n"
+                        "- **F = Σ z² / gl falta de ajuste** y su **p**: si p < 0.05, la curva se aleja de las medias "
+                        "más de lo esperable por azar.")
+        titulo_resumen_global("Qué modelo se equivoca menos, en todas las variables",
+                              "Error de cada modelo como % del promedio (RMSE sobre las medias).")
         fig_eg, pie_eg = fig_mapa_error_modelos(RES, DATOS, variables_a_mostrar, modelos_a_mostrar)
         mostrar_resumen_global(fig_eg, pie_eg, "Resumen: error de los modelos", "resumen_error_modelos.png",
                                "png_resumen_residuos")
@@ -5735,7 +6084,7 @@ elif seccion == "Exportar reporte":
             "−": "-", "·": "-", "→": "->", "²": "2", "±": "+/-", "–": "-", "—": "-",
             "‘": "'", "’": "'", "“": '"', "”": '"', "≥": ">=", "≤": "<=",
             "★": "*", "◇": "rombo", "◆": "rombo", "≈": "~", "÷": "/", "✓ ": "", "✗ ": "", "✓": "", "✗": "",
-            "×": "x", "⁻¹": "^-1",
+            "×": "x", "⁻¹": "^-1", "Σ": "suma de ",
         }
         for a, b in reemplazos.items():
             s = s.replace(a, b)
@@ -6024,13 +6373,51 @@ elif seccion == "Exportar reporte":
             # seccion Residuos de la app, con su explicacion en texto. En modo tabla no hay
             # plantas individuales: la seccion se omite. ---
             if es_modo_tabla():
-                asegurar_espacio(pdf, 30)
-                titulo_seccion(pdf, "Analisis de residuos (ANOVA)")
-                pdf.set_font("Helvetica", "I", 9.5)
+                asegurar_espacio(pdf, 60)
+                titulo_seccion(pdf, "Analisis de residuos: prueba de falta de ajuste")
+                pdf.set_font("Helvetica", "", 10)
                 pdf.multi_cell(0, 5.5, limpiar_texto(
-                    "No se incluye: con la tabla publicada hay una sola media por dia y grupo, sin plantas "
-                    "individuales, asi que el ANOVA de residuos no tiene grados de libertad dentro de cada dia."
+                    "Con la tabla publicada hay una media por dia y grupo. Cada residuo (media publicada - curva) se "
+                    "divide por el error estandar de la media de ese dia (DE del ANOVA del paper / raiz de n): z. "
+                    "F = suma de z al cuadrado / (fechas - parametros), comparada con F(fechas - parametros; gl del "
+                    "error del paper). Si p < 0.05, la curva se aleja de las medias mas de lo que explica el azar."
                 ), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+                pdf.ln(3)
+                for variable in variables_a_mostrar:
+                    filas_fa = tabla_falta_ajuste(RES, variable, modelos_a_mostrar)
+                    if not filas_fa:
+                        continue
+                    fig_fa, pie_fa = fig_falta_ajuste(RES, variable, modelos_a_mostrar)
+                    if fig_fa is not None:
+                        fig_fa.update_layout(paper_bgcolor="white", plot_bgcolor="white")
+                        insertar_imagen_png(pdf, fig_fa.to_image(format="png", scale=3),
+                                            subtitulo=NOMBRE_VARIABLE[variable])
+                        insertar_pie_pdf(pdf, pie_fa)
+                    asegurar_espacio(pdf, 12 + 6.5 * len(filas_fa))
+                    tabla_pdf(pdf, ["Grupo", "Modelo", "Suma z2", "gl FA", "F", "p", "Veredicto"],
+                              [14, 24, 20, 14, 18, 20, 80],
+                              [[f["Grupo"], f["Modelo"], f"{f['Σ z² (falta de ajuste)']:.3f}",
+                                f["gl falta de ajuste"], "-" if f["F"] is None else f"{f['F']:.3f}",
+                                "-" if f["p"] is None else f"{f['p']:.4f}",
+                                f["Veredicto"].replace("✓ ", "").replace("✗ ", "")] for f in filas_fa])
+                    pdf.ln(3)
+
+                df_an = resumen_anova_cuadro()
+                if not df_an.empty:
+                    pdf.add_page()
+                    titulo_seccion(pdf, "ANOVA del paper (todos los tratamientos) y Tukey")
+                    pdf.set_font("Helvetica", "", 10)
+                    pdf.multi_cell(0, 5.5, limpiar_texto(
+                        "ANOVA de un factor de cada dia reconstruido con las medias de todos los tratamientos del "
+                        "cuadro, su CV% y n: CME = (CV/100 x media general)^2. La app calcula sus letras de Tukey y "
+                        "cuenta en cuantos pares de tratamientos coincide con las letras del paper."
+                    ), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+                    pdf.ln(3)
+                    tabla_pdf(pdf, ["Variable", "Dia", "F", "p", "Difieren", "DMS", "Tukey = paper"],
+                              [52, 12, 18, 20, 18, 20, 34],
+                              [[r["Variable"], r["Día"], f"{r['F']:.2f}", f"{r['p']:.4f}",
+                                r["¿Difieren los tratamientos?"], f"{r['DMS Tukey']:g}",
+                                r["Tukey app = paper (pares)"]] for r in df_an.to_dict("records")])
             else:
                 asegurar_espacio(pdf, 60)
                 titulo_seccion(pdf, "Analisis de residuos (ANOVA)")
