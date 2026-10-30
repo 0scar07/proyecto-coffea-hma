@@ -2598,6 +2598,141 @@ def fig_falta_ajuste(RES, variable, modelos):
     return fig, pie
 
 
+def anova_modelos_tabla(RES, variable, grupo, modelos):
+    """ANOVA para elegir el mejor modelo con la tabla publicada: |residuo| (|media − curva|) ~ modelo +
+    día, con el día como bloque (los modelos se comparan en las MISMAS fechas). Tukey dice qué
+    modelos se equivocan significativamente menos. Además, por modelo: R², CME (error por grado de
+    libertad, castiga los parámetros de más), AIC y la prueba de falta de ajuste. El mejor modelo es
+    el de menor CME. Devuelve dict o None si ningún modelo se ajustó."""
+    validos = [m for m in modelos if not RES[variable][grupo][m].get("insuficiente")
+               and RES[variable][grupo][m]["params"] is not None and RES[variable][grupo][m]["residuos"] is not None]
+    if not validos:
+        return None
+    criterios = {}
+    for m in validos:
+        res = RES[variable][grupo][m]
+        r = np.asarray(res["residuos"], dtype=float)
+        n, k = len(r), len(res["params"])
+        sc_res = float(np.sum(r ** 2))
+        fa = falta_ajuste_tabla(RES, variable, grupo, m)
+        criterios[m] = dict(err_medio=float(np.mean(np.abs(r))), r2=res["r2"], sc_res=sc_res, k=k,
+                            cme=sc_res / (n - k) if n > k else np.nan,
+                            aic=n * np.log(max(sc_res, 1e-300) / n) + 2 * (k + 1),
+                            p_fa=None if fa is None else fa["p"])
+    con_cme = [m for m in validos if np.isfinite(criterios[m]["cme"])]
+    mejor = min(con_cme, key=lambda m: criterios[m]["cme"]) if con_cme else None
+    # Un Logístico/Gompertz que no llega a frenar (K enorme) da la MISMA curva que el Exponencial:
+    # se marca como equivalente y entra una sola vez al ANOVA (si no, el error sale ≈ 0 y F absurda).
+    equivalente, distintos = {}, []
+    for m in sorted(validos, key=lambda m_: criterios[m_]["k"]):
+        r_m = np.asarray(RES[variable][grupo][m]["residuos"], dtype=float)
+        escala = max(float(np.max(np.abs(r_m))), 1e-12)
+        par = next((d for d in distintos if np.allclose(
+            r_m, np.asarray(RES[variable][grupo][d]["residuos"], dtype=float), rtol=0, atol=1e-4 * escala)), None)
+        if par is None:
+            distintos.append(m)
+        else:
+            equivalente[m] = par
+    anova, letras = None, {m: "" for m in validos}
+    if len(distintos) >= 2:
+        Y = np.array([np.abs(np.asarray(RES[variable][grupo][m]["residuos"], dtype=float)) for m in distintos])
+        a, b = Y.shape
+        gm = Y.mean()
+        sc_m = float(b * np.sum((Y.mean(axis=1) - gm) ** 2))
+        sc_d = float(a * np.sum((Y.mean(axis=0) - gm) ** 2))
+        sc_t = float(np.sum((Y - gm) ** 2))
+        sc_e = max(sc_t - sc_m - sc_d, 0.0)
+        gl_m, gl_d = a - 1, b - 1
+        gl_e = gl_m * gl_d
+        if gl_e >= 1 and sc_e > 0:
+            cme = sc_e / gl_e
+            F_m, F_d = (sc_m / gl_m) / cme, (sc_d / gl_d) / cme
+            dms = float(studentized_range.ppf(0.95, a, gl_e) * np.sqrt(cme / b))
+            # «a» = el que menos se equivoca (se pasan las medias en negativo).
+            letras = letras_por_dms({m: -criterios[m]["err_medio"] for m in distintos}, dms)
+            letras.update({m: letras[par] for m, par in equivalente.items()})
+            anova = dict(sc_m=sc_m, sc_d=sc_d, sc_e=sc_e, sc_t=sc_t, gl_m=gl_m, gl_d=gl_d, gl_e=gl_e,
+                         gl_t=a * b - 1, cm_m=sc_m / gl_m, cm_d=sc_d / gl_d, cme=cme, F_m=F_m, F_d=F_d,
+                         p_m=float(f_dist.sf(F_m, gl_m, gl_e)), p_d=float(f_dist.sf(F_d, gl_d, gl_e)), dms=dms)
+    return dict(validos=validos, criterios=criterios, mejor=mejor, anova=anova, letras=letras,
+                equivalente=equivalente)
+
+
+def df_anova_modelos(am):
+    """Tabla ANOVA clásica (fuente, gl, SC, CM, F, p) de anova_modelos_tabla."""
+    a = am["anova"]
+    return pd.DataFrame([
+        {"Fuente": "Modelos", "gl": a["gl_m"], "SC": a["sc_m"], "CM": a["cm_m"], "F": a["F_m"], "p": a["p_m"]},
+        {"Fuente": "Días (bloque)", "gl": a["gl_d"], "SC": a["sc_d"], "CM": a["cm_d"], "F": a["F_d"], "p": a["p_d"]},
+        {"Fuente": "Error", "gl": a["gl_e"], "SC": a["sc_e"], "CM": a["cme"], "F": np.nan, "p": np.nan},
+        {"Fuente": "Total", "gl": a["gl_t"], "SC": a["sc_t"], "CM": np.nan, "F": np.nan, "p": np.nan},
+    ])
+
+
+def df_criterios_modelos(am, unidad):
+    """Una fila por modelo con todo lo necesario para decidir cuál es el mejor."""
+    filas = []
+    for m in am["validos"]:
+        c = am["criterios"][m]
+        filas.append({
+            "Modelo": ("★ " if m == am["mejor"] else "") + m + (f" (= {am['equivalente'][m]})"
+                                                                if m in am["equivalente"] else ""),
+            f"Error medio |media − curva| ({unidad})": c["err_medio"],
+            "Tukey": am["letras"].get(m) or "—",
+            "Parámetros": c["k"], "R²": c["r2"],
+            "CME (SC residual / gl)": c["cme"], "AIC": c["aic"],
+            "Falta de ajuste (p)": c["p_fa"],
+        })
+    return pd.DataFrame(filas)
+
+
+def texto_mejor_modelo(am, grupo):
+    """Conclusión en una frase: cuál es el mejor y si la diferencia con los demás es real."""
+    if am is None or am["mejor"] is None:
+        return f"{texto_grupo(grupo)}: ningún modelo tiene grados de libertad suficientes para compararlo."
+    mejor = am["mejor"]
+    base = f"**Mejor modelo para {texto_grupo(grupo)}: {mejor}** (menor CME = menor error por grado de libertad)."
+    if len(am["validos"]) < 2:
+        return base + " Es el único modelo que se ajustó."
+    a = am["anova"]
+    if am["equivalente"]:
+        base += " " + " ".join(f"{m} dio la misma curva que {par} (no llegó a frenar: K enorme), así que cuenta "
+                               "una sola vez." for m, par in am["equivalente"].items())
+    if a is None and am["equivalente"]:
+        return base + " Queda un solo modelo distinto: no hay nada que comparar con el ANOVA."
+    if a is None:
+        return base + " No se puede hacer el ANOVA (los errores son idénticos o no quedan grados de libertad)."
+    empatados = [m for m in am["validos"] if m != mejor
+                 and set(am["letras"].get(m, "")) & set(am["letras"].get(mejor, ""))]
+    if a["p_m"] >= 0.05:
+        return (base + f" ANOVA: p = {a['p_m']:.3f} ≥ 0.05 → los modelos están **empatados** en error; la "
+                "elección se decide por el CME (y conviene preferir el más simple).")
+    if empatados:
+        return (base + f" ANOVA: p = {a['p_m']:.3f} < 0.05 → hay diferencias, pero {mejor} no se distingue de "
+                f"{_unir(empatados)} (misma letra de Tukey).")
+    return base + f" ANOVA: p = {a['p_m']:.3f} < 0.05 y Tukey lo separa de los demás → es **mejor de verdad**."
+
+
+def resumen_mejor_modelo(RES, variables, modelos):
+    """Una fila por variable y grupo con el mejor modelo y el resultado del ANOVA."""
+    filas = []
+    for v in variables:
+        for g in ("-M", "+M"):
+            if g not in RES[v]:
+                continue
+            am = anova_modelos_tabla(RES, v, g, modelos)
+            if am is None or am["mejor"] is None:
+                continue
+            a = am["anova"]
+            filas.append({"Variable": NOMBRE_VARIABLE[v], "Grupo": g, "Mejor modelo (menor CME)": am["mejor"],
+                          "R²": am["criterios"][am["mejor"]]["r2"],
+                          "ANOVA modelos (p)": None if a is None else a["p_m"],
+                          "¿Diferencia real?": (("No (curvas iguales)" if am["equivalente"] else "—") if a is None
+                                                else "Sí" if a["p_m"] < 0.05 else "No (empate)"),
+                          "Letras de Tukey": " · ".join(f"{m} {am['letras'].get(m) or '—'}" for m in am["validos"])})
+    return pd.DataFrame(filas)
+
+
 def fig_anova_cuadro(an, variable, dia):
     """Barras de los tratamientos del cuadro (media ± DE del ANOVA) con las letras de Tukey de la
     app y, debajo, las del paper. −M y +M con sus colores; los demás en gris."""
@@ -2638,8 +2773,8 @@ def fig_anova_cuadro(an, variable, dia):
 def df_anova_cuadro(an):
     return pd.DataFrame([
         {"Fuente": "Tratamientos", "SC": an["sc_t"], "gl": an["gl_t"], "CM": an["cm_t"], "F": an["F"], "p": an["p"]},
-        {"Fuente": "Error", "SC": an["sc_e"], "gl": an["gl_e"], "CM": an["cme"], "F": None, "p": None},
-        {"Fuente": "Total", "SC": an["sc_total"], "gl": an["gl_total"], "CM": None, "F": None, "p": None},
+        {"Fuente": "Error", "SC": an["sc_e"], "gl": an["gl_e"], "CM": an["cme"], "F": np.nan, "p": np.nan},
+        {"Fuente": "Total", "SC": an["sc_total"], "gl": an["gl_total"], "CM": np.nan, "F": np.nan, "p": np.nan},
     ])
 
 
@@ -5618,14 +5753,63 @@ elif seccion == "Residuos":
         "se equivoca menos?"
     )
     if es_modo_tabla():
-        st.info(
-            "**Con la tabla publicada se usa la prueba de falta de ajuste.** El ANOVA de residuos de siempre necesita "
-            "varias plantas por día; la tabla da una media por día y grupo. En su lugar, cada residuo (media publicada "
-            "− curva) se compara con el **margen de error del paper** de ese día (DE del ANOVA / √n) y se prueba si, en "
-            "conjunto, la curva se aleja de las medias más de lo que explica la variación entre plantas.", icon="ℹ️")
+        with st.expander("¿Para qué sirve el ANOVA y cómo elige el mejor modelo?"):
+            st.markdown(
+                "- **ANOVA (análisis de varianza)** compara varios grupos a la vez y responde: **¿las diferencias "
+                "entre grupos son reales o puro azar?** Separa la variación total en la que viene de los grupos y la "
+                "que viene del azar; **F** = variación entre grupos / variación al azar. Si **p < 0.05**, al menos un "
+                "grupo es distinto de verdad.\n"
+                "- **Aquí los grupos son los modelos** y el dato es **cuánto se equivoca cada uno cada día** "
+                "(|media publicada − curva|). Como los tres modelos se miden en las mismas fechas, el **día entra como "
+                "bloque**: así se compara a los modelos día contra día y no se confunde un día difícil con un mal "
+                "modelo.\n"
+                "- **Tukey** dice qué modelos difieren: **misma letra = empatados**; «a» = el que menos se equivoca.\n"
+                "- **El mejor modelo** es el de **menor CME** (suma de errores² / (fechas − parámetros)): castiga a los "
+                "modelos con más parámetros, así no gana uno solo por tener más. Si el ANOVA dice empate (p ≥ 0.05), "
+                "el CME desempata y conviene preferir el más simple.\n"
+                "- **Ojo:** con 4 fechas el ANOVA tiene pocos grados de libertad; lo normal es que salga empate.")
         tabs_fa = st.tabs([NOMBRE_VARIABLE[v] for v in variables_a_mostrar])
         for tab, variable in zip(tabs_fa, variables_a_mostrar):
             with tab:
+                st.markdown('<span class="eyebrow">1 · Tabla ANOVA · ¿qué modelo se equivoca menos?</span>',
+                            unsafe_allow_html=True)
+                for grupo in [g for g in ("-M", "+M") if g in DATOS[variable]]:
+                    am = anova_modelos_tabla(RES, variable, grupo, modelos_a_mostrar)
+                    with st.container(border=True):
+                        st.markdown(f'<span class="card-title">{texto_grupo(grupo)} · {NOMBRE_GRUPO[grupo]}</span>',
+                                    unsafe_allow_html=True)
+                        if am is None:
+                            st.caption("Ningún modelo se ajustó en este grupo.")
+                            continue
+                        st.markdown(texto_mejor_modelo(am, grupo))
+                        if am["anova"] is not None:
+                            st.markdown('<span class="field-label">Tabla ANOVA · |residuo| ~ modelo + día</span>',
+                                        unsafe_allow_html=True)
+                            st.dataframe(df_anova_modelos(am).style.format(
+                                {"SC": "{:.4g}", "CM": "{:.4g}", "F": "{:.3f}", "p": "{:.4f}"}, na_rep=""),
+                                hide_index=True, width="stretch")
+                        st.markdown('<span class="field-label">Comparación de modelos · ★ = mejor</span>',
+                                    unsafe_allow_html=True)
+                        st.dataframe(df_criterios_modelos(am, UNIDADES[variable]).style.format(
+                            {f"Error medio |media − curva| ({UNIDADES[variable]})": "{:.4g}", "R²": "{:.4f}",
+                             "CME (SC residual / gl)": "{:.4g}", "AIC": "{:.2f}", "Falta de ajuste (p)": "{:.4f}"},
+                            na_rep="—"), hide_index=True, width="stretch")
+                with st.container(border=True):
+                    st.markdown('<span class="field-label">Qué significa cada columna</span>', unsafe_allow_html=True)
+                    st.markdown(
+                        "- **gl / SC / CM:** grados de libertad, suma de cuadrados y cuadrado medio (SC / gl).\n"
+                        "- **F y p (fila Modelos):** si p < 0.05, algún modelo se equivoca de verdad menos que otro.\n"
+                        "- **Días (bloque):** cuánto cambia el error de un día a otro (no decide nada, solo se descuenta).\n"
+                        "- **Error medio:** promedio de |media publicada − curva| en las 4 fechas.\n"
+                        "- **Tukey:** misma letra = sin diferencia; «a» = el que menos se equivoca.\n"
+                        "- **CME:** error por grado de libertad; **el menor = mejor modelo** (castiga parámetros de más).\n"
+                        "- **AIC:** otro criterio que castiga parámetros; menor = mejor. Debe coincidir casi siempre "
+                        "con el CME.\n"
+                        "- **Falta de ajuste (p):** la prueba de abajo; p < 0.05 = la curva no pasa por las medias "
+                        "dentro del margen de error del paper.")
+                st.markdown('<hr class="rule">', unsafe_allow_html=True)
+                st.markdown('<span class="eyebrow">2 · Falta de ajuste · ¿la curva pasa por las medias dentro del '
+                            'error del paper?</span>', unsafe_allow_html=True)
                 fig_fa, pie_fa = fig_falta_ajuste(RES, variable, modelos_a_mostrar)
                 if fig_fa is None:
                     st.info(pie_fa)
@@ -5664,7 +5848,10 @@ elif seccion == "Residuos":
                         "- **F = Σ z² / gl falta de ajuste** y su **p**: si p < 0.05, la curva se aleja de las medias "
                         "más de lo esperable por azar.")
         titulo_resumen_global("Qué modelo se equivoca menos, en todas las variables",
-                              "Error de cada modelo como % del promedio (RMSE sobre las medias).")
+                              "Mejor modelo de cada variable y grupo (menor CME) con su ANOVA, y el error de cada "
+                              "modelo como % del promedio.")
+        st.dataframe(resumen_mejor_modelo(RES, variables_a_mostrar, modelos_a_mostrar).style.format(
+            {"R²": "{:.4f}", "ANOVA modelos (p)": "{:.4f}"}, na_rep="—"), hide_index=True, width="stretch")
         fig_eg, pie_eg = fig_mapa_error_modelos(RES, DATOS, variables_a_mostrar, modelos_a_mostrar)
         mostrar_resumen_global(fig_eg, pie_eg, "Resumen: error de los modelos", "resumen_error_modelos.png",
                                "png_resumen_residuos")
@@ -6374,16 +6561,46 @@ elif seccion == "Exportar reporte":
             # plantas individuales: la seccion se omite. ---
             if es_modo_tabla():
                 asegurar_espacio(pdf, 60)
-                titulo_seccion(pdf, "Analisis de residuos: prueba de falta de ajuste")
+                titulo_seccion(pdf, "Analisis de residuos: ANOVA del mejor modelo y falta de ajuste")
                 pdf.set_font("Helvetica", "", 10)
                 pdf.multi_cell(0, 5.5, limpiar_texto(
-                    "Con la tabla publicada hay una media por dia y grupo. Cada residuo (media publicada - curva) se "
+                    "ANOVA |residuo| ~ modelo + dia (dia como bloque): si p < 0.05 algun modelo se equivoca de verdad "
+                    "menos; Tukey: misma letra = empatados. Mejor modelo = menor CME (SC residual / (fechas - "
+                    "parametros)). Falta de ajuste: con la tabla publicada hay una media por dia y grupo. Cada "
+                    "residuo (media publicada - curva) se "
                     "divide por el error estandar de la media de ese dia (DE del ANOVA del paper / raiz de n): z. "
                     "F = suma de z al cuadrado / (fechas - parametros), comparada con F(fechas - parametros; gl del "
                     "error del paper). Si p < 0.05, la curva se aleja de las medias mas de lo que explica el azar."
                 ), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
                 pdf.ln(3)
                 for variable in variables_a_mostrar:
+                    # ANOVA para elegir el mejor modelo (|residuo| ~ modelo + dia) y comparacion de criterios.
+                    for grupo in [g for g in ("-M", "+M") if g in DATOS[variable]]:
+                        am = anova_modelos_tabla(RES, variable, grupo, modelos_a_mostrar)
+                        if am is None:
+                            continue
+                        asegurar_espacio(pdf, 60)
+                        subtitulo_variable(pdf, f"{NOMBRE_VARIABLE[variable]} - {grupo}: que modelo se equivoca menos")
+                        pdf.set_font("Helvetica", "", 9)
+                        pdf.multi_cell(0, 5.2, limpiar_texto(texto_mejor_modelo(am, grupo).replace("**", "")),
+                                       new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+                        pdf.ln(1)
+                        if am["anova"] is not None:
+                            tabla_pdf(pdf, ["Fuente", "gl", "SC", "CM", "F", "p"], [40, 16, 32, 32, 26, 26],
+                                      [[r["Fuente"], r["gl"], f"{r['SC']:.4g}",
+                                        "" if pd.isna(r["CM"]) else f"{r['CM']:.4g}",
+                                        "" if pd.isna(r["F"]) else f"{r['F']:.3f}",
+                                        "" if pd.isna(r["p"]) else f"{r['p']:.4f}"]
+                                       for r in df_anova_modelos(am).to_dict("records")])
+                            pdf.ln(2)
+                        tabla_pdf(pdf, ["Modelo", "Error medio", "Tukey", "R2", "CME", "AIC", "Falta aj. p"],
+                                  [34, 28, 16, 22, 30, 24, 26],
+                                  [[("* " if m == am["mejor"] else "") + m, f"{c['err_medio']:.4g}",
+                                    am["letras"].get(m) or "-", f"{c['r2']:.4f}",
+                                    "-" if not np.isfinite(c["cme"]) else f"{c['cme']:.4g}", f"{c['aic']:.2f}",
+                                    "-" if c["p_fa"] is None else f"{c['p_fa']:.4f}"]
+                                   for m, c in am["criterios"].items()])
+                        pdf.ln(3)
                     filas_fa = tabla_falta_ajuste(RES, variable, modelos_a_mostrar)
                     if not filas_fa:
                         continue
