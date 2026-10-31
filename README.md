@@ -28,7 +28,7 @@ entrenamiento de modelos predictivos.
 ![Resumen](docs/screenshots/resumen.png)
 
 **Ajustar modelos** — configuración del ajuste y resultado inmediato con
-badges de bondad de ajuste (R²) por grupo y modelo
+badges de bondad de ajuste (R²) por grupo y modelo.
 
 ![Ajustar modelos](docs/screenshots/ajustar_modelos.png)
 
