@@ -26,7 +26,7 @@ import plotly.graph_objects as go
 import plotly.io as pio
 from plotly.subplots import make_subplots
 from scipy.optimize import brentq, curve_fit
-from scipy.stats import (f as f_dist, f_oneway, studentized_range, t as t_dist, ttest_ind,
+from scipy.stats import (chi2, f as f_dist, f_oneway, shapiro, studentized_range, t as t_dist, ttest_ind,
                          ttest_ind_from_stats, tukey_hsd)
 from fpdf import FPDF
 from fpdf.enums import XPos, YPos
@@ -2731,6 +2731,113 @@ def resumen_mejor_modelo(RES, variables, modelos):
                                                 else "Sí" if a["p_m"] < 0.05 else "No (empate)"),
                           "Letras de Tukey": " · ".join(f"{m} {am['letras'].get(m) or '—'}" for m in am["validos"])})
     return pd.DataFrame(filas)
+
+
+def mejor_modelo_cme(RES, variable, grupo, modelos):
+    """Mejor modelo = menor CME (SC residual / (n − parámetros)): castiga los parámetros de más.
+    Mismo criterio que la tabla ANOVA de Residuos. None si ninguno se ajustó."""
+    cmes = {}
+    for m in modelos:
+        res = RES[variable][grupo][m]
+        if res.get("insuficiente") or res["params"] is None or res["residuos"] is None:
+            continue
+        n, k = len(res["residuos"]), len(res["params"])
+        if n > k:
+            cmes[m] = float(np.sum(np.asarray(res["residuos"], dtype=float) ** 2)) / (n - k)
+    return min(cmes, key=cmes.get) if cmes else None
+
+
+def pruebas_supuestos(RES, variable, grupo, modelo):
+    """Pruebas sobre los residuales de un modelo: Shapiro-Wilk (normalidad), Durbin-Watson
+    (independencia, en orden de día), Breusch-Pagan (homocedasticidad: residuo² ~ día, LM = n·R²)
+    y una prueba por día: con réplicas, ANOVA residuo ~ día; en modo tabla (una media por día),
+    la falta de ajuste contra el error del paper. Supuesto cumplido: p > 0.05 y DW entre 1.5 y 2.5."""
+    res = RES[variable][grupo][modelo]
+    e = np.asarray(res["residuos"], dtype=float)
+    t = np.asarray(res["t_flat"], dtype=float)
+    orden = np.argsort(t, kind="stable")
+    e, t = e[orden], t[orden]
+    W = pW = np.nan
+    if len(e) >= 3 and np.ptp(e) > 0:
+        W, pW = (float(x) for x in shapiro(e))
+    dw = float(np.sum(np.diff(e) ** 2) / np.sum(e ** 2)) if np.sum(e ** 2) > 0 else np.nan
+    bp = pbp = np.nan
+    y2 = e ** 2
+    if len(e) >= 3 and np.ptp(t) > 0 and np.ptp(y2) > 0:
+        X = np.c_[np.ones_like(t), t]
+        coef = np.linalg.lstsq(X, y2, rcond=None)[0]
+        r2_aux = 1 - np.sum((y2 - X @ coef) ** 2) / np.sum((y2 - y2.mean()) ** 2)
+        bp = float(len(e) * r2_aux)
+        pbp = float(chi2.sf(bp, 1))
+    if es_modo_tabla():
+        fa = falta_ajuste_tabla(RES, variable, grupo, modelo)
+        F_d, p_d = (np.nan, np.nan) if fa is None or fa["F"] is None else (fa["F"], fa["p"])
+        nombre_d = "ajuste"
+    else:
+        an = anova_un_factor(e, t)
+        F_d, p_d = (np.nan, np.nan) if an is None else (an["F"], an["p"])
+        nombre_d = "sin patrón por día"
+    fallan = []
+    if np.isfinite(pW) and pW <= 0.05:
+        fallan.append("normalidad")
+    if np.isfinite(dw) and not 1.5 <= dw <= 2.5:
+        fallan.append("independencia")
+    if np.isfinite(pbp) and pbp <= 0.05:
+        fallan.append("homocedasticidad")
+    if np.isfinite(p_d) and p_d <= 0.05:
+        fallan.append(nombre_d)
+    return dict(n=len(e), W=W, pW=pW, dw=dw, bp=bp, pbp=pbp, F_d=F_d, p_d=p_d, fallan=fallan,
+                supuestos="Cumple" if not fallan else "No: " + ", ".join(fallan))
+
+
+def _fmt_prueba(est, p, dec=3):
+    if not np.isfinite(est):
+        return "—"
+    return f"{est:.{dec}f} ({'<0.001' if p < 0.001 else f'{p:.3f}'})"
+
+
+def tabla_global_supuestos(RES, datos, variables, modelos):
+    """Tabla «Pruebas sobre los residuales del mejor modelo de cada variable y grupo» (mejor = menor
+    CME), lista para el documento: Shapiro-Wilk, Durbin-Watson, Breusch-Pagan, la prueba por día y
+    qué supuestos no se cumplen."""
+    modo_tabla = es_modo_tabla()
+    col_dia = "Falta de ajuste F (p)" if modo_tabla else "ANOVA día F (p)"
+    encabezados = ["Variable", "Grupo", "Modelo", "Shapiro-Wilk<br>W (p)", "Durbin-<br>Watson",
+                   "Breusch-Pagan<br>(p)", col_dia.replace(" F (p)", "<br>F (p)"), "Supuestos"]
+    filas, bloques, registros = [], [], []
+    for i, v in enumerate(variables):
+        primera = True
+        for g in [g_ for g_ in ("-M", "+M") if g_ in datos[v]]:
+            m = mejor_modelo_cme(RES, v, g, modelos)
+            if m is None:
+                continue
+            pr = pruebas_supuestos(RES, v, g, m)
+            filas.append([f"{NOMBRE_VARIABLE[v]} ({UNIDADES[v]})" if primera else "", texto_grupo(g), m,
+                          _fmt_prueba(pr["W"], pr["pW"]), "—" if not np.isfinite(pr["dw"]) else f"{pr['dw']:.2f}",
+                          _fmt_prueba(pr["bp"], pr["pbp"], 2), _fmt_prueba(pr["F_d"], pr["p_d"], 2),
+                          pr["supuestos"].replace(": ", ":<br>", 1) if pr["fallan"] else "Cumple"])
+            bloques.append(i)
+            primera = False
+            registros.append({"Variable": f"{NOMBRE_VARIABLE[v]} ({UNIDADES[v]})", "Grupo": g, "Modelo": m,
+                              "n residuales": pr["n"], "Shapiro-Wilk W": pr["W"], "Shapiro-Wilk p": pr["pW"],
+                              "Durbin-Watson": pr["dw"], "Breusch-Pagan LM": pr["bp"], "Breusch-Pagan p": pr["pbp"],
+                              col_dia.replace(" (p)", ""): pr["F_d"], col_dia.replace(" F (p)", " p"): pr["p_d"],
+                              "Supuestos": pr["supuestos"]})
+    if not filas:
+        return None, None, "Ningún modelo se pudo ajustar."
+    tabla = dict(encabezados=encabezados, filas=filas, bloques=bloques,
+                 titulo="Tabla. Pruebas sobre los residuales del mejor modelo de cada variable y grupo",
+                 anchos=[1.5, 0.6, 1.0, 1.15, 0.8, 1.1, 1.1, 1.6],
+                 alinear=["left", "center", "center", "center", "center", "center", "center", "center"])
+    nota = ("Mejor modelo = el de menor CME (SC residual / (n − parámetros)). Se considera que se cumple el "
+            "supuesto cuando p > 0.05 (Shapiro-Wilk, Breusch-Pagan y " + ("falta de ajuste" if modo_tabla else
+            "ANOVA residuo ~ día") + ") y cuando el estadístico de Durbin-Watson está entre 1.5 y 2.5.")
+    if modo_tabla:
+        nota += (" Residuales = media publicada − curva en las 4 fechas, sin réplicas sintéticas; la falta de ajuste "
+                 "compara cada residual con el error estándar de la media del paper (CV% × media general / √n). "
+                 "Con n = 4 residuales estas pruebas tienen muy poca potencia y Durbin-Watson no tiene valores "
+                 "críticos tabulados.")
+    return tabla, pd.DataFrame(registros), construir_pie(nota)
 
 
 def fig_anova_cuadro(an, variable, dia):
@@ -5852,6 +5959,9 @@ elif seccion == "Residuos":
                               "modelo como % del promedio.")
         st.dataframe(resumen_mejor_modelo(RES, variables_a_mostrar, modelos_a_mostrar).style.format(
             {"R²": "{:.4f}", "ANOVA modelos (p)": "{:.4f}"}, na_rep="—"), hide_index=True, width="stretch")
+        tabla_sup, df_sup, pie_sup = tabla_global_supuestos(RES, DATOS, variables_a_mostrar, modelos_a_mostrar)
+        mostrar_tabla_global(tabla_sup, df_sup, pie_sup, "Pruebas sobre los residuales", "pruebas_residuales",
+                             "tabla_global_supuestos")
         fig_eg, pie_eg = fig_mapa_error_modelos(RES, DATOS, variables_a_mostrar, modelos_a_mostrar)
         mostrar_resumen_global(fig_eg, pie_eg, "Resumen: error de los modelos", "resumen_error_modelos.png",
                                "png_resumen_residuos")
@@ -5953,6 +6063,9 @@ elif seccion == "Residuos":
     fig_rg, pie_rg = fig_residuos_globales(RES, DATOS, variables_a_mostrar, modelos_a_mostrar)
     mostrar_resumen_global(fig_rg, pie_rg, "Resumen: residuos por día", "resumen_residuos_por_dia.png",
                            "png_resumen_residuos_dia", solo_tabla=True)
+    tabla_sup, df_sup, pie_sup = tabla_global_supuestos(RES, DATOS, variables_a_mostrar, modelos_a_mostrar)
+    mostrar_tabla_global(tabla_sup, df_sup, pie_sup, "Pruebas sobre los residuales", "pruebas_residuales",
+                         "tabla_global_supuestos")
 
 
 # ==============================================================================
@@ -6670,6 +6783,12 @@ elif seccion == "Exportar reporte":
                     # El subtítulo de la variable va en la misma página que su primera imagen.
                     for i_r, png_r in enumerate(imagenes):
                         insertar_imagen_png(pdf, png_r, subtitulo=NOMBRE_VARIABLE[variable] if i_r == 0 else None)
+
+            # Tabla de supuestos de los residuales del mejor modelo (ambos modos), igual que en la app.
+            tabla_sup_pdf, _, pie_sup_pdf = tabla_global_supuestos(RES, DATOS, variables_a_mostrar, modelos_a_mostrar)
+            if tabla_sup_pdf is not None:
+                insertar_imagen_png(pdf, png_tabla_documento(tabla_sup_pdf, pie_sup_pdf),
+                                    subtitulo="Pruebas sobre los residuales del mejor modelo")
 
             # --- Resultados esperados (modelo que mejor describe cada variable + efecto +M vs -M) ---
             pdf.add_page()
