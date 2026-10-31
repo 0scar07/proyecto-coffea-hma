@@ -43,7 +43,7 @@ estadísticamente plausible (ver [Metodología y limitaciones](#metodología-y-l
 ![Resultados](docs/screenshots/curvas.png)
 
 **Tasas de crecimiento (AGR/RGR)** — opcional, dentro de Resultados: tasa
-de crecimiento absoluta y relativa del modelo con mejor R² en cada grupo,
+de crecimiento absoluta y relativa del mejor modelo (menor CME) de cada grupo,
 calculadas analíticamente a partir de los parámetros ya ajustados (sin
 reajustar el modelo)
 
@@ -182,6 +182,17 @@ En este modo la app no inventa ninguna planta:
   17.6–19.7.
 - **Biomasa total** = raíz + tallo + lámina (dato derivado): el paper no da su
   CV, así que se ajusta su curva pero no tiene prueba t.
+- **Mejor modelo en toda la app = menor CME** (SC residual / (n −
+  parámetros)): Resultados, Resultados esperados, tasas, tablas globales y
+  Residuos usan el mismo criterio. Validación externa y Concordancia siguen
+  ofreciendo «Mejor R²» como opción propia.
+- **Residuos → tabla ANOVA para elegir el mejor modelo.** ANOVA de
+  |media − curva| ~ modelo + día (el día como bloque, porque los modelos se
+  comparan en las mismas fechas), con letras de Tukey (misma letra =
+  empatados). Una tabla por grupo compara error medio, R², CME (SC residual /
+  (fechas − parámetros)), AIC y falta de ajuste; **el mejor modelo es el de
+  menor CME**, que castiga los parámetros de más. Si un Logístico/Gompertz no
+  llega a frenar y da la misma curva que el Exponencial, cuenta una sola vez.
 - **Residuos → prueba de falta de ajuste.** El ANOVA de residuos clásico
   necesita plantas individuales, así que se reemplaza por esta prueba: cada
   residuo (media − curva) se divide por el error estándar de la media de ese

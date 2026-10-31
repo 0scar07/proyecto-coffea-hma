@@ -26,7 +26,7 @@ import plotly.graph_objects as go
 import plotly.io as pio
 from plotly.subplots import make_subplots
 from scipy.optimize import brentq, curve_fit
-from scipy.stats import (f as f_dist, f_oneway, studentized_range, t as t_dist, ttest_ind,
+from scipy.stats import (chi2, f as f_dist, f_oneway, shapiro, studentized_range, t as t_dist, ttest_ind,
                          ttest_ind_from_stats, tukey_hsd)
 from fpdf import FPDF
 from fpdf.enums import XPos, YPos
@@ -1190,7 +1190,8 @@ def calcular_tabla_modelo(RES, datos, variable, modelos):
             r2 = RES[variable][grupo][m]["r2"]
             if r2 is not None and not (isinstance(r2, float) and np.isnan(r2)):
                 validos.append((m, r2))
-        mejores[grupo] = max(validos, key=lambda x: x[1])[0] if validos else None
+        # Mejor modelo = menor CME (castiga los parámetros de más), el mismo criterio en toda la app.
+        mejores[grupo] = mejor_modelo_cme(RES, variable, grupo, modelos) if validos else None
         for m in modelos:
             res = RES[variable][grupo][m]
             r2, rmse, mae = res["r2"], res["rmse"], res.get("mae")
@@ -1482,7 +1483,9 @@ def fig_barras_r2_comparacion(RES, datos, variables, modelos):
     fig.update_yaxes(autorange="reversed", showgrid=False, tickmode="array", tickvals=filas_txt,
                      ticktext=filas_txt, tickfont=dict(family=FUENTE_PUBLICACION, size=17, color=G_INK))
     pie = construir_pie(
-        "R² de cada modelo (Exponencial, Logístico, Gompertz) por variable y grupo. ★ = mayor R² de la fila. "
+        "R² de cada modelo (Exponencial, Logístico, Gompertz) por variable y grupo. ★ = mejor modelo de la fila "
+        "(menor CME = SC residual / (n − parámetros); no siempre es el de mayor R², porque castiga los parámetros "
+        "de más). "
         "Las celdas con «—» indican que el modelo no convergió o no tuvo días suficientes.")
     return fig, pie
 
@@ -1517,7 +1520,7 @@ def _rango_simetrico_pct(valores, minimo=10):
 
 def fig_resumen_efecto_tiempo(datos, RES, variables, modelos, fuente_datos="simulado"):
     """Efecto del hongo (+M sobre −M, %) a lo largo del tiempo para TODAS las variables en una sola
-    gráfica. Línea = efecto según las curvas ajustadas (mejor R² de cada grupo); marcador = efecto
+    gráfica. Línea = efecto según las curvas ajustadas (mejor modelo de cada grupo); marcador = efecto
     con los promedios medidos ese día (relleno = diferencia significativa con la prueba t de Welch,
     hueco = no significativa). Devuelve (None, motivo) si ninguna variable tiene −M y +M."""
     fig = go.Figure()
@@ -1581,7 +1584,7 @@ def fig_resumen_efecto_tiempo(datos, RES, variables, modelos, fuente_datos="simu
     extra = nota_fuente_datos(fuente_datos)
     pie = construir_pie(
         "Efecto del hongo = (+M − −M) / −M × 100, para todas las variables. Línea: con el mejor modelo de cada "
-        f"grupo (mayor R²). Marcadores: con los promedios medidos; relleno = {nombre_prueba_t()} con p < 0.05.",
+        f"grupo (menor CME). Marcadores: con los promedios medidos; relleno = {nombre_prueba_t()} con p < 0.05.",
         extra=extra)
     return fig, pie
 
@@ -1832,7 +1835,7 @@ def _dec_variable(v):
 
 def tabla_global_ajuste(RES, datos, variables, modelos):
     """Una sola tabla con el ajuste de todas las variables: R² de cada modelo en −M y +M, el mejor
-    modelo (★, mayor R²) y su RMSE y MAE. Devuelve (tabla, df, pie) o (None, None, motivo)."""
+    modelo (★, menor CME) y su RMSE y MAE. Devuelve (tabla, df, pie) o (None, None, motivo)."""
     encabezados = ["Variable", "Grupo"] + [f"R²<br>{m}" for m in modelos] + ["Mejor modelo", "RMSE", "MAE"]
     filas, bloques, registros, ganadores = [], [], [], []
     for i, v in enumerate(variables):
@@ -1863,7 +1866,8 @@ def tabla_global_ajuste(RES, datos, variables, modelos):
               f"{ganadores.count(top)} de {len(filas)} casos" if top else "Tabla. Ajuste de los modelos")
     tabla = dict(encabezados=encabezados, filas=filas, bloques=bloques, titulo=titulo,
                  anchos=[1.5, 0.7] + [1.0] * len(modelos) + [1.25, 0.8, 0.8])
-    pie = construir_pie("★ y negrita = el modelo con mayor R² en cada grupo. RMSE y MAE son del mejor modelo, en la "
+    pie = construir_pie("★ y negrita = el mejor modelo de cada grupo (menor CME = SC residual / (n − parámetros), "
+                        "castiga los parámetros de más). RMSE y MAE son del mejor modelo, en la "
                         "unidad de cada variable (más bajo = mejor). «—» = el modelo no se pudo ajustar. −M = sin "
                         "micorriza (control); +M = inoculado con HMA.")
     return tabla, pd.DataFrame(registros), pie
@@ -1911,7 +1915,7 @@ def tabla_global_efecto(datos, variables, solo_dia=None):
 
 
 def tabla_global_parametros(RES, datos, variables, modelos):
-    """Una sola tabla con los parámetros del mejor modelo (mayor R²) de cada variable y grupo, con su
+    """Una sola tabla con los parámetros del mejor modelo (menor CME) de cada variable y grupo, con su
     intervalo de confianza al 95 %."""
     encabezados = ["Variable", "Grupo", "Mejor modelo<br>(R²)", "Parámetros (IC 95 %)"]
     filas, bloques, registros = [], [], []
@@ -1944,7 +1948,7 @@ def tabla_global_parametros(RES, datos, variables, modelos):
     tabla = dict(encabezados=encabezados, filas=filas, bloques=bloques,
                  titulo="Tabla. Parámetros del mejor modelo de cada variable y grupo, con su IC 95 %",
                  anchos=[1.3, 0.6, 1.2, 3.0], alinear=["left", "center", "center", "left"])
-    pie = construir_pie("Mejor modelo = el de mayor R² en cada grupo. Entre corchetes, el intervalo de confianza al "
+    pie = construir_pie("Mejor modelo = el de menor CME en cada grupo. Entre corchetes, el intervalo de confianza al "
                         "95 % de cada parámetro (más estrecho = parámetro mejor estimado; «IC no calculable» = muy "
                         "pocos datos para ese modelo). Logístico y Gompertz: K = "
                         "tamaño máximo (asíntota), k = velocidad, Ti = día de crecimiento más rápido. Exponencial: "
@@ -1953,12 +1957,10 @@ def tabla_global_parametros(RES, datos, variables, modelos):
 
 
 def modelo_para_grafica(RES, v, g, modelos, eleccion):
-    """El modelo que se dibuja en Real vs. predicho: el de mayor R² del grupo («Mejor de cada grupo»)
-    o el que se eligió, si se pudo ajustar."""
+    """El modelo que se dibuja en Real vs. predicho: el mejor del grupo (menor CME, «Mejor de cada
+    grupo») o el que se eligió, si se pudo ajustar."""
     if eleccion == "Mejor de cada grupo":
-        validos = [m for m in modelos if RES[v][g][m]["params"] is not None and RES[v][g][m]["r2"] is not None
-                   and np.isfinite(RES[v][g][m]["r2"])]
-        return max(validos, key=lambda m: RES[v][g][m]["r2"]) if validos else None
+        return mejor_modelo_cme(RES, v, g, modelos)
     return eleccion if RES[v][g][eleccion]["params"] is not None else None
 
 
@@ -2091,7 +2093,7 @@ def fig_curvas_publicacion(datos, RES, variable, modelos, fuente_datos="simulado
     - Puntos claros = cada planta medida (réplicas); punto con barra = media ± DE del día.
     - Una línea por modelo convergido (color + tipo de línea por modelo, paleta Okabe-Ito),
       con su nombre y R² escritos al final de la línea (etiqueta directa, sin leyenda aparte).
-      El mejor modelo (★, mayor R²) va más grueso y es el único con banda IC 95 %.
+      El mejor modelo (★, menor CME) va más grueso y es el único con banda IC 95 %.
     - Del mejor modelo se anotan la asíntota K ("techo estimado") y el punto de inflexión
       ("día en que crece más rápido"), solo si K pasa el criterio de plausibilidad.
     - El título dice la conclusión (+M vs −M en el último día, con prueba t).
@@ -2138,7 +2140,7 @@ def fig_curvas_publicacion(datos, RES, variable, modelos, fuente_datos="simulado
             hovertemplate=f"Día %{{x:.0f}}<br>media %{{y:.2f}} {unidad}<extra></extra>",
         ), row=1, col=col)
 
-        # Modelos válidos y el mejor (mayor R²) de este grupo
+        # Modelos válidos y el mejor (menor CME) de este grupo
         validos = {}
         for modelo in modelos:
             res = RES[variable][grupo][modelo]
@@ -2151,7 +2153,7 @@ def fig_curvas_publicacion(datos, RES, variable, modelos, fuente_datos="simulado
                 notas.append(f"{modelo} ({texto_grupo(grupo)}): no convergió.")
                 continue
             validos[modelo] = res
-        mejor = max(validos, key=lambda m: validos[m]["r2"]) if validos else None
+        mejor = mejor_modelo_cme(RES, variable, grupo, list(validos)) if validos else None
 
         for modelo, res in validos.items():
             estilo = MODELO_ESTILO[modelo]
@@ -2250,7 +2252,7 @@ def fig_curvas_publicacion(datos, RES, variable, modelos, fuente_datos="simulado
     descripcion = (("Punto con barra = media publicada ± DE del ANOVA del paper; los modelos se ajustan a esas "
                     "medias (R² sobre medias). " if es_modo_tabla() else
                     "Puntos claros = réplicas individuales; punto con barra = media ± DE por día. ") + "Líneas = modelos "
-                   "convergidos; su R² está en el encabezado de cada panel; ★ = mejor R² del grupo (el único con banda IC 95 %). "
+                   "convergidos; su R² está en el encabezado de cada panel; ★ = mejor modelo del grupo (menor CME; el único con banda IC 95 %). "
                    "Eje Y limitado a ~1.25× el máximo observado. Asíntota K (techo estimado) y punto de inflexión "
                    "(◇) del mejor modelo, con sus valores en el encabezado: solo si convergió, R² ≥ 0.90, K ≤ 1.5× el máximo observado y la "
                    "inflexión cae dentro de los días observados.")
@@ -2329,7 +2331,7 @@ def fig_tasas_crecimiento(datos, RES, variable, modelos, fuente_datos="simulado"
                            font=dict(family=FUENTE_PUBLICACION, size=15, color=G_INK))
         fig.add_annotation(x=1, y=0.02, xref=f"{_ref_ejes(n + col)[0]} domain",
                            yref=f"{_ref_ejes(n + col)[1]} domain", xanchor="right", yanchor="bottom",
-                           showarrow=False, text=f"modelo: {modelo} (mejor R²)",
+                           showarrow=False, text=f"modelo: {modelo} (mejor modelo)",
                            font=dict(family=FUENTE_PUBLICACION, size=14.5, color=G_MUTED))
         fig.update_yaxes(rangemode="tozero", row=1, col=col)
         rgr_max = float(np.nanmax(rgr)) if np.any(np.isfinite(rgr)) else 0.0
@@ -2364,13 +2366,13 @@ def fig_tasas_crecimiento(datos, RES, variable, modelos, fuente_datos="simulado"
     for col, grupo in enumerate(grupos_validos, start=1):
         encabezado_panel(fig, col, f"<b>{texto_grupo(grupo)}</b> · {NOMBRE_GRUPO[grupo]}", COLOR_GRUPO[grupo])
 
-    notas = [f"Modelo usado en {texto_grupo(g)}: {mejores[g]} (mejor R² entre los convergidos)." for g in grupos_validos]
+    notas = [f"Modelo usado en {texto_grupo(g)}: {mejores[g]} (menor CME entre los convergidos)." for g in grupos_validos]
     if len(grupos_validos) < len(grupos):
         notas.append(f"Sin tasas para {', '.join(texto_grupo(g) for g in grupos if g not in grupos_validos)}: "
                      "ningún modelo convergió en ese grupo.")
     extra = nota_fuente_datos(fuente_datos)
     descripcion = ("Tasas calculadas analíticamente a partir de los parámetros ya ajustados del modelo con "
-                   "mejor R² en cada grupo (sin reajustar). AGR = dP/dt (cuánto crece por día); "
+                   "menor CME en cada grupo (sin reajustar). AGR = dP/dt (cuánto crece por día); "
                    "RGR = (1/P)·dP/dt (crecimiento relativo a su tamaño). ◇ = máximo de AGR.")
     return fig, construir_pie(descripcion, notas=notas, extra=extra)
 
@@ -2598,6 +2600,248 @@ def fig_falta_ajuste(RES, variable, modelos):
     return fig, pie
 
 
+def anova_modelos_tabla(RES, variable, grupo, modelos):
+    """ANOVA para elegir el mejor modelo con la tabla publicada: |residuo| (|media − curva|) ~ modelo +
+    día, con el día como bloque (los modelos se comparan en las MISMAS fechas). Tukey dice qué
+    modelos se equivocan significativamente menos. Además, por modelo: R², CME (error por grado de
+    libertad, castiga los parámetros de más), AIC y la prueba de falta de ajuste. El mejor modelo es
+    el de menor CME. Devuelve dict o None si ningún modelo se ajustó."""
+    validos = [m for m in modelos if not RES[variable][grupo][m].get("insuficiente")
+               and RES[variable][grupo][m]["params"] is not None and RES[variable][grupo][m]["residuos"] is not None]
+    if not validos:
+        return None
+    criterios = {}
+    for m in validos:
+        res = RES[variable][grupo][m]
+        r = np.asarray(res["residuos"], dtype=float)
+        n, k = len(r), len(res["params"])
+        sc_res = float(np.sum(r ** 2))
+        fa = falta_ajuste_tabla(RES, variable, grupo, m)
+        criterios[m] = dict(err_medio=float(np.mean(np.abs(r))), r2=res["r2"], sc_res=sc_res, k=k,
+                            cme=sc_res / (n - k) if n > k else np.nan,
+                            aic=n * np.log(max(sc_res, 1e-300) / n) + 2 * (k + 1),
+                            p_fa=None if fa is None else fa["p"])
+    con_cme = [m for m in validos if np.isfinite(criterios[m]["cme"])]
+    mejor = min(con_cme, key=lambda m: criterios[m]["cme"]) if con_cme else None
+    # Un Logístico/Gompertz que no llega a frenar (K enorme) da la MISMA curva que el Exponencial:
+    # se marca como equivalente y entra una sola vez al ANOVA (si no, el error sale ≈ 0 y F absurda).
+    equivalente, distintos = {}, []
+    for m in sorted(validos, key=lambda m_: criterios[m_]["k"]):
+        r_m = np.asarray(RES[variable][grupo][m]["residuos"], dtype=float)
+        escala = max(float(np.max(np.abs(r_m))), 1e-12)
+        par = next((d for d in distintos if np.allclose(
+            r_m, np.asarray(RES[variable][grupo][d]["residuos"], dtype=float), rtol=0, atol=1e-4 * escala)), None)
+        if par is None:
+            distintos.append(m)
+        else:
+            equivalente[m] = par
+    anova, letras = None, {m: "" for m in validos}
+    if len(distintos) >= 2:
+        Y = np.array([np.abs(np.asarray(RES[variable][grupo][m]["residuos"], dtype=float)) for m in distintos])
+        a, b = Y.shape
+        gm = Y.mean()
+        sc_m = float(b * np.sum((Y.mean(axis=1) - gm) ** 2))
+        sc_d = float(a * np.sum((Y.mean(axis=0) - gm) ** 2))
+        sc_t = float(np.sum((Y - gm) ** 2))
+        sc_e = max(sc_t - sc_m - sc_d, 0.0)
+        gl_m, gl_d = a - 1, b - 1
+        gl_e = gl_m * gl_d
+        if gl_e >= 1 and sc_e > 0:
+            cme = sc_e / gl_e
+            F_m, F_d = (sc_m / gl_m) / cme, (sc_d / gl_d) / cme
+            dms = float(studentized_range.ppf(0.95, a, gl_e) * np.sqrt(cme / b))
+            # «a» = el que menos se equivoca (se pasan las medias en negativo).
+            letras = letras_por_dms({m: -criterios[m]["err_medio"] for m in distintos}, dms)
+            letras.update({m: letras[par] for m, par in equivalente.items()})
+            anova = dict(sc_m=sc_m, sc_d=sc_d, sc_e=sc_e, sc_t=sc_t, gl_m=gl_m, gl_d=gl_d, gl_e=gl_e,
+                         gl_t=a * b - 1, cm_m=sc_m / gl_m, cm_d=sc_d / gl_d, cme=cme, F_m=F_m, F_d=F_d,
+                         p_m=float(f_dist.sf(F_m, gl_m, gl_e)), p_d=float(f_dist.sf(F_d, gl_d, gl_e)), dms=dms)
+    return dict(validos=validos, criterios=criterios, mejor=mejor, anova=anova, letras=letras,
+                equivalente=equivalente)
+
+
+def df_anova_modelos(am):
+    """Tabla ANOVA clásica (fuente, gl, SC, CM, F, p) de anova_modelos_tabla."""
+    a = am["anova"]
+    return pd.DataFrame([
+        {"Fuente": "Modelos", "gl": a["gl_m"], "SC": a["sc_m"], "CM": a["cm_m"], "F": a["F_m"], "p": a["p_m"]},
+        {"Fuente": "Días (bloque)", "gl": a["gl_d"], "SC": a["sc_d"], "CM": a["cm_d"], "F": a["F_d"], "p": a["p_d"]},
+        {"Fuente": "Error", "gl": a["gl_e"], "SC": a["sc_e"], "CM": a["cme"], "F": np.nan, "p": np.nan},
+        {"Fuente": "Total", "gl": a["gl_t"], "SC": a["sc_t"], "CM": np.nan, "F": np.nan, "p": np.nan},
+    ])
+
+
+def df_criterios_modelos(am, unidad):
+    """Una fila por modelo con todo lo necesario para decidir cuál es el mejor."""
+    filas = []
+    for m in am["validos"]:
+        c = am["criterios"][m]
+        filas.append({
+            "Modelo": ("★ " if m == am["mejor"] else "") + m + (f" (= {am['equivalente'][m]})"
+                                                                if m in am["equivalente"] else ""),
+            f"Error medio |media − curva| ({unidad})": c["err_medio"],
+            "Tukey": am["letras"].get(m) or "—",
+            "Parámetros": c["k"], "R²": c["r2"],
+            "CME (SC residual / gl)": c["cme"], "AIC": c["aic"],
+            "Falta de ajuste (p)": c["p_fa"],
+        })
+    return pd.DataFrame(filas)
+
+
+def texto_mejor_modelo(am, grupo):
+    """Conclusión en una frase: cuál es el mejor y si la diferencia con los demás es real."""
+    if am is None or am["mejor"] is None:
+        return f"{texto_grupo(grupo)}: ningún modelo tiene grados de libertad suficientes para compararlo."
+    mejor = am["mejor"]
+    base = f"**Mejor modelo para {texto_grupo(grupo)}: {mejor}** (menor CME = menor error por grado de libertad)."
+    if len(am["validos"]) < 2:
+        return base + " Es el único modelo que se ajustó."
+    a = am["anova"]
+    if am["equivalente"]:
+        base += " " + " ".join(f"{m} dio la misma curva que {par} (no llegó a frenar: K enorme), así que cuenta "
+                               "una sola vez." for m, par in am["equivalente"].items())
+    if a is None and am["equivalente"]:
+        return base + " Queda un solo modelo distinto: no hay nada que comparar con el ANOVA."
+    if a is None:
+        return base + " No se puede hacer el ANOVA (los errores son idénticos o no quedan grados de libertad)."
+    empatados = [m for m in am["validos"] if m != mejor
+                 and set(am["letras"].get(m, "")) & set(am["letras"].get(mejor, ""))]
+    if a["p_m"] >= 0.05:
+        return (base + f" ANOVA: p = {a['p_m']:.3f} ≥ 0.05 → los modelos están **empatados** en error; la "
+                "elección se decide por el CME (y conviene preferir el más simple).")
+    if empatados:
+        return (base + f" ANOVA: p = {a['p_m']:.3f} < 0.05 → hay diferencias, pero {mejor} no se distingue de "
+                f"{_unir(empatados)} (misma letra de Tukey).")
+    return base + f" ANOVA: p = {a['p_m']:.3f} < 0.05 y Tukey lo separa de los demás → es **mejor de verdad**."
+
+
+def resumen_mejor_modelo(RES, variables, modelos):
+    """Una fila por variable y grupo con el mejor modelo y el resultado del ANOVA."""
+    filas = []
+    for v in variables:
+        for g in ("-M", "+M"):
+            if g not in RES[v]:
+                continue
+            am = anova_modelos_tabla(RES, v, g, modelos)
+            if am is None or am["mejor"] is None:
+                continue
+            a = am["anova"]
+            filas.append({"Variable": NOMBRE_VARIABLE[v], "Grupo": g, "Mejor modelo (menor CME)": am["mejor"],
+                          "R²": am["criterios"][am["mejor"]]["r2"],
+                          "ANOVA modelos (p)": None if a is None else a["p_m"],
+                          "¿Diferencia real?": (("No (curvas iguales)" if am["equivalente"] else "—") if a is None
+                                                else "Sí" if a["p_m"] < 0.05 else "No (empate)"),
+                          "Letras de Tukey": " · ".join(f"{m} {am['letras'].get(m) or '—'}" for m in am["validos"])})
+    return pd.DataFrame(filas)
+
+
+def mejor_modelo_cme(RES, variable, grupo, modelos):
+    """Mejor modelo = menor CME (SC residual / (n − parámetros)): castiga los parámetros de más.
+    Mismo criterio que la tabla ANOVA de Residuos. None si ninguno se ajustó."""
+    cmes = {}
+    for m in modelos:
+        res = RES[variable][grupo][m]
+        if res.get("insuficiente") or res["params"] is None or res["residuos"] is None:
+            continue
+        n, k = len(res["residuos"]), len(res["params"])
+        if n > k:
+            cmes[m] = float(np.sum(np.asarray(res["residuos"], dtype=float) ** 2)) / (n - k)
+    return min(cmes, key=cmes.get) if cmes else None
+
+
+def pruebas_supuestos(RES, variable, grupo, modelo):
+    """Pruebas sobre los residuales de un modelo: Shapiro-Wilk (normalidad), Durbin-Watson
+    (independencia, en orden de día), Breusch-Pagan (homocedasticidad: residuo² ~ día, LM = n·R²)
+    y una prueba por día: con réplicas, ANOVA residuo ~ día; en modo tabla (una media por día),
+    la falta de ajuste contra el error del paper. Supuesto cumplido: p > 0.05 y DW entre 1.5 y 2.5."""
+    res = RES[variable][grupo][modelo]
+    e = np.asarray(res["residuos"], dtype=float)
+    t = np.asarray(res["t_flat"], dtype=float)
+    orden = np.argsort(t, kind="stable")
+    e, t = e[orden], t[orden]
+    W = pW = np.nan
+    if len(e) >= 3 and np.ptp(e) > 0:
+        W, pW = (float(x) for x in shapiro(e))
+    dw = float(np.sum(np.diff(e) ** 2) / np.sum(e ** 2)) if np.sum(e ** 2) > 0 else np.nan
+    bp = pbp = np.nan
+    y2 = e ** 2
+    if len(e) >= 3 and np.ptp(t) > 0 and np.ptp(y2) > 0:
+        X = np.c_[np.ones_like(t), t]
+        coef = np.linalg.lstsq(X, y2, rcond=None)[0]
+        r2_aux = 1 - np.sum((y2 - X @ coef) ** 2) / np.sum((y2 - y2.mean()) ** 2)
+        bp = float(len(e) * r2_aux)
+        pbp = float(chi2.sf(bp, 1))
+    if es_modo_tabla():
+        fa = falta_ajuste_tabla(RES, variable, grupo, modelo)
+        F_d, p_d = (np.nan, np.nan) if fa is None or fa["F"] is None else (fa["F"], fa["p"])
+        nombre_d = "ajuste"
+    else:
+        an = anova_un_factor(e, t)
+        F_d, p_d = (np.nan, np.nan) if an is None else (an["F"], an["p"])
+        nombre_d = "sin patrón por día"
+    fallan = []
+    if np.isfinite(pW) and pW <= 0.05:
+        fallan.append("normalidad")
+    if np.isfinite(dw) and not 1.5 <= dw <= 2.5:
+        fallan.append("independencia")
+    if np.isfinite(pbp) and pbp <= 0.05:
+        fallan.append("homocedasticidad")
+    if np.isfinite(p_d) and p_d <= 0.05:
+        fallan.append(nombre_d)
+    return dict(n=len(e), W=W, pW=pW, dw=dw, bp=bp, pbp=pbp, F_d=F_d, p_d=p_d, fallan=fallan,
+                supuestos="Cumple" if not fallan else "No: " + ", ".join(fallan))
+
+
+def _fmt_prueba(est, p, dec=3):
+    if not np.isfinite(est):
+        return "—"
+    return f"{est:.{dec}f} ({'<0.001' if p < 0.001 else f'{p:.3f}'})"
+
+
+def tabla_global_supuestos(RES, datos, variables, modelos):
+    """Tabla «Pruebas sobre los residuales del mejor modelo de cada variable y grupo» (mejor = menor
+    CME), lista para el documento: Shapiro-Wilk, Durbin-Watson, Breusch-Pagan, la prueba por día y
+    qué supuestos no se cumplen."""
+    modo_tabla = es_modo_tabla()
+    col_dia = "Falta de ajuste F (p)" if modo_tabla else "ANOVA día F (p)"
+    encabezados = ["Variable", "Grupo", "Modelo", "Shapiro-Wilk<br>W (p)", "Durbin-<br>Watson",
+                   "Breusch-Pagan<br>(p)", col_dia.replace(" F (p)", "<br>F (p)"), "Supuestos"]
+    filas, bloques, registros = [], [], []
+    for i, v in enumerate(variables):
+        primera = True
+        for g in [g_ for g_ in ("-M", "+M") if g_ in datos[v]]:
+            m = mejor_modelo_cme(RES, v, g, modelos)
+            if m is None:
+                continue
+            pr = pruebas_supuestos(RES, v, g, m)
+            filas.append([f"{NOMBRE_VARIABLE[v]} ({UNIDADES[v]})" if primera else "", texto_grupo(g), m,
+                          _fmt_prueba(pr["W"], pr["pW"]), "—" if not np.isfinite(pr["dw"]) else f"{pr['dw']:.2f}",
+                          _fmt_prueba(pr["bp"], pr["pbp"], 2), _fmt_prueba(pr["F_d"], pr["p_d"], 2),
+                          pr["supuestos"].replace(": ", ":<br>", 1) if pr["fallan"] else "Cumple"])
+            bloques.append(i)
+            primera = False
+            registros.append({"Variable": f"{NOMBRE_VARIABLE[v]} ({UNIDADES[v]})", "Grupo": g, "Modelo": m,
+                              "n residuales": pr["n"], "Shapiro-Wilk W": pr["W"], "Shapiro-Wilk p": pr["pW"],
+                              "Durbin-Watson": pr["dw"], "Breusch-Pagan LM": pr["bp"], "Breusch-Pagan p": pr["pbp"],
+                              col_dia.replace(" (p)", ""): pr["F_d"], col_dia.replace(" F (p)", " p"): pr["p_d"],
+                              "Supuestos": pr["supuestos"]})
+    if not filas:
+        return None, None, "Ningún modelo se pudo ajustar."
+    tabla = dict(encabezados=encabezados, filas=filas, bloques=bloques,
+                 titulo="Tabla. Pruebas sobre los residuales del mejor modelo de cada variable y grupo",
+                 anchos=[1.5, 0.6, 1.0, 1.15, 0.8, 1.1, 1.1, 1.6],
+                 alinear=["left", "center", "center", "center", "center", "center", "center", "center"])
+    nota = ("Mejor modelo = el de menor CME (SC residual / (n − parámetros)). Se considera que se cumple el "
+            "supuesto cuando p > 0.05 (Shapiro-Wilk, Breusch-Pagan y " + ("falta de ajuste" if modo_tabla else
+            "ANOVA residuo ~ día") + ") y cuando el estadístico de Durbin-Watson está entre 1.5 y 2.5.")
+    if modo_tabla:
+        nota += (" Residuales = media publicada − curva en las 4 fechas, sin réplicas sintéticas; la falta de ajuste "
+                 "compara cada residual con el error estándar de la media del paper (CV% × media general / √n). "
+                 "Con n = 4 residuales estas pruebas tienen muy poca potencia y Durbin-Watson no tiene valores "
+                 "críticos tabulados.")
+    return tabla, pd.DataFrame(registros), construir_pie(nota)
+
+
 def fig_anova_cuadro(an, variable, dia):
     """Barras de los tratamientos del cuadro (media ± DE del ANOVA) con las letras de Tukey de la
     app y, debajo, las del paper. −M y +M con sus colores; los demás en gris."""
@@ -2638,8 +2882,8 @@ def fig_anova_cuadro(an, variable, dia):
 def df_anova_cuadro(an):
     return pd.DataFrame([
         {"Fuente": "Tratamientos", "SC": an["sc_t"], "gl": an["gl_t"], "CM": an["cm_t"], "F": an["F"], "p": an["p"]},
-        {"Fuente": "Error", "SC": an["sc_e"], "gl": an["gl_e"], "CM": an["cme"], "F": None, "p": None},
-        {"Fuente": "Total", "SC": an["sc_total"], "gl": an["gl_total"], "CM": None, "F": None, "p": None},
+        {"Fuente": "Error", "SC": an["sc_e"], "gl": an["gl_e"], "CM": an["cme"], "F": np.nan, "p": np.nan},
+        {"Fuente": "Total", "SC": an["sc_total"], "gl": an["gl_total"], "CM": np.nan, "F": np.nan, "p": np.nan},
     ])
 
 
@@ -2835,7 +3079,7 @@ def fig_residuos_modelos(RES, variable, modelos, grupos):
 
 
 def datos_residuos_globales(RES, datos, variables, modelos):
-    """Para cada variable y grupo, con el mejor modelo (mayor R²): el residuo medio de cada día como %
+    """Para cada variable y grupo, con el mejor modelo (menor CME): el residuo medio de cada día como %
     del promedio medido ese día y el ANOVA residuo ~ día. Lista de dicts (también para el resumen)."""
     salida = []
     for v in variables:
@@ -2897,7 +3141,7 @@ def fig_residuos_globales(RES, datos, variables, modelos):
                      tickfont=dict(family=FUENTE_PUBLICACION, size=17, color=G_INK))
     fig.update_yaxes(autorange="reversed", showgrid=False, tickmode="array", tickvals=etiquetas, ticktext=etiquetas,
                      tickfont=dict(family=FUENTE_PUBLICACION, size=16, color=G_INK))
-    pie = construir_pie("Residuo = medido − predicho, con el mejor modelo (mayor R²) de cada variable y grupo; se "
+    pie = construir_pie("Residuo = medido − predicho, con el mejor modelo (menor CME) de cada variable y grupo; se "
                         "expresa como % del promedio medido ese día para comparar variables con distinta unidad. "
                         "Patrón = el ANOVA de un factor (residuo ~ día) da p < 0.05: el modelo se equivoca siempre "
                         "igual en ciertas etapas. Sin patrón = el error es solo ruido entre plantas.")
@@ -5059,7 +5303,7 @@ elif seccion == "Ajustar modelos":
         eleccion_rp = st.radio(
             "Modelo en las gráficas Real vs. predicho", ["Mejor de cada grupo"] + list(mods_ok), horizontal=True,
             key="modelo_real_pred",
-            help="«Mejor de cada grupo» dibuja, en −M y en +M, el modelo con mayor R² (puede ser distinto en cada "
+            help="«Mejor de cada grupo» dibuja, en −M y en +M, el mejor modelo (menor CME; puede ser distinto en cada "
                  "grupo). Elige un modelo para ver cómo predice ese en todas las variables.")
         for variable in vars_ok:
             with st.container(border=True):
@@ -5271,7 +5515,7 @@ elif seccion == "Resultados":
 
         with st.expander(f"Tasas de crecimiento (AGR/RGR) — {NOMBRE_VARIABLE[variable]}"):
             st.caption(
-                "Opcional: AGR (dP/dt) y RGR ((1/P)·dP/dt) del modelo con mejor R² en cada grupo, "
+                "Opcional: AGR (dP/dt) y RGR ((1/P)·dP/dt) del mejor modelo (menor CME) de cada grupo, "
                 "calculadas analíticamente a partir de los parámetros ya ajustados (sin reajustar)."
             )
             fig_tasas, pie_tasas_o_motivo = fig_tasas_crecimiento(
@@ -5618,14 +5862,63 @@ elif seccion == "Residuos":
         "se equivoca menos?"
     )
     if es_modo_tabla():
-        st.info(
-            "**Con la tabla publicada se usa la prueba de falta de ajuste.** El ANOVA de residuos de siempre necesita "
-            "varias plantas por día; la tabla da una media por día y grupo. En su lugar, cada residuo (media publicada "
-            "− curva) se compara con el **margen de error del paper** de ese día (DE del ANOVA / √n) y se prueba si, en "
-            "conjunto, la curva se aleja de las medias más de lo que explica la variación entre plantas.", icon="ℹ️")
+        with st.expander("¿Para qué sirve el ANOVA y cómo elige el mejor modelo?"):
+            st.markdown(
+                "- **ANOVA (análisis de varianza)** compara varios grupos a la vez y responde: **¿las diferencias "
+                "entre grupos son reales o puro azar?** Separa la variación total en la que viene de los grupos y la "
+                "que viene del azar; **F** = variación entre grupos / variación al azar. Si **p < 0.05**, al menos un "
+                "grupo es distinto de verdad.\n"
+                "- **Aquí los grupos son los modelos** y el dato es **cuánto se equivoca cada uno cada día** "
+                "(|media publicada − curva|). Como los tres modelos se miden en las mismas fechas, el **día entra como "
+                "bloque**: así se compara a los modelos día contra día y no se confunde un día difícil con un mal "
+                "modelo.\n"
+                "- **Tukey** dice qué modelos difieren: **misma letra = empatados**; «a» = el que menos se equivoca.\n"
+                "- **El mejor modelo** es el de **menor CME** (suma de errores² / (fechas − parámetros)): castiga a los "
+                "modelos con más parámetros, así no gana uno solo por tener más. Si el ANOVA dice empate (p ≥ 0.05), "
+                "el CME desempata y conviene preferir el más simple.\n"
+                "- **Ojo:** con 4 fechas el ANOVA tiene pocos grados de libertad; lo normal es que salga empate.")
         tabs_fa = st.tabs([NOMBRE_VARIABLE[v] for v in variables_a_mostrar])
         for tab, variable in zip(tabs_fa, variables_a_mostrar):
             with tab:
+                st.markdown('<span class="eyebrow">1 · Tabla ANOVA · ¿qué modelo se equivoca menos?</span>',
+                            unsafe_allow_html=True)
+                for grupo in [g for g in ("-M", "+M") if g in DATOS[variable]]:
+                    am = anova_modelos_tabla(RES, variable, grupo, modelos_a_mostrar)
+                    with st.container(border=True):
+                        st.markdown(f'<span class="card-title">{texto_grupo(grupo)} · {NOMBRE_GRUPO[grupo]}</span>',
+                                    unsafe_allow_html=True)
+                        if am is None:
+                            st.caption("Ningún modelo se ajustó en este grupo.")
+                            continue
+                        st.markdown(texto_mejor_modelo(am, grupo))
+                        if am["anova"] is not None:
+                            st.markdown('<span class="field-label">Tabla ANOVA · |residuo| ~ modelo + día</span>',
+                                        unsafe_allow_html=True)
+                            st.dataframe(df_anova_modelos(am).style.format(
+                                {"SC": "{:.4g}", "CM": "{:.4g}", "F": "{:.3f}", "p": "{:.4f}"}, na_rep=""),
+                                hide_index=True, width="stretch")
+                        st.markdown('<span class="field-label">Comparación de modelos · ★ = mejor</span>',
+                                    unsafe_allow_html=True)
+                        st.dataframe(df_criterios_modelos(am, UNIDADES[variable]).style.format(
+                            {f"Error medio |media − curva| ({UNIDADES[variable]})": "{:.4g}", "R²": "{:.4f}",
+                             "CME (SC residual / gl)": "{:.4g}", "AIC": "{:.2f}", "Falta de ajuste (p)": "{:.4f}"},
+                            na_rep="—"), hide_index=True, width="stretch")
+                with st.container(border=True):
+                    st.markdown('<span class="field-label">Qué significa cada columna</span>', unsafe_allow_html=True)
+                    st.markdown(
+                        "- **gl / SC / CM:** grados de libertad, suma de cuadrados y cuadrado medio (SC / gl).\n"
+                        "- **F y p (fila Modelos):** si p < 0.05, algún modelo se equivoca de verdad menos que otro.\n"
+                        "- **Días (bloque):** cuánto cambia el error de un día a otro (no decide nada, solo se descuenta).\n"
+                        "- **Error medio:** promedio de |media publicada − curva| en las 4 fechas.\n"
+                        "- **Tukey:** misma letra = sin diferencia; «a» = el que menos se equivoca.\n"
+                        "- **CME:** error por grado de libertad; **el menor = mejor modelo** (castiga parámetros de más).\n"
+                        "- **AIC:** otro criterio que castiga parámetros; menor = mejor. Debe coincidir casi siempre "
+                        "con el CME.\n"
+                        "- **Falta de ajuste (p):** la prueba de abajo; p < 0.05 = la curva no pasa por las medias "
+                        "dentro del margen de error del paper.")
+                st.markdown('<hr class="rule">', unsafe_allow_html=True)
+                st.markdown('<span class="eyebrow">2 · Falta de ajuste · ¿la curva pasa por las medias dentro del '
+                            'error del paper?</span>', unsafe_allow_html=True)
                 fig_fa, pie_fa = fig_falta_ajuste(RES, variable, modelos_a_mostrar)
                 if fig_fa is None:
                     st.info(pie_fa)
@@ -5664,7 +5957,13 @@ elif seccion == "Residuos":
                         "- **F = Σ z² / gl falta de ajuste** y su **p**: si p < 0.05, la curva se aleja de las medias "
                         "más de lo esperable por azar.")
         titulo_resumen_global("Qué modelo se equivoca menos, en todas las variables",
-                              "Error de cada modelo como % del promedio (RMSE sobre las medias).")
+                              "Mejor modelo de cada variable y grupo (menor CME) con su ANOVA, y el error de cada "
+                              "modelo como % del promedio.")
+        st.dataframe(resumen_mejor_modelo(RES, variables_a_mostrar, modelos_a_mostrar).style.format(
+            {"R²": "{:.4f}", "ANOVA modelos (p)": "{:.4f}"}, na_rep="—"), hide_index=True, width="stretch")
+        tabla_sup, df_sup, pie_sup = tabla_global_supuestos(RES, DATOS, variables_a_mostrar, modelos_a_mostrar)
+        mostrar_tabla_global(tabla_sup, df_sup, pie_sup, "Pruebas sobre los residuales", "pruebas_residuales",
+                             "tabla_global_supuestos")
         fig_eg, pie_eg = fig_mapa_error_modelos(RES, DATOS, variables_a_mostrar, modelos_a_mostrar)
         mostrar_resumen_global(fig_eg, pie_eg, "Resumen: error de los modelos", "resumen_error_modelos.png",
                                "png_resumen_residuos")
@@ -5766,6 +6065,9 @@ elif seccion == "Residuos":
     fig_rg, pie_rg = fig_residuos_globales(RES, DATOS, variables_a_mostrar, modelos_a_mostrar)
     mostrar_resumen_global(fig_rg, pie_rg, "Resumen: residuos por día", "resumen_residuos_por_dia.png",
                            "png_resumen_residuos_dia", solo_tabla=True)
+    tabla_sup, df_sup, pie_sup = tabla_global_supuestos(RES, DATOS, variables_a_mostrar, modelos_a_mostrar)
+    mostrar_tabla_global(tabla_sup, df_sup, pie_sup, "Pruebas sobre los residuales", "pruebas_residuales",
+                         "tabla_global_supuestos")
 
 
 # ==============================================================================
@@ -6072,7 +6374,7 @@ elif seccion == "Exportar reporte":
             "- Tabla de R², RMSE y MAE por grupo y modelo (con el estado de cada ajuste)\n"
             "- Gráficas de curvas ajustadas por variable\n"
             "- Gráficas de barras por variable, resumen del efecto final y tabla de R² por modelo\n"
-            "- Tasas de crecimiento (AGR y RGR) del modelo con mejor R² en cada grupo\n"
+            "- Tasas de crecimiento (AGR y RGR) del mejor modelo (menor CME) de cada grupo\n"
             "- Análisis de residuos con ANOVA (¿el error cambia según el día? ¿qué modelo se equivoca menos?)\n"
             "- Resultados esperados: mejor modelo por variable y efecto +M vs −M con prueba t\n"
             "- Conclusiones generales"
@@ -6374,16 +6676,46 @@ elif seccion == "Exportar reporte":
             # plantas individuales: la seccion se omite. ---
             if es_modo_tabla():
                 asegurar_espacio(pdf, 60)
-                titulo_seccion(pdf, "Analisis de residuos: prueba de falta de ajuste")
+                titulo_seccion(pdf, "Analisis de residuos: ANOVA del mejor modelo y falta de ajuste")
                 pdf.set_font("Helvetica", "", 10)
                 pdf.multi_cell(0, 5.5, limpiar_texto(
-                    "Con la tabla publicada hay una media por dia y grupo. Cada residuo (media publicada - curva) se "
+                    "ANOVA |residuo| ~ modelo + dia (dia como bloque): si p < 0.05 algun modelo se equivoca de verdad "
+                    "menos; Tukey: misma letra = empatados. Mejor modelo = menor CME (SC residual / (fechas - "
+                    "parametros)). Falta de ajuste: con la tabla publicada hay una media por dia y grupo. Cada "
+                    "residuo (media publicada - curva) se "
                     "divide por el error estandar de la media de ese dia (DE del ANOVA del paper / raiz de n): z. "
                     "F = suma de z al cuadrado / (fechas - parametros), comparada con F(fechas - parametros; gl del "
                     "error del paper). Si p < 0.05, la curva se aleja de las medias mas de lo que explica el azar."
                 ), new_x=XPos.LMARGIN, new_y=YPos.NEXT)
                 pdf.ln(3)
                 for variable in variables_a_mostrar:
+                    # ANOVA para elegir el mejor modelo (|residuo| ~ modelo + dia) y comparacion de criterios.
+                    for grupo in [g for g in ("-M", "+M") if g in DATOS[variable]]:
+                        am = anova_modelos_tabla(RES, variable, grupo, modelos_a_mostrar)
+                        if am is None:
+                            continue
+                        asegurar_espacio(pdf, 60)
+                        subtitulo_variable(pdf, f"{NOMBRE_VARIABLE[variable]} - {grupo}: que modelo se equivoca menos")
+                        pdf.set_font("Helvetica", "", 9)
+                        pdf.multi_cell(0, 5.2, limpiar_texto(texto_mejor_modelo(am, grupo).replace("**", "")),
+                                       new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+                        pdf.ln(1)
+                        if am["anova"] is not None:
+                            tabla_pdf(pdf, ["Fuente", "gl", "SC", "CM", "F", "p"], [40, 16, 32, 32, 26, 26],
+                                      [[r["Fuente"], r["gl"], f"{r['SC']:.4g}",
+                                        "" if pd.isna(r["CM"]) else f"{r['CM']:.4g}",
+                                        "" if pd.isna(r["F"]) else f"{r['F']:.3f}",
+                                        "" if pd.isna(r["p"]) else f"{r['p']:.4f}"]
+                                       for r in df_anova_modelos(am).to_dict("records")])
+                            pdf.ln(2)
+                        tabla_pdf(pdf, ["Modelo", "Error medio", "Tukey", "R2", "CME", "AIC", "Falta aj. p"],
+                                  [34, 28, 16, 22, 30, 24, 26],
+                                  [[("* " if m == am["mejor"] else "") + m, f"{c['err_medio']:.4g}",
+                                    am["letras"].get(m) or "-", f"{c['r2']:.4f}",
+                                    "-" if not np.isfinite(c["cme"]) else f"{c['cme']:.4g}", f"{c['aic']:.2f}",
+                                    "-" if c["p_fa"] is None else f"{c['p_fa']:.4f}"]
+                                   for m, c in am["criterios"].items()])
+                        pdf.ln(3)
                     filas_fa = tabla_falta_ajuste(RES, variable, modelos_a_mostrar)
                     if not filas_fa:
                         continue
@@ -6453,6 +6785,12 @@ elif seccion == "Exportar reporte":
                     # El subtítulo de la variable va en la misma página que su primera imagen.
                     for i_r, png_r in enumerate(imagenes):
                         insertar_imagen_png(pdf, png_r, subtitulo=NOMBRE_VARIABLE[variable] if i_r == 0 else None)
+
+            # Tabla de supuestos de los residuales del mejor modelo (ambos modos), igual que en la app.
+            tabla_sup_pdf, _, pie_sup_pdf = tabla_global_supuestos(RES, DATOS, variables_a_mostrar, modelos_a_mostrar)
+            if tabla_sup_pdf is not None:
+                insertar_imagen_png(pdf, png_tabla_documento(tabla_sup_pdf, pie_sup_pdf),
+                                    subtitulo="Pruebas sobre los residuales del mejor modelo")
 
             # --- Resultados esperados (modelo que mejor describe cada variable + efecto +M vs -M) ---
             pdf.add_page()
