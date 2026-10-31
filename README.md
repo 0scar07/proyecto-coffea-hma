@@ -32,7 +32,7 @@ badges de bondad de ajuste (R²) por grupo y modelo.
 
 ![Ajustar modelos](docs/screenshots/ajustar_modelos.png)
 
-**Metodología** — explicación de cada modelo con tratamiento editorial
+**Metodología** — explicación de cada modelo con tratamiento editorial.
 
 ![Metodología](docs/screenshots/metodologia.png)
 
