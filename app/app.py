@@ -1190,7 +1190,8 @@ def calcular_tabla_modelo(RES, datos, variable, modelos):
             r2 = RES[variable][grupo][m]["r2"]
             if r2 is not None and not (isinstance(r2, float) and np.isnan(r2)):
                 validos.append((m, r2))
-        mejores[grupo] = max(validos, key=lambda x: x[1])[0] if validos else None
+        # Mejor modelo = menor CME (castiga los parámetros de más), el mismo criterio en toda la app.
+        mejores[grupo] = mejor_modelo_cme(RES, variable, grupo, modelos) if validos else None
         for m in modelos:
             res = RES[variable][grupo][m]
             r2, rmse, mae = res["r2"], res["rmse"], res.get("mae")
@@ -1482,7 +1483,9 @@ def fig_barras_r2_comparacion(RES, datos, variables, modelos):
     fig.update_yaxes(autorange="reversed", showgrid=False, tickmode="array", tickvals=filas_txt,
                      ticktext=filas_txt, tickfont=dict(family=FUENTE_PUBLICACION, size=17, color=G_INK))
     pie = construir_pie(
-        "R² de cada modelo (Exponencial, Logístico, Gompertz) por variable y grupo. ★ = mayor R² de la fila. "
+        "R² de cada modelo (Exponencial, Logístico, Gompertz) por variable y grupo. ★ = mejor modelo de la fila "
+        "(menor CME = SC residual / (n − parámetros); no siempre es el de mayor R², porque castiga los parámetros "
+        "de más). "
         "Las celdas con «—» indican que el modelo no convergió o no tuvo días suficientes.")
     return fig, pie
 
@@ -1517,7 +1520,7 @@ def _rango_simetrico_pct(valores, minimo=10):
 
 def fig_resumen_efecto_tiempo(datos, RES, variables, modelos, fuente_datos="simulado"):
     """Efecto del hongo (+M sobre −M, %) a lo largo del tiempo para TODAS las variables en una sola
-    gráfica. Línea = efecto según las curvas ajustadas (mejor R² de cada grupo); marcador = efecto
+    gráfica. Línea = efecto según las curvas ajustadas (mejor modelo de cada grupo); marcador = efecto
     con los promedios medidos ese día (relleno = diferencia significativa con la prueba t de Welch,
     hueco = no significativa). Devuelve (None, motivo) si ninguna variable tiene −M y +M."""
     fig = go.Figure()
@@ -1581,7 +1584,7 @@ def fig_resumen_efecto_tiempo(datos, RES, variables, modelos, fuente_datos="simu
     extra = nota_fuente_datos(fuente_datos)
     pie = construir_pie(
         "Efecto del hongo = (+M − −M) / −M × 100, para todas las variables. Línea: con el mejor modelo de cada "
-        f"grupo (mayor R²). Marcadores: con los promedios medidos; relleno = {nombre_prueba_t()} con p < 0.05.",
+        f"grupo (menor CME). Marcadores: con los promedios medidos; relleno = {nombre_prueba_t()} con p < 0.05.",
         extra=extra)
     return fig, pie
 
@@ -1832,7 +1835,7 @@ def _dec_variable(v):
 
 def tabla_global_ajuste(RES, datos, variables, modelos):
     """Una sola tabla con el ajuste de todas las variables: R² de cada modelo en −M y +M, el mejor
-    modelo (★, mayor R²) y su RMSE y MAE. Devuelve (tabla, df, pie) o (None, None, motivo)."""
+    modelo (★, menor CME) y su RMSE y MAE. Devuelve (tabla, df, pie) o (None, None, motivo)."""
     encabezados = ["Variable", "Grupo"] + [f"R²<br>{m}" for m in modelos] + ["Mejor modelo", "RMSE", "MAE"]
     filas, bloques, registros, ganadores = [], [], [], []
     for i, v in enumerate(variables):
@@ -1863,7 +1866,8 @@ def tabla_global_ajuste(RES, datos, variables, modelos):
               f"{ganadores.count(top)} de {len(filas)} casos" if top else "Tabla. Ajuste de los modelos")
     tabla = dict(encabezados=encabezados, filas=filas, bloques=bloques, titulo=titulo,
                  anchos=[1.5, 0.7] + [1.0] * len(modelos) + [1.25, 0.8, 0.8])
-    pie = construir_pie("★ y negrita = el modelo con mayor R² en cada grupo. RMSE y MAE son del mejor modelo, en la "
+    pie = construir_pie("★ y negrita = el mejor modelo de cada grupo (menor CME = SC residual / (n − parámetros), "
+                        "castiga los parámetros de más). RMSE y MAE son del mejor modelo, en la "
                         "unidad de cada variable (más bajo = mejor). «—» = el modelo no se pudo ajustar. −M = sin "
                         "micorriza (control); +M = inoculado con HMA.")
     return tabla, pd.DataFrame(registros), pie
@@ -1911,7 +1915,7 @@ def tabla_global_efecto(datos, variables, solo_dia=None):
 
 
 def tabla_global_parametros(RES, datos, variables, modelos):
-    """Una sola tabla con los parámetros del mejor modelo (mayor R²) de cada variable y grupo, con su
+    """Una sola tabla con los parámetros del mejor modelo (menor CME) de cada variable y grupo, con su
     intervalo de confianza al 95 %."""
     encabezados = ["Variable", "Grupo", "Mejor modelo<br>(R²)", "Parámetros (IC 95 %)"]
     filas, bloques, registros = [], [], []
@@ -1944,7 +1948,7 @@ def tabla_global_parametros(RES, datos, variables, modelos):
     tabla = dict(encabezados=encabezados, filas=filas, bloques=bloques,
                  titulo="Tabla. Parámetros del mejor modelo de cada variable y grupo, con su IC 95 %",
                  anchos=[1.3, 0.6, 1.2, 3.0], alinear=["left", "center", "center", "left"])
-    pie = construir_pie("Mejor modelo = el de mayor R² en cada grupo. Entre corchetes, el intervalo de confianza al "
+    pie = construir_pie("Mejor modelo = el de menor CME en cada grupo. Entre corchetes, el intervalo de confianza al "
                         "95 % de cada parámetro (más estrecho = parámetro mejor estimado; «IC no calculable» = muy "
                         "pocos datos para ese modelo). Logístico y Gompertz: K = "
                         "tamaño máximo (asíntota), k = velocidad, Ti = día de crecimiento más rápido. Exponencial: "
@@ -1953,12 +1957,10 @@ def tabla_global_parametros(RES, datos, variables, modelos):
 
 
 def modelo_para_grafica(RES, v, g, modelos, eleccion):
-    """El modelo que se dibuja en Real vs. predicho: el de mayor R² del grupo («Mejor de cada grupo»)
-    o el que se eligió, si se pudo ajustar."""
+    """El modelo que se dibuja en Real vs. predicho: el mejor del grupo (menor CME, «Mejor de cada
+    grupo») o el que se eligió, si se pudo ajustar."""
     if eleccion == "Mejor de cada grupo":
-        validos = [m for m in modelos if RES[v][g][m]["params"] is not None and RES[v][g][m]["r2"] is not None
-                   and np.isfinite(RES[v][g][m]["r2"])]
-        return max(validos, key=lambda m: RES[v][g][m]["r2"]) if validos else None
+        return mejor_modelo_cme(RES, v, g, modelos)
     return eleccion if RES[v][g][eleccion]["params"] is not None else None
 
 
@@ -2091,7 +2093,7 @@ def fig_curvas_publicacion(datos, RES, variable, modelos, fuente_datos="simulado
     - Puntos claros = cada planta medida (réplicas); punto con barra = media ± DE del día.
     - Una línea por modelo convergido (color + tipo de línea por modelo, paleta Okabe-Ito),
       con su nombre y R² escritos al final de la línea (etiqueta directa, sin leyenda aparte).
-      El mejor modelo (★, mayor R²) va más grueso y es el único con banda IC 95 %.
+      El mejor modelo (★, menor CME) va más grueso y es el único con banda IC 95 %.
     - Del mejor modelo se anotan la asíntota K ("techo estimado") y el punto de inflexión
       ("día en que crece más rápido"), solo si K pasa el criterio de plausibilidad.
     - El título dice la conclusión (+M vs −M en el último día, con prueba t).
@@ -2138,7 +2140,7 @@ def fig_curvas_publicacion(datos, RES, variable, modelos, fuente_datos="simulado
             hovertemplate=f"Día %{{x:.0f}}<br>media %{{y:.2f}} {unidad}<extra></extra>",
         ), row=1, col=col)
 
-        # Modelos válidos y el mejor (mayor R²) de este grupo
+        # Modelos válidos y el mejor (menor CME) de este grupo
         validos = {}
         for modelo in modelos:
             res = RES[variable][grupo][modelo]
@@ -2151,7 +2153,7 @@ def fig_curvas_publicacion(datos, RES, variable, modelos, fuente_datos="simulado
                 notas.append(f"{modelo} ({texto_grupo(grupo)}): no convergió.")
                 continue
             validos[modelo] = res
-        mejor = max(validos, key=lambda m: validos[m]["r2"]) if validos else None
+        mejor = mejor_modelo_cme(RES, variable, grupo, list(validos)) if validos else None
 
         for modelo, res in validos.items():
             estilo = MODELO_ESTILO[modelo]
@@ -2250,7 +2252,7 @@ def fig_curvas_publicacion(datos, RES, variable, modelos, fuente_datos="simulado
     descripcion = (("Punto con barra = media publicada ± DE del ANOVA del paper; los modelos se ajustan a esas "
                     "medias (R² sobre medias). " if es_modo_tabla() else
                     "Puntos claros = réplicas individuales; punto con barra = media ± DE por día. ") + "Líneas = modelos "
-                   "convergidos; su R² está en el encabezado de cada panel; ★ = mejor R² del grupo (el único con banda IC 95 %). "
+                   "convergidos; su R² está en el encabezado de cada panel; ★ = mejor modelo del grupo (menor CME; el único con banda IC 95 %). "
                    "Eje Y limitado a ~1.25× el máximo observado. Asíntota K (techo estimado) y punto de inflexión "
                    "(◇) del mejor modelo, con sus valores en el encabezado: solo si convergió, R² ≥ 0.90, K ≤ 1.5× el máximo observado y la "
                    "inflexión cae dentro de los días observados.")
@@ -2329,7 +2331,7 @@ def fig_tasas_crecimiento(datos, RES, variable, modelos, fuente_datos="simulado"
                            font=dict(family=FUENTE_PUBLICACION, size=15, color=G_INK))
         fig.add_annotation(x=1, y=0.02, xref=f"{_ref_ejes(n + col)[0]} domain",
                            yref=f"{_ref_ejes(n + col)[1]} domain", xanchor="right", yanchor="bottom",
-                           showarrow=False, text=f"modelo: {modelo} (mejor R²)",
+                           showarrow=False, text=f"modelo: {modelo} (mejor modelo)",
                            font=dict(family=FUENTE_PUBLICACION, size=14.5, color=G_MUTED))
         fig.update_yaxes(rangemode="tozero", row=1, col=col)
         rgr_max = float(np.nanmax(rgr)) if np.any(np.isfinite(rgr)) else 0.0
@@ -2364,13 +2366,13 @@ def fig_tasas_crecimiento(datos, RES, variable, modelos, fuente_datos="simulado"
     for col, grupo in enumerate(grupos_validos, start=1):
         encabezado_panel(fig, col, f"<b>{texto_grupo(grupo)}</b> · {NOMBRE_GRUPO[grupo]}", COLOR_GRUPO[grupo])
 
-    notas = [f"Modelo usado en {texto_grupo(g)}: {mejores[g]} (mejor R² entre los convergidos)." for g in grupos_validos]
+    notas = [f"Modelo usado en {texto_grupo(g)}: {mejores[g]} (menor CME entre los convergidos)." for g in grupos_validos]
     if len(grupos_validos) < len(grupos):
         notas.append(f"Sin tasas para {', '.join(texto_grupo(g) for g in grupos if g not in grupos_validos)}: "
                      "ningún modelo convergió en ese grupo.")
     extra = nota_fuente_datos(fuente_datos)
     descripcion = ("Tasas calculadas analíticamente a partir de los parámetros ya ajustados del modelo con "
-                   "mejor R² en cada grupo (sin reajustar). AGR = dP/dt (cuánto crece por día); "
+                   "menor CME en cada grupo (sin reajustar). AGR = dP/dt (cuánto crece por día); "
                    "RGR = (1/P)·dP/dt (crecimiento relativo a su tamaño). ◇ = máximo de AGR.")
     return fig, construir_pie(descripcion, notas=notas, extra=extra)
 
@@ -3077,7 +3079,7 @@ def fig_residuos_modelos(RES, variable, modelos, grupos):
 
 
 def datos_residuos_globales(RES, datos, variables, modelos):
-    """Para cada variable y grupo, con el mejor modelo (mayor R²): el residuo medio de cada día como %
+    """Para cada variable y grupo, con el mejor modelo (menor CME): el residuo medio de cada día como %
     del promedio medido ese día y el ANOVA residuo ~ día. Lista de dicts (también para el resumen)."""
     salida = []
     for v in variables:
@@ -3139,7 +3141,7 @@ def fig_residuos_globales(RES, datos, variables, modelos):
                      tickfont=dict(family=FUENTE_PUBLICACION, size=17, color=G_INK))
     fig.update_yaxes(autorange="reversed", showgrid=False, tickmode="array", tickvals=etiquetas, ticktext=etiquetas,
                      tickfont=dict(family=FUENTE_PUBLICACION, size=16, color=G_INK))
-    pie = construir_pie("Residuo = medido − predicho, con el mejor modelo (mayor R²) de cada variable y grupo; se "
+    pie = construir_pie("Residuo = medido − predicho, con el mejor modelo (menor CME) de cada variable y grupo; se "
                         "expresa como % del promedio medido ese día para comparar variables con distinta unidad. "
                         "Patrón = el ANOVA de un factor (residuo ~ día) da p < 0.05: el modelo se equivoca siempre "
                         "igual en ciertas etapas. Sin patrón = el error es solo ruido entre plantas.")
@@ -5301,7 +5303,7 @@ elif seccion == "Ajustar modelos":
         eleccion_rp = st.radio(
             "Modelo en las gráficas Real vs. predicho", ["Mejor de cada grupo"] + list(mods_ok), horizontal=True,
             key="modelo_real_pred",
-            help="«Mejor de cada grupo» dibuja, en −M y en +M, el modelo con mayor R² (puede ser distinto en cada "
+            help="«Mejor de cada grupo» dibuja, en −M y en +M, el mejor modelo (menor CME; puede ser distinto en cada "
                  "grupo). Elige un modelo para ver cómo predice ese en todas las variables.")
         for variable in vars_ok:
             with st.container(border=True):
@@ -5513,7 +5515,7 @@ elif seccion == "Resultados":
 
         with st.expander(f"Tasas de crecimiento (AGR/RGR) — {NOMBRE_VARIABLE[variable]}"):
             st.caption(
-                "Opcional: AGR (dP/dt) y RGR ((1/P)·dP/dt) del modelo con mejor R² en cada grupo, "
+                "Opcional: AGR (dP/dt) y RGR ((1/P)·dP/dt) del mejor modelo (menor CME) de cada grupo, "
                 "calculadas analíticamente a partir de los parámetros ya ajustados (sin reajustar)."
             )
             fig_tasas, pie_tasas_o_motivo = fig_tasas_crecimiento(
@@ -6372,7 +6374,7 @@ elif seccion == "Exportar reporte":
             "- Tabla de R², RMSE y MAE por grupo y modelo (con el estado de cada ajuste)\n"
             "- Gráficas de curvas ajustadas por variable\n"
             "- Gráficas de barras por variable, resumen del efecto final y tabla de R² por modelo\n"
-            "- Tasas de crecimiento (AGR y RGR) del modelo con mejor R² en cada grupo\n"
+            "- Tasas de crecimiento (AGR y RGR) del mejor modelo (menor CME) de cada grupo\n"
             "- Análisis de residuos con ANOVA (¿el error cambia según el día? ¿qué modelo se equivoca menos?)\n"
             "- Resultados esperados: mejor modelo por variable y efecto +M vs −M con prueba t\n"
             "- Conclusiones generales"
