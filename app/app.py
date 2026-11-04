@@ -3664,6 +3664,8 @@ def cargar_datos_desde_archivo(archivo):
 # --- Modo tabla: Excel con la tabla publicada tal cual (ver MODO TABLA) -----------------------
 TABLA_XLSX_BASE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "datos_reales",
                                "cuadro2_aguirre_medina_2023.xlsx")
+TABLA4_XLSX_BASE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "datos_reales",
+                                "tabla4_resultado_testigo_ri.xlsx")
 TABLA_PARTES_BIOMASA = ("raiz", "tallo", "lamina")
 # Variables del cuadro que entran al ANOVA del paper (las que traen CV%) y su nombre/unidad.
 TABLA_VARIABLES_ANOVA = ("altura", "hojas", "diametro", "area_foliar", "raiz", "tallo", "lamina", "biomasa")
@@ -3680,6 +3682,21 @@ def _leer_hojas(archivo):
     return {str(k).strip().lower(): v for k, v in hojas.items()}
 
 
+def _hoja_tabla(hojas):
+    """La hoja con la tabla: «cuadro2» (cuadro completo), «tabla4_datos» (la tabla del trabajo, solo
+    −M y +M) o la primera que tenga columnas «dia» y «tratamiento» con días numéricos."""
+    for nombre in ("cuadro2", "tabla4_datos"):
+        if nombre in hojas:
+            return hojas[nombre]
+    for df in hojas.values():
+        cols = {str(c).strip().lower() for c in df.columns}
+        if "tratamiento" in cols and {"dia", "día", "dat", "ddt"} & cols:
+            col_dia = next(c for c in df.columns if str(c).strip().lower() in {"dia", "día", "dat", "ddt"})
+            if pd.to_numeric(df[col_dia], errors="coerce").notna().any():
+                return df
+    return next(iter(hojas.values()))
+
+
 def es_archivo_tabla(archivo):
     """True si el Excel trae la tabla publicada (hoja «cuadro2» o columna «tratamiento»)."""
     nombre = archivo if isinstance(archivo, str) else getattr(archivo, "name", "")
@@ -3689,14 +3706,14 @@ def es_archivo_tabla(archivo):
         hojas = _leer_hojas(archivo)
     except Exception:
         return False
-    df = hojas.get("cuadro2", next(iter(hojas.values())))
-    return "cuadro2" in hojas or "tratamiento" in [str(c).strip().lower() for c in df.columns]
+    df = _hoja_tabla(hojas)
+    return "tratamiento" in [str(c).strip().lower() for c in df.columns]
 
 
 def tratamientos_tabla(archivo):
     """(tratamientos del cuadro, control por defecto, inoculado por defecto)."""
     hojas = _leer_hojas(archivo)
-    df = hojas.get("cuadro2", next(iter(hojas.values())))
+    df = _hoja_tabla(hojas).copy()
     df.columns = [str(c).strip().lower() for c in df.columns]
     nombres = [t for t in dict.fromkeys(df["tratamiento"].dropna().astype(str).str.strip())
                if not t.lower().startswith("cv")]
@@ -3718,7 +3735,7 @@ def leer_tabla_paper(archivo, control=None, inoculado=None):
         hojas = _leer_hojas(archivo)
     except Exception as e:
         return None, f"No se pudo leer el archivo: {e}"
-    df = hojas.get("cuadro2", next(iter(hojas.values()))).copy()
+    df = _hoja_tabla(hojas).copy()
     df.columns = [str(c).strip().lower() for c in df.columns]
     df = df.rename(columns={"dat": "dia", "día": "dia", "ddt": "dia"})
     if not {"dia", "tratamiento"} <= set(df.columns):
@@ -5442,7 +5459,7 @@ elif seccion == "Metodología":
   una prueba t/ANOVA real, mientras se consiguen los datos reales.
 - **Con datos reales**, súbelos en formato largo desde *Datos de prueba* usando la plantilla.
 - **Con la tabla publicada tal cual** (modo tabla, *Datos de prueba*): una media por día y grupo; la
-  prueba t usa la DE del ANOVA del paper (CV% × media general del día, n = 5, gl = 28). El ANOVA de
+  prueba t usa la DE del ANOVA (CV% × media de los tratamientos de la tabla, n = 5). El ANOVA de
   residuos se cambia por una prueba de falta de ajuste contra el error del paper, y en *Estadística*
   está el ANOVA del paper con Tukey. Logístico/Gompertz (3 parámetros con 4 fechas) quedan sin IC.
 - **Limitación a declarar:** los parámetros de forma (k, Ti) dependen de qué tan buena sea la
@@ -5790,13 +5807,17 @@ elif seccion == "Estadística":
         st.write("")
 
     if es_modo_tabla() and st.session_state.tabla_info.get("cuadro"):
-        st.markdown('<span class="eyebrow">ANOVA del paper · todos los tratamientos del cuadro, con Tukey</span>',
+        st.markdown('<span class="eyebrow">ANOVA del paper · todos los tratamientos de la tabla, con Tukey</span>',
                     unsafe_allow_html=True)
         st.markdown(
-            "El ANOVA de un factor que hicieron los autores, **reconstruido con la tabla**: medias de los "
+            "ANOVA de un factor de cada día, **reconstruido con la tabla**: medias de los "
             f"{len(st.session_state.tabla_info['tratamientos'])} tratamientos, CV% del día y n = "
             f"{st.session_state.tabla_info['n']}. La app saca sus propias letras de Tukey y las compara con las del "
-            "paper. Incluye raíz, tallo y lámina por separado (la biomasa total no, porque el paper no da su CV).")
+            "paper. Incluye raíz, tallo y lámina por separado si la tabla los trae (la biomasa total no, porque el "
+            "paper no da su CV)."
+            + (" Con solo 2 tratamientos, este ANOVA equivale a la prueba t; las letras del paper salen de comparar "
+               "sus 7 tratamientos, así que pueden no coincidir." if len(st.session_state.tabla_info["tratamientos"]) < 3
+               else ""))
         cuadro_t = st.session_state.tabla_info["cuadro"]
         vars_an = list(cuadro_t)
         c_var, c_dia = st.columns([2, 1])
@@ -5953,7 +5974,8 @@ elif seccion == "Residuos":
                         "- **Σ z²:** suma de los residuos estandarizados al cuadrado (cuánto se aleja la curva en total).\n"
                         "- **gl falta de ajuste:** fechas − parámetros del modelo (Exponencial 4 − 2 = 2; Logístico y "
                         "Gompertz 4 − 3 = 1, prueba con poco poder).\n"
-                        "- **gl error (paper):** grados de libertad del error del ANOVA del paper (7 × 4 = 28).\n"
+                        "- **gl error (paper):** grados de libertad del error: tratamientos de la tabla × (n − 1) (2 × 4 = 8 con la "
+                        "Tabla 4; 7 × 4 = 28 con el Cuadro 2).\n"
                         "- **F = Σ z² / gl falta de ajuste** y su **p**: si p < 0.05, la curva se aleja de las medias "
                         "más de lo esperable por azar.")
         titulo_resumen_global("Qué modelo se equivoca menos, en todas las variables",
@@ -6236,14 +6258,27 @@ elif seccion == "Datos de prueba":
     st.write("")
     st.markdown("### Usar la tabla publicada tal cual (sin réplicas sintéticas)")
     st.markdown(
-        "Carga el **Cuadro 2** de Aguirre-Medina et al. (2023) exactamente como está en el artículo: una media por "
-        "tratamiento y día, sus letras y el CV% de cada día. Los modelos se ajustan a las **medias** y la prueba t "
-        "usa la **DE del ANOVA del paper** (CV% × media general del día, n = 5, gl = 28). No se inventa ninguna planta."
+        "Una media por tratamiento y día, sus letras y el CV% de cada día, tal como están publicados. Los modelos se "
+        "ajustan a las **medias** y la prueba t usa la **DE del ANOVA** (CV% × promedio de los tratamientos de la "
+        "tabla, n = 5, gl = tratamientos × (n − 1)). No se inventa ninguna planta."
     )
-    fuente_tabla = st.session_state.get("tabla_fuente") or (TABLA_XLSX_BASE if os.path.exists(TABLA_XLSX_BASE) else None)
+    opciones_tabla = {}
+    if os.path.exists(TABLA4_XLSX_BASE):
+        opciones_tabla["Tabla 4 del trabajo (Testigo y R. intraradices)"] = TABLA4_XLSX_BASE
+    if os.path.exists(TABLA_XLSX_BASE):
+        opciones_tabla["Cuadro 2 completo del artículo (7 tratamientos)"] = TABLA_XLSX_BASE
+    if st.session_state.get("tabla_fuente"):
+        opciones_tabla["Tabla subida por ti"] = st.session_state.tabla_fuente
+    fuente_tabla = None
+    if opciones_tabla:
+        eleccion_tabla = st.radio("¿Con qué tabla se ajustan los modelos?", list(opciones_tabla), key="tabla_eleccion",
+                                  help="La Tabla 4 usa solo Testigo y R. intraradices: DE = CV% × promedio de los dos "
+                                       "y gl = 8. El Cuadro 2 usa los 7 tratamientos del artículo (gl = 28) y permite "
+                                       "el ANOVA con Tukey de todos. Las conclusiones de la prueba t son las mismas.")
+        fuente_tabla = opciones_tabla[eleccion_tabla]
     if fuente_tabla is None:
-        st.info("No se encontró `datos_reales/cuadro2_aguirre_medina_2023.xlsx`. Sube una tabla en el formato del "
-                "cuadro con el botón de abajo.")
+        st.info("No se encontró ninguna tabla en `datos_reales/`. Sube una en el formato del cuadro con el botón de "
+                "abajo.")
     else:
         def _abrir_tabla(fuente):
             return io.BytesIO(fuente) if isinstance(fuente, bytes) else fuente
@@ -6264,9 +6299,9 @@ elif seccion == "Datos de prueba":
             else:
                 activar_tabla_paper(paquete)
                 st.rerun()
-        st.caption(("Tabla del repositorio: `datos_reales/cuadro2_aguirre_medina_2023.xlsx`."
+        st.caption((f"Archivo: `datos_reales/{os.path.basename(fuente_tabla)}`."
                     if not isinstance(fuente_tabla, bytes) else "Tabla subida por ti.")
-                   + " La DE sale de **todos** los tratamientos del cuadro, aunque solo se comparen dos.")
+                   + f" La DE sale de los {len(nombres_t)} tratamientos de esta tabla.")
         if es_modo_tabla():
             st.success(f"Activa: −M = **{info_activa['control']}** · +M = **{info_activa['inoculado']}**. "
                        "Ve a Modelos → Ajustar modelos para calcular con ella.")
