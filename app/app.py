@@ -17,7 +17,6 @@ CÓMO CORRERLA:
 import io
 import re
 import os
-import tempfile
 from datetime import datetime
 import numpy as np
 import pandas as pd
@@ -6492,10 +6491,7 @@ elif seccion == "Exportar reporte":
     def insertar_imagen_png(pdf, png_bytes, ancho_mm=190, subtitulo=None):
         """Inserta la imagen; si se pasa `subtitulo`, se escribe justo antes y siempre en la misma
         página que la imagen (nunca queda un subtítulo solo al final de una página)."""
-        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp_img:
-            tmp_img.write(png_bytes)
-            ruta_img = tmp_img.name
-        with Image.open(ruta_img) as im:
+        with Image.open(io.BytesIO(png_bytes)) as im:
             proporcion = im.height / im.width
         alto_mm = ancho_mm * proporcion
         # Una figura muy alta se reduce para que imagen + pie (2-4 líneas, ~30 mm) quepan en una página.
@@ -6507,7 +6503,7 @@ elif seccion == "Exportar reporte":
         asegurar_espacio(pdf, alto_mm + 24 + (10 if subtitulo else 0))
         if subtitulo:
             subtitulo_variable(pdf, subtitulo)
-        pdf.image(ruta_img, x=(pdf.w - ancho_mm) / 2, w=ancho_mm)
+        pdf.image(io.BytesIO(png_bytes), x=(pdf.w - ancho_mm) / 2, w=ancho_mm)
         pdf.ln(5)
 
     def insertar_pie_pdf(pdf, pie):
